@@ -8,9 +8,17 @@ from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import (
+    DBAPIError,
+    DisconnectionError,
+    IntegrityError,
+    InterfaceError,
+    OperationalError,
+    SQLAlchemyError,
+)
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.exceptions import AppError
+from app.core.exceptions import AppError, DatabaseUnavailableError
 from app.schemas.common import ErrorBody, ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -41,7 +49,9 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
     except ValueError:
         default_message = "HTTP error"
     message = exc.detail if isinstance(exc.detail, str) else default_message
-    code = default_message.lower().replace(" ", "_").replace("-", "_")
+    code = getattr(exc, "error_code", None) or default_message.lower().replace(" ", "_").replace(
+        "-", "_"
+    )
     return _error_response(exc.status_code, code, message, headers=exc.headers)
 
 
@@ -62,7 +72,30 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     return _error_response(500, "internal_server_error", "An unexpected error occurred.")
 
 
+async def database_error_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
+    """Connection-level failures become 503 (retryable); constraint violations 409.
+
+    The driver message (which can include host names and SQL) is only logged.
+    """
+    if isinstance(exc, IntegrityError):
+        logger.warning("Integrity error on %s %s", request.method, request.url.path)
+        return _error_response(409, "conflict", "The request conflicts with existing data.")
+    if isinstance(exc, OperationalError | InterfaceError | DisconnectionError) or (
+        isinstance(exc, DBAPIError) and exc.connection_invalidated
+    ):
+        logger.error(
+            "Database unavailable on %s %s: %s",
+            request.method,
+            request.url.path,
+            type(exc).__name__,
+        )
+        error = DatabaseUnavailableError()
+        return _error_response(error.status_code, error.code, error.message)
+    return await unhandled_exception_handler(request, exc)
+
+
 def register_exception_handlers(app: FastAPI) -> None:
+    app.add_exception_handler(SQLAlchemyError, database_error_handler)
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)

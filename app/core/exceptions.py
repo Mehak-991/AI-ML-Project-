@@ -6,6 +6,8 @@ turn them into a consistent JSON error envelope.
 
 from typing import Any
 
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 
 class ConfigurationError(RuntimeError):
     """Raised at startup when settings are missing or invalid."""
@@ -158,3 +160,27 @@ class ProviderRequestRejectedError(ProviderError):
     status_code = 422
     code = "provider_rejected_request"
     message = "The LLM provider rejected the request."
+
+
+# --- HTTP hardening / persistence ----------------------------------------------------
+
+
+class RequestTooLargeError(StarletteHTTPException):
+    """Raised while the body is being read. It must be an HTTPException: FastAPI turns
+    any other exception raised during body parsing into a generic 400."""
+
+    error_code = "request_too_large"
+
+    def __init__(self, message: str = "The request body exceeds the allowed size.") -> None:
+        super().__init__(status_code=413, detail=message)
+
+
+class DatabaseUnavailableError(ServiceUnavailableError):
+    code = "database_unavailable"
+    message = "The database is temporarily unavailable. Retry later."
+
+
+class ModelIncompatibleError(AppError):
+    status_code = 409
+    code = "model_incompatible"
+    message = "The stored model is incompatible with this server. Retrain it."

@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    # "json" = one JSON object per line (for log shippers); "text" = human-readable.
+    LOG_FORMAT: Literal["text", "json"] = "text"
+    DOCS_ENABLED: bool = True
+
+    # Request hardening
+    MAX_REQUEST_BODY_MB: float = Field(default=5, gt=0, le=1024)  # non-upload requests
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_DEFAULT_PER_MINUTE: int = Field(default=300, ge=1)
+    RATE_LIMIT_AI_PER_MINUTE: int = Field(default=30, ge=1)
+    RATE_LIMIT_TRAINING_PER_MINUTE: int = Field(default=10, ge=1)
 
     # Comma-separated in the environment, e.g. "https://a.com,https://b.com".
     # None means "use the environment's default" (empty list in production).
@@ -53,6 +63,9 @@ class Settings(BaseSettings):
     MAX_DATASET_ROWS: int = Field(default=200_000, ge=10)
     MAX_DATASET_COLUMNS: int = Field(default=500, ge=2)
     MAX_PREDICTION_RECORDS: int = Field(default=1000, ge=1)
+    # strict: refuse to load artifacts saved with a different scikit-learn major.minor
+    # (pickles are not guaranteed compatible); warn: load anyway and log a warning.
+    MODEL_COMPATIBILITY_CHECK: Literal["strict", "warn"] = "strict"
 
     # --- LLM provider (OpenAI). Optional: the app starts without a key. ---
     OPENAI_API_KEY: SecretStr | None = None
@@ -166,6 +179,10 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+    @property
+    def max_request_body_bytes(self) -> int:
+        return int(self.MAX_REQUEST_BODY_MB * 1024 * 1024)
 
     @property
     def allowed_llm_models(self) -> list[str]:

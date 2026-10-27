@@ -13,6 +13,12 @@ from app.api.router import api_v1_router
 from app.api.routes import root
 from app.core.config import Settings, get_settings
 from app.core.error_handlers import register_exception_handlers
+from app.core.middleware import (
+    BodySizeLimitMiddleware,
+    RateLimitMiddleware,
+    RequestContextMiddleware,
+    SecurityHeadersMiddleware,
+)
 from app.database.session import dispose_engine
 from app.utils.logging import configure_logging
 
@@ -31,7 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the application. Pass `settings` to override environment config (tests)."""
     settings = settings or get_settings()
-    configure_logging(settings.LOG_LEVEL)
+    configure_logging(settings.LOG_LEVEL, settings.LOG_FORMAT)
 
     app = FastAPI(
         title=settings.APP_NAME,
@@ -39,14 +45,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         description="Modular AI/ML platform API.",
         debug=settings.DEBUG,
         lifespan=lifespan,
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
+        docs_url="/docs" if settings.DOCS_ENABLED else None,
+        redoc_url="/redoc" if settings.DOCS_ENABLED else None,
+        openapi_url="/openapi.json" if settings.DOCS_ENABLED else None,
     )
     app.dependency_overrides[get_settings] = lambda: settings
     # Lazy container: no optional package is imported and no model is loaded here.
     app.state.ai = AIServices(settings)
 
+    # add_middleware wraps: the LAST one added runs FIRST. Resulting order per request:
+    # RequestContext -> SecurityHeaders -> CORS -> RateLimit -> BodySizeLimit -> app,
+    # so 413/429 responses still get a request ID, security and CORS headers.
+    app.add_middleware(
+        BodySizeLimitMiddleware,
+        max_body_bytes=settings.max_request_body_bytes,
+        max_upload_bytes=settings.max_upload_bytes,
+    )
+    if settings.RATE_LIMIT_ENABLED:
+        app.add_middleware(
+            RateLimitMiddleware,
+            api_prefix=settings.API_V1_PREFIX,
+            default_per_minute=settings.RATE_LIMIT_DEFAULT_PER_MINUTE,
+            ai_per_minute=settings.RATE_LIMIT_AI_PER_MINUTE,
+            training_per_minute=settings.RATE_LIMIT_TRAINING_PER_MINUTE,
+        )
     origins = settings.cors_origins
     if origins:
         app.add_middleware(
@@ -55,8 +77,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Browsers reject credentials with a wildcard origin.
             allow_credentials="*" not in origins,
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type", "Accept"],
+            allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
+            expose_headers=["X-Request-ID", "Retry-After"],
         )
+    app.add_middleware(SecurityHeadersMiddleware, api_prefix=settings.API_V1_PREFIX)
+    app.add_middleware(RequestContextMiddleware)
 
     register_exception_handlers(app)
     app.include_router(root.router)

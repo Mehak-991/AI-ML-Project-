@@ -15,11 +15,13 @@ from app.ai.llm import ChatMessage, ChatService
 from app.ai.tokens import TokenCounter
 from app.api.deps import (
     AIServicesDep,
+    SettingsDep,
     get_chat_service,
     get_embedding_service,
     get_text_classifier,
     get_token_counter,
 )
+from app.core.exceptions import DataValidationError
 from app.schemas.ai import (
     AIStatusResponse,
     ChatRequest,
@@ -139,7 +141,11 @@ def chat(
 def count_tokens(
     request: TokenCountRequest,
     counter: Annotated[TokenCounter, Depends(get_token_counter)],
+    settings: SettingsDep,
 ) -> TokenCountResponse:
+    total_chars = len(request.text or "") + sum(len(m.content) for m in request.messages or [])
+    if total_chars > settings.TOKENIZER_MAX_TEXT_CHARS:
+        raise DataValidationError(f"Input exceeds {settings.TOKENIZER_MAX_TEXT_CHARS} characters.")
     model = request.model or counter.default_model
     if request.messages is not None:
         counted = counter.count_messages([(m.role, m.content) for m in request.messages], model)

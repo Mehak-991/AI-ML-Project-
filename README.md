@@ -3,18 +3,27 @@
 Modular, production-oriented AI/ML platform:
 
 - **Part 1:** FastAPI REST API, typed configuration, error handling, health checks, tests, linting
-- **Part 2 (current):** PostgreSQL data layer (SQLAlchemy 2.x + Alembic), CSV/Excel ingestion and
+- **Part 2:** PostgreSQL data layer (SQLAlchemy 2.x + Alembic), CSV/Excel ingestion and
   validation, data profiling, and a leakage-safe scikit-learn training → persistence → prediction
   pipeline exposed through versioned API endpoints
+- **Part 3 (current):** optional AI services: Sentence Transformers embeddings, transformer
+  sentiment classification, OpenAI chat completion, token counting, and a LangGraph long-text
+  analysis workflow. All of them are behind optional dependency groups, so the core API runs
+  without them.
 
-Deep learning, LLM and RAG features come in later phases.
+A full RAG system comes in a later phase.
 
 ## Project layout
 
 ```
 app/
-  api/routes/        root.py, health.py, datasets.py, models.py; api/router.py aggregates v1
-  api/deps.py        Shared dependencies (settings, DB session)
+  ai/                AI services; optional packages are imported lazily:
+                       container (per-app DI), optional (lazy imports), runtime (device,
+                       timeouts), model_cache, tokens, embeddings, transformer_inference,
+                       classification, llm (OpenAI), text_splitting (LangChain),
+                       workflows/text_analysis (LangGraph)
+  api/routes/        root, health, datasets, models, ai; api/router.py aggregates v1
+  api/deps.py        Shared dependencies (settings, DB session, AI services)
   core/              config.py (settings), exceptions.py, error_handlers.py
   database/          base.py, session.py (engine/session/diagnostics), types.py, models/
   ml/                Framework-free data & ML code:
@@ -27,7 +36,8 @@ app/
   main.py            App factory `create_app()` and ASGI `app`
 alembic/versions/    Migrations (0001: datasets + ml_models)
 datasets/examples/   Seeded synthetic demo CSVs (committed)
-scripts/             check_health, check_db, generate_synthetic_data, profile_dataset, train_model
+scripts/             check_health, check_db, generate_synthetic_data, profile_dataset, train_model,
+                     download_models, nlp_demo, evaluate_classifier
 tests/unit/          Fast tests (SQLite test double, no external services)
 tests/integration/   PostgreSQL tests — run only when TEST_DATABASE_URL is set
 uploads/ trained_models/ logs/ reports/   Runtime data (git-ignored)
@@ -71,9 +81,15 @@ cp .env.example .env
 |---|---|---|
 | Runtime | `pip install -r requirements.txt` | FastAPI, Uvicorn, python-multipart, Pydantic, pydantic-settings, python-dotenv, SQLAlchemy, psycopg, Alembic, NumPy, pandas, scikit-learn, joblib, openpyxl, Matplotlib, seaborn |
 | Dev & test | `pip install -r requirements-dev.txt` | Runtime + pytest, pytest-cov, HTTPX, Ruff |
-| LLM (later) | `pip install -e ".[llm]"` | OpenAI SDK, tiktoken |
+| `torch` | see [AI setup](#ai-services-part-3) | PyTorch ≥2.4, torchvision. Install from the index for your hardware |
+| `nlp` | `pip install -e ".[nlp]"` or `-r requirements-nlp.txt` | transformers (v4 or v5), sentence-transformers, datasets, evaluate. Needs `torch` |
+| `llm` | `pip install -e ".[llm]"` | openai (2.x or 3.x), tiktoken |
+| `agents` | `pip install -e ".[agents]"` | langgraph, langchain-core, langchain-text-splitters |
+| `rag` | `pip install -e ".[rag]"` | llama-index-core. Reserved for Part 4; no code uses it yet |
+| `ai` | `pip install -e ".[ai]"` | nlp + llm + agents (install torch first) |
 
-Everything is CPU-only; no GPU libraries are installed.
+`requirements-llm.txt` (llm + agents, no PyTorch) and `requirements-nlp.txt` mirror these groups
+for pip-only workflows. The core runtime has no AI or GPU dependencies.
 
 ## PostgreSQL setup
 
@@ -278,6 +294,117 @@ distributions, correlation heatmap).
   generated name, after their SHA-256 matches the recorded hash. Never place untrusted
   `.joblib` files there.
 
+## AI services (Part 3)
+
+Every AI feature is optional. The core API starts and serves without any AI package and without
+an API key (the test suite checks this). A feature whose dependency is missing returns
+**503 `optional_dependency_missing`** with the exact install command. Chat without a key returns
+**503 `provider_not_configured`**. `GET /api/v1/ai/status` shows which packages are installed,
+whether the provider is configured (the key itself is never shown), and which models are loaded.
+
+### Install what you need
+
+| You want | Install | Download / disk |
+|---|---|---|
+| LLM chat, token counting, text analysis | `pip install -r requirements-llm.txt` | ~15 MB of packages, plus ~3.6 MB of tiktoken encodings on first use |
+| Local embeddings + classification | PyTorch (below), then `pip install -r requirements-nlp.txt` | PyTorch CPU ~200 MB (CUDA builds 2+ GB), models ~360 MB |
+
+**PyTorch.** Pick the build that matches your hardware; it isn't installed for you:
+
+```bash
+# CPU only (Windows/Linux):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# NVIDIA GPU: get the command for your CUDA version at https://pytorch.org/get-started/locally/
+# Apple Silicon (MPS included): pip install torch torchvision
+```
+
+**Models are never downloaded at startup.** They load lazily on the first request, which can
+take a while if the model has to be downloaded. To pre-download them:
+
+```bash
+python scripts/download_models.py     # embedding model (~90 MB) + classifier (~270 MB)
+```
+
+Models are cached in `AI_MODEL_CACHE_DIR`, or `~/.cache/huggingface` if unset. After
+downloading, set `AI_ALLOW_MODEL_DOWNLOADS=false` to run offline; this sets `HF_HUB_OFFLINE`.
+`trust_remote_code` is always off.
+
+### Endpoints
+
+| Method & path | Purpose | Needs |
+|---|---|---|
+| `GET /api/v1/ai/status` | Installed extras, provider config, loaded models | — |
+| `POST /api/v1/tokens/count` | Tokens for `text` or chat `messages` (tiktoken; falls back to a flagged chars÷4 estimate) | `llm` (optional) |
+| `POST /api/v1/embeddings` | `{"texts": [...], "normalize": true}` → vectors with an explicit `dimension` | torch + `nlp` |
+| `POST /api/v1/nlp/classify` | Sentiment (POSITIVE/NEGATIVE) with `top_k` scores | torch + `nlp` |
+| `POST /api/v1/llm/chat` | Chat completion (OpenAI Responses API) | `llm` + `OPENAI_API_KEY` |
+| `POST /api/v1/nlp/analyze` | Summarise text of any length (map-reduce) and score sentiment | `llm` + `agents` + key (+ `nlp` for sentiment) |
+
+Examples:
+
+```bash
+curl -s -X POST localhost:8000/api/v1/tokens/count -H "Content-Type: application/json" \
+  -d '{"text": "Tokenization splits text into subword units."}'
+curl -s -X POST localhost:8000/api/v1/embeddings -H "Content-Type: application/json" \
+  -d '{"texts": ["first sentence", "second sentence"]}'
+curl -s -X POST localhost:8000/api/v1/llm/chat -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "system", "content": "Be brief."}, {"role": "user", "content": "What is an embedding?"}], "max_output_tokens": 300}'
+```
+
+**Local NLP demo** (no API key needed): `python scripts/nlp_demo.py` prints cosine similarities
+between sentences and their sentiment. `python scripts/evaluate_classifier.py` scores the
+classifier on SST-2 using Hugging Face `datasets` + `evaluate`.
+
+### Design
+
+- **Interfaces and dependency injection.** `ChatService`, `EmbeddingBackend` and the pipeline
+  loader are small Protocols/callables. `AIServices` (on `app.state.ai`) builds services lazily,
+  and routes receive them through FastAPI dependencies, which tests override with fakes.
+- **Model caching.** `ModelCache` is a thread-safe LRU (`AI_MAX_LOADED_MODELS`). Concurrent
+  first requests load a model **once**. Failed loads aren't cached and return
+  503 `model_load_failed`.
+- **Devices.** `AI_DEVICE=auto` picks CUDA, then Apple MPS, then CPU. Asking for `cuda`/`mps`
+  when it isn't available gives a clear error rather than a silent fallback.
+- **Timeouts and concurrency.** Local inference runs in a bounded pool
+  (`AI_MAX_CONCURRENT_INFERENCES`) with `AI_INFERENCE_TIMEOUT_SECONDS`. Running past it returns
+  504 `inference_timeout`; the abandoned computation finishes in the background, because Python
+  threads can't be killed. Provider calls use `OPENAI_TIMEOUT_SECONDS`, and the SDK retries
+  connection errors, 429 and 5xx up to `OPENAI_MAX_RETRIES` times with backoff.
+- **Embeddings.** Requests are processed in `EMBEDDING_BATCH_SIZE` batches, each output's shape
+  is checked against the model's dimension, and non-finite values are rejected. Set
+  `EMBEDDING_DIMENSION` to pin the vector size you store; a model with a different size is
+  rejected instead of silently corrupting a vector store.
+- **Framework use is deliberately narrow.** LangGraph runs one workflow (`/nlp/analyze`:
+  measure → split → summarise each chunk → combine → classify, with conditional routing).
+  LangChain provides only token-aware text splitting. Both call this project's own OpenAI
+  service, so there's no second LLM client. **LlamaIndex** has a dependency group but no code
+  yet: without RAG it has no use case here, and it's planned for Part 4.
+
+### LLM limits, errors and privacy
+
+- **Limits.** Requests are validated before any provider call: message count, total characters,
+  input tokens (`LLM_MAX_INPUT_TOKENS`), output budget (`LLM_MAX_OUTPUT_TOKENS`), and the model
+  allow-list (`OPENAI_MODEL` + `OPENAI_ALLOWED_MODELS`), which keeps cost under control.
+- **Default model.** `gpt-5.4-mini` is configurable. GPT-5-family reasoning models may reject
+  `temperature`; leave it unset for them. Reasoning also consumes output tokens, so if
+  `finish_reason` is `max_output_tokens`, raise `max_output_tokens`.
+- **Error mapping.** Provider errors map to stable codes:
+
+  | Provider failure | HTTP | `error.code` |
+  |---|---|---|
+  | No key configured | 503 | `provider_not_configured` |
+  | 401/403 bad key | 502 | `provider_authentication_failed` |
+  | 429 rate limit | 429 + `Retry-After` | `provider_rate_limited` |
+  | 429 quota | 429 | `provider_quota_exceeded` |
+  | Timeout | 504 | `provider_timeout` |
+  | Network / 5xx | 502 | `provider_unavailable` |
+  | Unknown model | 502 | `provider_model_not_found` |
+  | 400/422 e.g. context too long | 422 | `provider_rejected_request` (`details.provider_code`) |
+
+- **Privacy.** The API key is never logged or returned. Prompts and completions aren't logged
+  unless `LLM_LOG_CONTENT=true`; the SDK's own DEBUG request logging is muted as well. Requests
+  are sent with `store=false`. Provider error text isn't passed on to clients.
+
 ## Running tests and lint
 
 ```bash
@@ -286,6 +413,13 @@ pytest tests/unit               # unit tests only
 pytest --cov=app                # with coverage
 ruff check . ; ruff format --check .
 ```
+
+AI tests never download models or call paid APIs. Local models are replaced by deterministic
+fakes. OpenAI tests run the **real SDK** against an in-memory `httpx.MockTransport`, so actual
+SDK exceptions (timeouts, 401, 429 with `Retry-After`, quota, 5xx, network errors) are raised
+and mapped. `tests/integration/test_optional_dependencies.py` starts the app in a subprocess
+where every optional AI package is blocked and checks that it still serves. Tests needing
+`openai`/`langgraph` skip themselves if those aren't installed.
 
 Unit tests use an **in-memory SQLite database as a test double** for PostgreSQL (see
 [tests/conftest.py](tests/conftest.py)). The application itself never falls back to SQLite.
@@ -316,13 +450,24 @@ TEST_DATABASE_URL=postgresql+psycopg://aiproject:<password>@localhost:5432/aipro
 | 400 "CSV files must be UTF-8" | Re-save as "CSV UTF-8" (Excel) or convert the encoding |
 | 422 `training_error` | Read `error.details` / `message` — e.g. too few rows, single-class target, wrong `problem_type` |
 | `InconsistentVersionWarning` when predicting | Model trained with another scikit-learn version; retrain |
+| 503 `optional_dependency_missing` | Run the install command in `error.details.install` (PyTorch first for local models) |
+| 503 `provider_not_configured` | Set `OPENAI_API_KEY` in `.env` and restart |
+| 502 `provider_authentication_failed` | Key is invalid/revoked or lacks access to the model |
+| 429 `provider_quota_exceeded` | Add billing/credits for the OpenAI account |
+| 503 `model_load_failed` | Wrong model name, no network (or `AI_ALLOW_MODEL_DOWNLOADS=false` before downloading), or not enough disk/RAM; see the server log |
+| `AI_DEVICE=cuda but CUDA is not available` | Install a CUDA build of PyTorch, or set `AI_DEVICE=cpu` |
+| First embedding/classify request is very slow | It's downloading and loading the model; pre-download with `scripts/download_models.py` |
+| `tokens/count` returns `"approximate": true` | tiktoken isn't installed, or couldn't download its encoding (offline). Set `TIKTOKEN_CACHE_DIR` to a pre-filled cache |
 | Port 8000 in use | `uvicorn app.main:app --reload --port 8001` |
 | Path contains spaces (Windows) | Quote it: `cd "C:\path with spaces\AIProject"` |
 
-## Known limitations (Part 2)
+## Known limitations
 
-- Training runs synchronously inside the request (in the threadpool), so large datasets will
-  block a worker. Background jobs are planned.
+- Training and AI inference run synchronously in the request threadpool. Large jobs tie up a
+  worker, and a timed-out local inference keeps computing in the background.
+- LLM calls aren't streamed, and there's no per-user rate limiting or spend tracking yet.
+- The local NLP path (PyTorch, transformers, sentence-transformers) is exercised with fakes in
+  CI. It hasn't been run end-to-end in this repository's verified environment.
 - No authentication or authorization yet. Do not expose the API publicly.
 - Datasets and models cannot be deleted through the API yet. Artifacts live on local disk.
 - One-hot encoding caps each categorical column at 50 categories. Datetime and free-text

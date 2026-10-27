@@ -1,6 +1,7 @@
 # Core runtime dependencies (mirrors [project.dependencies] in pyproject.toml).
 # Dev/test tools:   pip install -r requirements-dev.txt
-# LLM (later):      pip install -e ".[llm]"
+# Optional AI (Part 3): requirements-llm.txt (no PyTorch) / requirements-nlp.txt (PyTorch first);
+#                       see the "Dependencies" and "AI services" sections of README.md
 
 # API
 fastapi>=0.115,<1.0

@@ -172,3 +172,14 @@ def test_configure_hf_environment(monkeypatch: pytest.MonkeyPatch, make_settings
     )
     assert os.environ["HF_HOME"] == str((tmp_path / "hf").resolve())
     assert os.environ["HF_HUB_OFFLINE"] == "1"
+
+
+def test_namespace_directory_is_not_mistaken_for_library(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A plain folder named like a package (e.g. ./datasets) must not count as installed."""
+    (tmp_path / "fake_ns_pkg_xyz").mkdir()
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert not is_available("fake_ns_pkg_xyz")
+    with pytest.raises(OptionalDependencyMissingError):
+        require("fake_ns_pkg_xyz", "test")

@@ -36,10 +36,41 @@ dev = [
     "httpx>=0.27,<1.0",
     "ruff>=0.8,<1.0",
 ]
-# Later phases. Install PyTorch separately for your CUDA/CPU target.
+# --- Optional AI groups (Part 3). The core API runs without any of them. ---------
+# Install PyTorch FIRST from the index matching your hardware (see README), e.g.
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# Otherwise pip may pull a large CUDA build on Linux.
+torch = [
+    "torch>=2.4,<3",
+    "torchvision>=0.19,<1",
+]
+# Local NLP: embeddings, transformer inference, datasets/metrics for evaluation.
+# Needs torch (above). transformers v4 and v5 are both accepted.
+nlp = [
+    "transformers>=4.44,<6",
+    "sentence-transformers>=3.0,<7",
+    "datasets>=3.0,<6",
+    "evaluate>=0.4,<0.5",
+]
+# Hosted LLM provider + token counting. Tested with openai 2.54 and 3.40.
 llm = [
-    "openai>=1.50",
-    "tiktoken>=0.8",
+    "openai>=2.0,<4",
+    "tiktoken>=0.8,<1",
+]
+# Workflow orchestration (LangGraph) and token-aware chunking (LangChain splitters).
+# Tested with langgraph 1.2, langchain-core 1.7, langchain-text-splitters 1.1.
+agents = [
+    "langgraph>=0.2,<2",
+    "langchain-core>=0.3,<2",
+    "langchain-text-splitters>=0.3,<2",
+]
+# Reserved for the RAG phase (Part 4); no code depends on it yet.
+rag = [
+    "llama-index-core>=0.12,<0.15",
+]
+# Everything except torch (install torch explicitly for your hardware first).
+ai = [
+    "aiproject[nlp,llm,agents]",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -1,0 +1,13 @@
+# Local deep learning / NLP extras. Mirrors the "nlp" extra in pyproject.toml.
+#
+# 1) Install PyTorch for YOUR hardware first (pick one):
+#      CPU only (any OS, ~200 MB):
+#        pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#      NVIDIA GPU: use the selector at https://pytorch.org/get-started/locally/
+#      Apple Silicon: pip install torch torchvision   (MPS is included)
+# 2) Then: pip install -r requirements-nlp.txt
+-r requirements.txt
+transformers>=4.44,<6
+sentence-transformers>=3.0,<7
+datasets>=3.0,<6
+evaluate>=0.4,<0.5

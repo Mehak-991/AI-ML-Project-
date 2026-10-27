@@ -249,3 +249,13 @@ def test_openapi_documents_ai_endpoints(client: TestClient) -> None:
     for path in ("/embeddings", "/nlp/classify", "/llm/chat", "/tokens/count", "/nlp/analyze"):
         assert "post" in paths[f"{API}{path}"]
     assert "get" in paths[f"{API}/ai/status"]
+
+
+def test_token_count_respects_configured_char_limit(make_settings) -> None:
+    app = create_app(make_settings(TOKENIZER_MAX_TEXT_CHARS=10))
+    app.state.ai.token_counter = TokenCounter("m", loader=lambda m: None)
+    with TestClient(app) as client:
+        assert client.post(f"{API}/tokens/count", json={"text": "x" * 10}).status_code == 200
+        response = client.post(f"{API}/tokens/count", json={"text": "x" * 11})
+    assert response.status_code == 422
+    assert error_code(response) == "data_validation_error"

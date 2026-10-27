@@ -1,9 +1,11 @@
 """ORM models.
 
 Import every model module here so `Base.metadata` is complete for Alembic
-autogenerate, e.g. `from app.database.models.user import User  # noqa: F401`.
+autogenerate.
 """
 
 from app.database.base import Base
+from app.database.models.dataset import Dataset
+from app.database.models.ml_model import MLModel
 
-__all__ = ["Base"]
+__all__ = ["Base", "Dataset", "MLModel"]

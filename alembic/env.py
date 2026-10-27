@@ -17,7 +17,9 @@ settings = get_settings()
 if settings.DATABASE_URL is None:
     raise RuntimeError("DATABASE_URL must be set to run migrations (see .env.example).")
 # Escape '%' so configparser interpolation does not mangle URL-encoded passwords.
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.get_secret_value().replace("%", "%%"))
+config.set_main_option(
+    "sqlalchemy.url", settings.DATABASE_URL.get_secret_value().replace("%", "%%")
+)
 
 target_metadata = Base.metadata
 

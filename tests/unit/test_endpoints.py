@@ -45,7 +45,9 @@ def test_readiness_without_database(client: TestClient) -> None:
     assert body.components == {"database": "not_configured"}
 
 
-@pytest.mark.parametrize(("reachable", "status_code", "state"), [(True, 200, "ok"), (False, 503, "unavailable")])
+@pytest.mark.parametrize(
+    ("reachable", "status_code", "state"), [(True, 200, "ok"), (False, 503, "unavailable")]
+)
 def test_readiness_with_mocked_database(
     monkeypatch: pytest.MonkeyPatch,
     make_settings,

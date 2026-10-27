@@ -1,6 +1,7 @@
 """Application settings loaded from environment variables and an optional .env file."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
@@ -39,6 +40,19 @@ class Settings(BaseSettings):
 
     DATABASE_URL: SecretStr | None = None
     DATABASE_CONNECT_TIMEOUT: int = Field(default=5, ge=1, le=60)
+    DATABASE_POOL_SIZE: int = Field(default=5, ge=1, le=100)
+    DATABASE_MAX_OVERFLOW: int = Field(default=10, ge=0, le=100)
+    DATABASE_ECHO: bool = False
+
+    # Server-side storage locations. Never taken from API requests.
+    UPLOAD_DIR: Path = Path("uploads")
+    MODEL_DIR: Path = Path("trained_models")
+
+    # Data and ML limits.
+    MAX_UPLOAD_SIZE_MB: int = Field(default=25, ge=1, le=1024)
+    MAX_DATASET_ROWS: int = Field(default=200_000, ge=10)
+    MAX_DATASET_COLUMNS: int = Field(default=500, ge=2)
+    MAX_PREDICTION_RECORDS: int = Field(default=1000, ge=1)
 
     OPENAI_API_KEY: SecretStr | None = None
 
@@ -84,6 +98,8 @@ class Settings(BaseSettings):
         problems = []
         if self.DATABASE_URL is None:
             problems.append("DATABASE_URL is required when APP_ENV=production")
+        elif not self.DATABASE_URL.get_secret_value().startswith("postgresql+psycopg://"):
+            problems.append("DATABASE_URL must be a PostgreSQL URL when APP_ENV=production")
         if self.DEBUG:
             problems.append("DEBUG must be false when APP_ENV=production")
         if self.CORS_ORIGINS and "*" in self.CORS_ORIGINS:
@@ -95,6 +111,10 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.APP_ENV == "production"
+
+    @property
+    def max_upload_bytes(self) -> int:
+        return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
     @property
     def cors_origins(self) -> list[str]:

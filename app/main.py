@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.ai.container import AIServices
-from app.api.router import api_v1_router
+from app.api.router import COMMON_ERROR_RESPONSES, api_v1_router
 from app.api.routes import root
 from app.core.config import Settings, get_settings
 from app.core.error_handlers import register_exception_handlers
@@ -84,7 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(RequestContextMiddleware)
 
     register_exception_handlers(app)
-    app.include_router(root.router)
+    app.include_router(root.router, responses={500: COMMON_ERROR_RESPONSES[500]})
     app.include_router(api_v1_router, prefix=settings.API_V1_PREFIX)
     return app
 

@@ -21,7 +21,3 @@ class MLModelRepository(BaseRepository[MLModel]):
     def next_version(self, name: str) -> int:
         current = self.session.scalar(select(func.max(MLModel.version)).where(MLModel.name == name))
         return (current or 0) + 1
-
-    def list_versions(self, name: str) -> Sequence[MLModel]:
-        stmt = select(MLModel).where(MLModel.name == name).order_by(MLModel.version.desc())
-        return self.session.scalars(stmt).all()

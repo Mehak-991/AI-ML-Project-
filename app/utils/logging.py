@@ -16,7 +16,12 @@ TEXT_FORMAT = "%(asctime)s %(levelname)s [%(name)s] [req=%(request_id)s] %(messa
 request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
 
 # Attributes every LogRecord has; anything else was passed via `extra=` and is emitted.
-_STANDARD_ATTRS = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime", "request_id"}
+_STANDARD_ATTRS = set(logging.makeLogRecord({}).__dict__) | {
+    "message",
+    "asctime",
+    "request_id",
+    "color_message",  # uvicorn's ANSI-coloured duplicate of the message
+}
 
 
 class RequestIdFilter(logging.Filter):
@@ -53,3 +58,9 @@ def configure_logging(level: str = "INFO", fmt: str = "text") -> None:
         handler.addFilter(RequestIdFilter())
         root.addHandler(handler)
     handler.setFormatter(JsonFormatter() if fmt == "json" else logging.Formatter(TEXT_FORMAT))
+    if fmt == "json":
+        # Route uvicorn's own loggers through the same JSON handler (one format per stream).
+        for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+            uvicorn_logger = logging.getLogger(name)
+            uvicorn_logger.handlers.clear()
+            uvicorn_logger.propagate = True

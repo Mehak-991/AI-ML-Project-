@@ -102,3 +102,20 @@ def test_no_cors_headers_by_default_in_production(make_settings) -> None:
     with TestClient(create_app(settings)) as client:
         response = client.get("/health", headers={"Origin": "http://localhost:3000"})
     assert "access-control-allow-origin" not in response.headers
+
+
+def test_openapi_error_schemas_match_real_envelope(client: TestClient) -> None:
+    """Every documented 4xx/5xx must use the {"error": ...} envelope the API actually returns."""
+    spec = client.get("/openapi.json").json()
+    for path, item in spec["paths"].items():
+        for method, operation in item.items():
+            for status, response in operation["responses"].items():
+                # Readiness intentionally returns its health body (not an error) with 503.
+                if (path, status) == ("/api/v1/health", "503"):
+                    continue
+                if status.startswith(("4", "5")):
+                    ref = response["content"]["application/json"]["schema"]["$ref"]
+                    assert ref.endswith("/ErrorResponse"), (
+                        f"{method.upper()} {path} {status}: {ref}"
+                    )
+    assert "HTTPValidationError" not in spec["components"]["schemas"]

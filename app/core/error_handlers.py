@@ -18,7 +18,7 @@ from sqlalchemy.exc import (
 )
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.exceptions import AppError, DatabaseUnavailableError
+from app.core.exceptions import AppError, ConflictError, DatabaseUnavailableError
 from app.schemas.common import ErrorBody, ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -79,7 +79,8 @@ async def database_error_handler(request: Request, exc: SQLAlchemyError) -> JSON
     """
     if isinstance(exc, IntegrityError):
         logger.warning("Integrity error on %s %s", request.method, request.url.path)
-        return _error_response(409, "conflict", "The request conflicts with existing data.")
+        conflict = ConflictError("The request conflicts with existing data.")
+        return _error_response(conflict.status_code, conflict.code, conflict.message)
     if isinstance(exc, OperationalError | InterfaceError | DisconnectionError) or (
         isinstance(exc, DBAPIError) and exc.connection_invalidated
     ):

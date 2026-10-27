@@ -50,7 +50,9 @@ def create_dataset(
     name: str | None = None,
 ) -> tuple[Dataset, ValidationReport]:
     """Store an upload, reject structurally invalid data, and record it in the DB."""
-    stored = store_upload(source, filename, settings.UPLOAD_DIR, max_bytes=settings.max_upload_bytes)
+    stored = store_upload(
+        source, filename, settings.UPLOAD_DIR, max_bytes=settings.max_upload_bytes
+    )
     try:
         frame = _read(settings, stored.path, stored.file_format)
         report = validate_dataframe(frame)

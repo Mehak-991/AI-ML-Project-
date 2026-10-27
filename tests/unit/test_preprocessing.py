@@ -128,5 +128,9 @@ def test_split_without_validation() -> None:
 @pytest.mark.parametrize(("test", "val"), [(0, 0.2), (1.0, 0), (0.5, 0.5)])
 def test_split_rejects_bad_sizes(test: float, val: float) -> None:
     with pytest.raises(ValueError):
-        split_dataset(pd.DataFrame({"a": range(10)}), pd.Series(range(10)), test_size=test,
-                      validation_size=val)
+        split_dataset(
+            pd.DataFrame({"a": range(10)}),
+            pd.Series(range(10)),
+            test_size=test,
+            validation_size=val,
+        )

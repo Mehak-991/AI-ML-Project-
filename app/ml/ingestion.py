@@ -21,7 +21,9 @@ def detect_file_format(filename: str) -> str:
     file_format = SUPPORTED_EXTENSIONS.get(suffix)
     if file_format is None:
         allowed = ", ".join(sorted(SUPPORTED_EXTENSIONS))
-        raise UnsupportedFileTypeError(f"Unsupported file type '{suffix or '(none)'}'. Allowed: {allowed}.")
+        raise UnsupportedFileTypeError(
+            f"Unsupported file type '{suffix or '(none)'}'. Allowed: {allowed}."
+        )
     return file_format
 
 

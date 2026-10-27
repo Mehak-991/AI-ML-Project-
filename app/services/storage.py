@@ -5,6 +5,7 @@ server-generated name inside the configured directory.
 """
 
 import codecs
+import contextlib
 import hashlib
 import os
 import uuid
@@ -91,7 +92,5 @@ def store_upload(
 
 
 def delete_stored_file(dest_dir: Path, stored_filename: str) -> None:
-    try:
+    with contextlib.suppress(OSError, ValueError):
         resolve_within(dest_dir, stored_filename).unlink(missing_ok=True)
-    except (OSError, ValueError):
-        pass

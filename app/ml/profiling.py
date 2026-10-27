@@ -88,7 +88,7 @@ def summarize_column(series: pd.Series, top_k: int = 5) -> dict[str, Any]:
 
 def summarize_dataframe(df: pd.DataFrame) -> dict[str, Any]:
     return {
-        "n_rows": int(len(df)),
+        "n_rows": len(df),
         "n_columns": int(df.shape[1]),
         "memory_bytes": int(df.memory_usage(deep=True).sum()),
         "columns": [summarize_column(df[column]) for column in df.columns],

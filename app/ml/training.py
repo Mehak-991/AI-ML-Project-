@@ -106,9 +106,7 @@ def build_estimator(problem_type: ProblemType, algorithm: Algorithm, random_stat
     return Ridge(alpha=1.0)
 
 
-def classification_metrics(
-    model: BaseEstimator, X: pd.DataFrame, y: pd.Series
-) -> dict[str, Any]:
+def classification_metrics(model: BaseEstimator, X: pd.DataFrame, y: pd.Series) -> dict[str, Any]:
     if len(y) == 0:
         return {}
     predicted = model.predict(X)

@@ -1,11 +1,25 @@
 # Core runtime dependencies (mirrors [project.dependencies] in pyproject.toml).
 # Dev/test tools:   pip install -r requirements-dev.txt
-# ML/LLM (later):   pip install -e ".[ml,llm]"
+# LLM (later):      pip install -e ".[llm]"
+
+# API
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
+python-multipart>=0.0.18,<1.0
 pydantic>=2.9,<3.0
 pydantic-settings>=2.7,<3.0
 python-dotenv>=1.0,<2.0
+
+# Database
 SQLAlchemy>=2.0.36,<2.1
 psycopg[binary]>=3.2,<4.0
 alembic>=1.14,<2.0
+
+# Data processing and classical ML (CPU only)
+numpy>=2.0,<3.0
+pandas>=2.2,<4.0
+scikit-learn>=1.5,<2.0
+joblib>=1.4,<2.0
+openpyxl>=3.1,<4.0
+matplotlib>=3.9,<4.0
+seaborn>=0.13,<1.0

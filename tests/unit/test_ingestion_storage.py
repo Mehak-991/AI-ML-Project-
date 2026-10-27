@@ -76,7 +76,7 @@ def test_zip_that_is_not_a_workbook_is_rejected(tmp_path) -> None:
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr("hello.txt", "hi")
     path = write_bytes(tmp_path / "x.xlsx", buffer.getvalue())
-    with pytest.raises(InvalidFileError, match="not a valid .xlsx"):
+    with pytest.raises(InvalidFileError, match=r"not a valid \.xlsx"):
         read_tabular_file(path, "excel", **LIMITS)
 
 

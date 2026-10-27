@@ -67,9 +67,7 @@ def validate_dataframe(
 
     for column, expected in (expected_kinds or {}).items():
         if column in df.columns and (actual := infer_column_kind(df[column])) != expected:
-            report.error(
-                "type_mismatch", f"Expected {expected} values but found {actual}.", column
-            )
+            report.error("type_mismatch", f"Expected {expected} values but found {actual}.", column)
 
     for column in df.columns:
         series = df[column]

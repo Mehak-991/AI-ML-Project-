@@ -23,7 +23,9 @@ REGRESSION_METRICS = {"mae", "rmse", "median_absolute_error", "r2"}
 
 @pytest.fixture(scope="module")
 def classification_result():
-    return train_model(make_classification_frame(300, seed=1), TrainingConfig(target_column="label"))
+    return train_model(
+        make_classification_frame(300, seed=1), TrainingConfig(target_column="label")
+    )
 
 
 @pytest.fixture(scope="module")
@@ -56,7 +58,7 @@ def test_classification_training(classification_result) -> None:
     result = classification_result
     assert result.problem_type == "classification"
     assert result.class_labels == ["no", "yes"]
-    assert CLASSIFICATION_METRICS <= set(result.metrics["test"])
+    assert set(result.metrics["test"]) >= CLASSIFICATION_METRICS
     assert set(result.metrics) == {"train", "validation", "test", "baseline_test"}
     # The signal is real, so the model must beat the majority-class baseline.
     assert result.metrics["test"]["accuracy"] > result.metrics["baseline_test"]["accuracy"]
@@ -69,7 +71,7 @@ def test_regression_training(regression_result) -> None:
     result = regression_result
     assert result.problem_type == "regression"
     assert result.class_labels is None
-    assert REGRESSION_METRICS <= set(result.metrics["test"])
+    assert set(result.metrics["test"]) >= REGRESSION_METRICS
     assert "accuracy" not in result.metrics["test"]
     assert result.metrics["test"]["r2"] > 0.8
     assert result.metrics["test"]["rmse"] < result.metrics["baseline_test"]["rmse"]
@@ -78,7 +80,9 @@ def test_regression_training(regression_result) -> None:
 def test_random_forest_and_explicit_problem_type() -> None:
     result = train_model(
         make_classification_frame(150, seed=3),
-        TrainingConfig(target_column="label", algorithm="random_forest", problem_type="classification"),
+        TrainingConfig(
+            target_column="label", algorithm="random_forest", problem_type="classification"
+        ),
     )
     assert result.metadata["estimator"] == "RandomForestClassifier"
     assert result.metadata["config"]["problem_type_inferred"] is False
@@ -117,7 +121,11 @@ def test_rows_with_missing_target_are_dropped() -> None:
         (lambda d: d.assign(label="same"), {}, "two distinct"),
         (lambda d: d, {"target_column": "nope"}, "not found"),
         (lambda d: d, {"problem_type": "regression"}, "numeric target"),
-        (lambda d: d.assign(label=np.linspace(0, 1, len(d))), {"problem_type": "classification"}, "labels"),
+        (
+            lambda d: d.assign(label=np.linspace(0, 1, len(d))),
+            {"problem_type": "classification"},
+            "labels",
+        ),
         (lambda d: d[["label"]], {}, "No usable feature"),
         (lambda d: d, {"feature_columns": ["ghost"]}, "Unknown feature"),
     ],

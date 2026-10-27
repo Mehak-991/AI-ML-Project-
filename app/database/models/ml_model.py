@@ -1,7 +1,7 @@
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import ForeignKey, String, Uuid
+from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base, TimestampMixin
@@ -15,9 +15,12 @@ class MLModel(TimestampMixin, Base):
     """A trained model. The joblib artifact lives under MODEL_DIR as `artifact_filename`."""
 
     __tablename__ = "ml_models"
+    __table_args__ = (UniqueConstraint("name", "version", name="uq_ml_models_name_version"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255))
+    # Increments per name: retraining "churn-model" gives v1, v2, ... (each its own artifact).
+    version: Mapped[int] = mapped_column(Integer, server_default="1")
     dataset_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("datasets.id", ondelete="RESTRICT"), index=True
     )

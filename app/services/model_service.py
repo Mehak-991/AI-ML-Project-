@@ -4,6 +4,7 @@ import logging
 import uuid
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -62,14 +63,29 @@ def train(session: Session, settings: Settings, request: TrainRequest) -> MLMode
         artifact_sha256=artifact.sha256,
         sklearn_version=result.metadata["versions"]["scikit-learn"],
     )
+    repo = MLModelRepository(session)
     try:
-        MLModelRepository(session).add(record)
+        for attempt in range(2):  # a concurrent train of the same name can take our version
+            record.version = repo.next_version(record.name)
+            try:
+                with session.begin_nested():
+                    repo.add(record)
+                break
+            except IntegrityError:
+                if attempt == 1:
+                    raise
         session.commit()
     except BaseException:
         session.rollback()
         persistence.delete_artifact(settings.MODEL_DIR, artifact.filename)
         raise
-    logger.info("Trained model %s (%s/%s)", record.id, record.problem_type, record.algorithm)
+    logger.info(
+        "Trained model %s v%d (%s/%s)",
+        record.name,
+        record.version,
+        record.problem_type,
+        record.algorithm,
+    )
     return record
 
 
@@ -94,6 +110,10 @@ def predict_with_model(
         model.feature_schema,
         allow_missing=allow_missing,
         max_records=settings.MAX_PREDICTION_RECORDS,
+    )
+    # Checked from DB metadata *before* unpickling anything.
+    persistence.check_sklearn_compatibility(
+        model.sklearn_version, settings.MODEL_COMPATIBILITY_CHECK
     )
     payload = persistence.load_artifact(
         settings.MODEL_DIR, model.artifact_filename, model.artifact_sha256

@@ -8,6 +8,7 @@ SHA-256 matches the hash recorded at save time. Never load user-supplied files.
 import hashlib
 import logging
 import os
+import pickle
 import re
 import uuid
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ from typing import Any
 import joblib
 import sklearn
 
-from app.core.exceptions import ModelArtifactError
+from app.core.exceptions import ModelArtifactError, ModelIncompatibleError
 from app.ml.training import TrainingResult
 from app.utils.paths import resolve_within
 
@@ -86,16 +87,49 @@ def load_artifact(model_dir: Path, filename: str, expected_sha256: str) -> dict[
     return _load_verified(str(path), expected_sha256)
 
 
+def check_sklearn_compatibility(trained_with: str | None, policy: str = "strict") -> None:
+    """Refuse (strict) or warn about artifacts saved with a different sklearn major.minor.
+
+    Pickled estimators are only guaranteed to load in the exact version that wrote them;
+    patch releases are normally safe, minor/major releases often are not.
+    """
+    if not trained_with or trained_with == sklearn.__version__:
+        return
+    same_minor = trained_with.split(".")[:2] == sklearn.__version__.split(".")[:2]
+    if same_minor:
+        return
+    if policy == "strict":
+        raise ModelIncompatibleError(
+            f"This model was trained with scikit-learn {trained_with}; the server runs "
+            f"{sklearn.__version__}. Retrain the model (or set MODEL_COMPATIBILITY_CHECK=warn).",
+            details={"trained_with": trained_with, "running": sklearn.__version__},
+        )
+    logger.warning(
+        "Model trained with scikit-learn %s, running %s", trained_with, sklearn.__version__
+    )
+
+
 @lru_cache(maxsize=8)
 def _load_verified(path: str, sha256: str) -> dict[str, Any]:
     """Cached by (path, hash): a changed file has a new hash and is reloaded."""
-    payload = joblib.load(path)
+    try:
+        payload = joblib.load(path)
+    except (
+        AttributeError,
+        ImportError,
+        TypeError,
+        ValueError,
+        EOFError,
+        pickle.UnpicklingError,
+    ) as exc:
+        logger.error("Could not unpickle model artifact: %s", type(exc).__name__)
+        raise ModelIncompatibleError(
+            "The stored model could not be loaded by this server version. Retrain it."
+        ) from exc
     if not isinstance(payload, dict) or payload.get("format_version") != ARTIFACT_FORMAT_VERSION:
-        raise ModelArtifactError("Unsupported model artifact format.")
-    trained_with = payload.get("metadata", {}).get("versions", {}).get("scikit-learn")
-    if trained_with and trained_with != sklearn.__version__:
-        logger.warning(
-            "Model trained with scikit-learn %s, running %s", trained_with, sklearn.__version__
+        raise ModelIncompatibleError(
+            "Unsupported model artifact format version. Retrain the model.",
+            details={"supported_format_version": ARTIFACT_FORMAT_VERSION},
         )
     return payload
 

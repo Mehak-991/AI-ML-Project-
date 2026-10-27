@@ -1,7 +1,7 @@
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.database.models import MLModel
 from app.repositories.base import BaseRepository
@@ -16,4 +16,12 @@ class MLModelRepository(BaseRepository[MLModel]):
             .where(MLModel.dataset_id == dataset_id)
             .order_by(MLModel.created_at.desc())
         )
+        return self.session.scalars(stmt).all()
+
+    def next_version(self, name: str) -> int:
+        current = self.session.scalar(select(func.max(MLModel.version)).where(MLModel.name == name))
+        return (current or 0) + 1
+
+    def list_versions(self, name: str) -> Sequence[MLModel]:
+        stmt = select(MLModel).where(MLModel.name == name).order_by(MLModel.version.desc())
         return self.session.scalars(stmt).all()

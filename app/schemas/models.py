@@ -49,6 +49,7 @@ class ModelRead(BaseModel):
 
     id: uuid.UUID
     name: str
+    version: int = Field(description="Increments each time a model with this name is trained.")
     dataset_id: uuid.UUID
     problem_type: ProblemType
     algorithm: Algorithm

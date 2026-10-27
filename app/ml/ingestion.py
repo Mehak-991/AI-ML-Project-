@@ -99,7 +99,8 @@ def read_tabular_file(
         raise InvalidFileError("CSV files must be UTF-8 encoded.") from None
     except pd.errors.ParserWarning:
         raise InvalidFileError("Some rows have more fields than the header.") from None
-    except (pd.errors.ParserError, ValueError, KeyError, OSError, zipfile.BadZipFile) as exc:
+    except Exception as exc:  # untrusted input: any parser failure (e.g. XML ParseError from a
+        # malformed or entity-bomb .xlsx) means an invalid file, not a server error.
         raise InvalidFileError(f"The file could not be parsed as {file_format.upper()}.") from exc
 
     frame.columns = [str(column).strip() for column in frame.columns]

@@ -11,7 +11,7 @@ A modular AI/ML platform API built with FastAPI. It provides:
 - **Operational hardening:** structured logs, request IDs, body limits, rate limiting, security
   headers, and Docker deployment files.
 
-> **Status.** See [Verification status](#verification-status) for what has and hasn't been run.
+> **Status.** See [FINAL_AUDIT_REPORT.md](FINAL_AUDIT_REPORT.md) and [Verification status](#verification-status) for what has and hasn't been run.
 > The project is **not** production-ready as-is. In particular it has **no authentication**; see
 > [Security considerations](#security-considerations).
 
@@ -209,14 +209,14 @@ every variable with safe defaults and empty placeholders. Invalid values stop st
 
 | Area | Key variables |
 |---|---|
-| App | `APP_ENV` (development/testing/production), `DEBUG`, `API_V1_PREFIX`, `DOCS_ENABLED` |
+| App | `APP_ENV` (development/testing/production), `DEBUG` (verbose logs only; tracebacks are never returned to clients), `API_V1_PREFIX`, `DOCS_ENABLED` |
 | Logging | `LOG_LEVEL`, `LOG_FORMAT` (`text` / `json`) |
 | HTTP hardening | `CORS_ORIGINS`, `MAX_REQUEST_BODY_MB`, `RATE_LIMIT_ENABLED`, `RATE_LIMIT_{DEFAULT,AI,TRAINING}_PER_MINUTE` |
 | Database | `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT`, `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW` |
 | Storage / ML | `UPLOAD_DIR`, `MODEL_DIR`, `MAX_UPLOAD_SIZE_MB`, `MAX_DATASET_ROWS/COLUMNS`, `MAX_PREDICTION_RECORDS`, `MODEL_COMPATIBILITY_CHECK` |
 | LLM | `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_ALLOWED_MODELS`, `OPENAI_TIMEOUT_SECONDS`, `OPENAI_MAX_RETRIES`, `LLM_MAX_*`, `LLM_LOG_CONTENT` |
 | Local models | `AI_DEVICE`, `AI_MODEL_CACHE_DIR`, `AI_ALLOW_MODEL_DOWNLOADS`, `AI_INFERENCE_TIMEOUT_SECONDS`, `AI_MAX_CONCURRENT_INFERENCES`, `EMBEDDING_*`, `CLASSIFIER_*` |
-| Docker Compose | `POSTGRES_USER/PASSWORD/DB`, `APP_PORT`, `INSTALL_LLM`, `INSTALL_NLP` |
+| Docker Compose | `POSTGRES_USER/PASSWORD/DB`, `APP_PORT`, `INSTALL_LLM`, `INSTALL_NLP`, `FORWARDED_ALLOW_IPS` |
 
 **Production rules, enforced at startup:** `DATABASE_URL` must be set and must be PostgreSQL,
 `DEBUG=false`, and `CORS_ORIGINS` must not contain `*`. In production CORS defaults to *no*
@@ -469,8 +469,9 @@ Local development (above) uses `uvicorn --reload`, text logs and an optional DB.
    platform's secret manager, or a `chmod 600` `.env` on the host. Never put them in the image,
    the compose file or git.
 2. **TLS reverse proxy.** Put Nginx, Caddy, Traefik or a cloud load balancer in front, terminating
-   TLS. Keep the app bound to 127.0.0.1 or a private network. Set `--forwarded-allow-ips` (in the
-   Dockerfile `CMD`) to the proxy's address so rate limiting and logs see real client IPs.
+   TLS. Keep the app bound to 127.0.0.1 or a private network. Set `FORWARDED_ALLOW_IPS` to the
+   proxy's address so rate limiting and logs see real client IPs; otherwise every client shares
+   the proxy's rate-limit bucket.
 3. **Authentication.** Add it at the proxy or gateway (OAuth2/OIDC, API keys) **before exposing
    the API**. The app has none.
 4. **Settings:** `APP_ENV=production`, `LOG_FORMAT=json`, explicit `CORS_ORIGINS`, and consider
@@ -510,8 +511,8 @@ Back up the database **together with** `UPLOAD_DIR` and `MODEL_DIR`: the rows po
   not logged.
 - **Input limits:** Pydantic validation with bounded sizes; a request-body limit enforced while
   streaming (413); an upload size limit.
-- **Uploads:** content sniffing, zip-bomb checks, generated filenames, and path-traversal-safe
-  storage.
+- **Uploads:** content sniffing, zip-bomb checks, XML hardening for `.xlsx` (defusedxml), generated
+  filenames, and path-traversal-safe storage.
 - **Models:** joblib artifacts are loaded only from `MODEL_DIR`, by generated name, after a hash
   check and a version check. API requests can't supply paths or model locations.
 - **HTTP:** restrictive CORS (none in production unless configured), security headers, and

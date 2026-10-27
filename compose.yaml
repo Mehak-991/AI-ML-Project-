@@ -51,6 +51,7 @@ services:
       DEBUG: "false"
       LOG_FORMAT: json
       RUN_MIGRATIONS: "true"
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
       UPLOAD_DIR: /data/uploads
       MODEL_DIR: /data/trained_models
       AI_MODEL_CACHE_DIR: /data/model_cache

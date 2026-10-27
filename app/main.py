@@ -37,13 +37,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the application. Pass `settings` to override environment config (tests)."""
     settings = settings or get_settings()
-    configure_logging(settings.LOG_LEVEL, settings.LOG_FORMAT)
+    # DEBUG only makes logging verbose. Tracebacks go to the server log, never to clients.
+    configure_logging("DEBUG" if settings.DEBUG else settings.LOG_LEVEL, settings.LOG_FORMAT)
 
     app = FastAPI(
         title=settings.APP_NAME,
         version=__version__,
         description="Modular AI/ML platform API.",
-        debug=settings.DEBUG,
+        # Starlette's debug mode returns full tracebacks in 500 responses; keep it off.
+        debug=False,
         lifespan=lifespan,
         docs_url="/docs" if settings.DOCS_ENABLED else None,
         redoc_url="/redoc" if settings.DOCS_ENABLED else None,

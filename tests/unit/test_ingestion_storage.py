@@ -167,3 +167,39 @@ def test_resolve_within_accepts_generated_names(tmp_path) -> None:
 )
 def test_sanitize_display_filename(raw, expected: str) -> None:
     assert sanitize_display_filename(raw) == expected
+
+
+def _workbook_with_sheet_xml(sheet_xml: str) -> bytes:
+    source = zipfile.ZipFile(io.BytesIO(to_xlsx_bytes(pd.DataFrame({"a": [1], "b": [2]}))))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        for item in source.infolist():
+            data = sheet_xml if item.filename == "xl/worksheets/sheet1.xml" else source.read(item)
+            archive.writestr(item, data)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize(
+    "sheet_xml",
+    [
+        "<worksheet><sheetData><row>",  # truncated / malformed XML
+        (  # "billion laughs" entity expansion (~3 GB if expanded)
+            '<?xml version="1.0"?><!DOCTYPE worksheet [<!ENTITY l0 "lol">'
+            + "".join(f'<!ENTITY l{i} "{f"&l{i - 1};" * 10}">' for i in range(1, 10))
+            + ']><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>&l9;</t></is></c></row>'
+            "</sheetData></worksheet>"
+        ),
+    ],
+    ids=["malformed-xml", "entity-bomb"],
+)
+def test_hostile_xlsx_is_rejected_as_invalid_file(tmp_path, sheet_xml: str) -> None:
+    path = write_bytes(tmp_path / "hostile.xlsx", _workbook_with_sheet_xml(sheet_xml))
+    with pytest.raises(InvalidFileError):
+        read_tabular_file(path, "excel", **LIMITS)
+
+
+def test_defusedxml_hardening_is_active() -> None:
+    import openpyxl.xml
+
+    assert openpyxl.xml.DEFUSEDXML is True

@@ -84,3 +84,20 @@ def test_validation_error_hides_input(error_client: TestClient) -> None:
     assert error.code == "validation_error"
     assert error.details[0]["loc"] == ["path", "item_id"]
     assert "not-a-number-secret" not in response.text
+
+
+def test_debug_mode_never_returns_tracebacks(make_settings) -> None:
+    """DEBUG=true must not switch Starlette into traceback-in-response mode."""
+    from app.main import create_app
+
+    app = create_app(make_settings(DEBUG=True))
+
+    @app.get("/_test/crash-debug")
+    def crash() -> None:
+        raise RuntimeError("secret internal detail: password=hunter2")
+
+    response = TestClient(app, raise_server_exceptions=False).get("/_test/crash-debug")
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "internal_server_error"
+    assert "hunter2" not in response.text
+    assert "Traceback" not in response.text

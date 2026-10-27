@@ -43,7 +43,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MODEL_DIR=/data/trained_models \
     AI_MODEL_CACHE_DIR=/data/model_cache \
     MPLCONFIGDIR=/tmp/matplotlib \
-    TIKTOKEN_CACHE_DIR=/data/model_cache/tiktoken
+    TIKTOKEN_CACHE_DIR=/data/model_cache/tiktoken \
+    FORWARDED_ALLOW_IPS=127.0.0.1
+# FORWARDED_ALLOW_IPS: proxies trusted to set X-Forwarded-For (read by uvicorn). Set it to
+# your reverse proxy's address so logs and rate limits see real client IPs.
 
 # Unprivileged user; /data holds everything the app writes (mounted as volumes).
 RUN groupadd --system --gid 10001 app \
@@ -70,5 +73,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
 # then execs the command below.
 ENTRYPOINT ["python", "scripts/docker_entrypoint.py"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", \
-     "--proxy-headers", "--forwarded-allow-ips", "127.0.0.1", "--no-access-log", \
+     "--proxy-headers", "--no-access-log", \
      "--workers", "2", "--timeout-graceful-shutdown", "20"]

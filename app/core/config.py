@@ -54,7 +54,43 @@ class Settings(BaseSettings):
     MAX_DATASET_COLUMNS: int = Field(default=500, ge=2)
     MAX_PREDICTION_RECORDS: int = Field(default=1000, ge=1)
 
+    # --- LLM provider (OpenAI). Optional: the app starts without a key. ---
     OPENAI_API_KEY: SecretStr | None = None
+    OPENAI_MODEL: str = "gpt-5.4-mini"
+    # Models a request may select; empty means only OPENAI_MODEL.
+    OPENAI_ALLOWED_MODELS: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    OPENAI_BASE_URL: str | None = None
+    OPENAI_ORGANIZATION: str | None = None
+    OPENAI_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, le=600)
+    OPENAI_MAX_RETRIES: int = Field(default=2, ge=0, le=10)
+    LLM_MAX_MESSAGES: int = Field(default=50, ge=1, le=500)
+    LLM_MAX_INPUT_CHARS: int = Field(default=32_000, ge=1)
+    LLM_MAX_INPUT_TOKENS: int = Field(default=8_000, ge=1)
+    LLM_MAX_OUTPUT_TOKENS: int = Field(default=4_096, ge=16)
+    LLM_DEFAULT_OUTPUT_TOKENS: int = Field(default=1_024, ge=16)
+    # Prompts/completions are never logged unless this is explicitly enabled.
+    LLM_LOG_CONTENT: bool = False
+
+    # --- Local models (Sentence Transformers / Transformers). Loaded lazily. ---
+    AI_DEVICE: Literal["auto", "cpu", "cuda", "mps"] = "auto"
+    AI_MODEL_CACHE_DIR: Path | None = None  # None = Hugging Face default cache
+    AI_ALLOW_MODEL_DOWNLOADS: bool = True
+    AI_MAX_LOADED_MODELS: int = Field(default=3, ge=1, le=20)
+    AI_INFERENCE_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0, le=3600)
+    AI_MAX_CONCURRENT_INFERENCES: int = Field(default=2, ge=1, le=64)
+
+    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # If set, every embedding must have exactly this many dimensions.
+    EMBEDDING_DIMENSION: int | None = Field(default=None, ge=1)
+    EMBEDDING_BATCH_SIZE: int = Field(default=32, ge=1, le=1024)
+    EMBEDDING_MAX_TEXTS: int = Field(default=128, ge=1)
+    EMBEDDING_MAX_TEXT_CHARS: int = Field(default=8_000, ge=1)
+
+    CLASSIFIER_MODEL: str = "distilbert/distilbert-base-uncased-finetuned-sst-2-english"
+    CLASSIFIER_MAX_TEXTS: int = Field(default=64, ge=1)
+    CLASSIFIER_MAX_TEXT_CHARS: int = Field(default=4_000, ge=1)
+
+    TOKENIZER_MAX_TEXT_CHARS: int = Field(default=200_000, ge=1)
 
     @field_validator("API_V1_PREFIX")
     @classmethod
@@ -71,7 +107,22 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
-    @field_validator("DATABASE_URL", "OPENAI_API_KEY", mode="before")
+    @field_validator("OPENAI_ALLOWED_MODELS", mode="before")
+    @classmethod
+    def _split_models(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [model.strip() for model in value.split(",") if model.strip()]
+        return value
+
+    @field_validator(
+        "DATABASE_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_ORGANIZATION",
+        "EMBEDDING_DIMENSION",
+        "AI_MODEL_CACHE_DIR",
+        mode="before",
+    )
     @classmethod
     def _blank_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
@@ -115,6 +166,10 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+    @property
+    def allowed_llm_models(self) -> list[str]:
+        return list(dict.fromkeys([self.OPENAI_MODEL, *self.OPENAI_ALLOWED_MODELS]))
 
     @property
     def cors_origins(self) -> list[str]:

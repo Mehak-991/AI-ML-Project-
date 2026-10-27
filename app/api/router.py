@@ -2,9 +2,10 @@
 
 from fastapi import APIRouter
 
-from app.api.routes import datasets, health, models
+from app.api.routes import ai, datasets, health, models
 
 api_v1_router = APIRouter()
 api_v1_router.include_router(health.router)
 api_v1_router.include_router(datasets.router)
 api_v1_router.include_router(models.router)
+api_v1_router.include_router(ai.router)

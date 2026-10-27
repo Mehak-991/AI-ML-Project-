@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
+from app.ai.container import AIServices
 from app.api.router import api_v1_router
 from app.api.routes import root
 from app.core.config import Settings, get_settings
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Starting %s v%s", app.title, __version__)
     yield
+    app.state.ai.shutdown()
     dispose_engine()
     logger.info("Shutdown complete")
 
@@ -42,6 +44,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/openapi.json",
     )
     app.dependency_overrides[get_settings] = lambda: settings
+    # Lazy container: no optional package is imported and no model is loaded here.
+    app.state.ai = AIServices(settings)
 
     origins = settings.cors_origins
     if origins:

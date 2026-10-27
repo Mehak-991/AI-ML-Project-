@@ -1,6 +1,7 @@
 """Loading CSV and Excel files into DataFrames with defensive limits."""
 
 import csv
+import warnings
 import zipfile
 from collections import Counter
 from pathlib import Path, PurePath
@@ -58,7 +59,7 @@ def _raw_header(path: Path, file_format: str) -> list[str]:
 def _check_header(header: list[str]) -> None:
     names = [name.strip() for name in header]
     if not names:
-        raise DataValidationError("The file has no header row.")
+        raise InvalidFileError("The file is empty or has no header row.")
     duplicates = sorted(name for name, count in Counter(names).items() if count > 1 and name)
     if duplicates:
         raise DataValidationError(
@@ -75,7 +76,17 @@ def read_tabular_file(
             _check_xlsx_archive(path)
         _check_header(_raw_header(path, file_format))
         if file_format == "csv":
-            frame = pd.read_csv(path, nrows=max_rows + 1, encoding="utf-8-sig", low_memory=False)
+            # index_col=False stops pandas silently turning surplus fields into an index
+            # (which shifts data into the wrong columns); its warning is made an error.
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", pd.errors.ParserWarning)
+                frame = pd.read_csv(
+                    path,
+                    nrows=max_rows + 1,
+                    encoding="utf-8-sig",
+                    low_memory=False,
+                    index_col=False,
+                )
         elif file_format == "excel":
             frame = pd.read_excel(path, sheet_name=0, nrows=max_rows + 1, engine="openpyxl")
         else:
@@ -86,6 +97,8 @@ def read_tabular_file(
         raise InvalidFileError("The file is empty.") from None
     except UnicodeDecodeError:
         raise InvalidFileError("CSV files must be UTF-8 encoded.") from None
+    except pd.errors.ParserWarning:
+        raise InvalidFileError("Some rows have more fields than the header.") from None
     except (pd.errors.ParserError, ValueError, KeyError, OSError, zipfile.BadZipFile) as exc:
         raise InvalidFileError(f"The file could not be parsed as {file_format.upper()}.") from exc
 

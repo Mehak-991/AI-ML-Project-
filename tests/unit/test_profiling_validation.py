@@ -54,7 +54,9 @@ def test_summary_is_json_serializable(classification_df) -> None:
 
 def test_column_schema(classification_df) -> None:
     schema = column_schema(classification_df)
-    assert {"name": "cat_a", "dtype": "object", "kind": "categorical"} in schema
+    cat_a = next(c for c in schema if c["name"] == "cat_a")
+    assert cat_a["kind"] == "categorical"
+    assert cat_a["dtype"] in ("object", "str")  # pandas 3 uses a dedicated string dtype
 
 
 def test_validation_of_clean_data(classification_df) -> None:

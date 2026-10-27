@@ -2,6 +2,7 @@
 
 from typing import Any, Literal
 
+import numpy as np
 import pandas as pd
 
 from app.ml.utils import round_or_none, to_python
@@ -71,7 +72,10 @@ def summarize_column(series: pd.Series, top_k: int = 5) -> dict[str, Any]:
         "unique_count": int(non_null.nunique()),
     }
     if kind == "numeric" and not non_null.empty:
-        described = non_null.describe()
+        infinite = np.isinf(non_null.to_numpy(dtype=float))
+        summary["infinite_count"] = int(infinite.sum())
+        finite = non_null[~infinite]
+        described = finite.describe() if not finite.empty else pd.Series(dtype=float)
         summary["stats"] = {
             key: round_or_none(described.get(key))
             for key in ("mean", "std", "min", "25%", "50%", "75%", "max")

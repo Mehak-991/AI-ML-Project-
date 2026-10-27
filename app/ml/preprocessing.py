@@ -81,7 +81,8 @@ def coerce_features(df: pd.DataFrame, features: list[FeatureSpec]) -> pd.DataFra
         if spec.kind == "numeric":
             out[spec.name] = pd.to_numeric(series, errors="coerce").astype(float)
         else:
-            out[spec.name] = series.map(lambda v: v if pd.isna(v) else str(v)).astype(object)
+            # np.nan (not None/pd.NA) is the marker SimpleImputer recognises in object columns.
+            out[spec.name] = series.map(lambda v: np.nan if pd.isna(v) else str(v)).astype(object)
     return out
 
 

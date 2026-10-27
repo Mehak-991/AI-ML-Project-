@@ -16,7 +16,8 @@ MAX_REPORTED_ERRORS = 50
 
 def _check_value(value: Any, kind: str, allow_missing: bool) -> str | None:
     """Return an error message, or None if the value is acceptable."""
-    if value is None:
+    # NaN cannot arrive via JSON, but does when Python callers pass pandas records.
+    if value is None or (isinstance(value, float) and math.isnan(value)):
         return None if allow_missing else "Missing value (null) is not allowed."
     if kind == "numeric":
         if isinstance(value, bool) or not isinstance(value, int | float):

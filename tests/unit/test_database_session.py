@@ -42,25 +42,29 @@ def test_engine_is_reused_and_disposed(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert db_session.get_engine() is not engine
 
 
-def test_get_db_closes_session(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_sqlite(monkeypatch, tmp_path)
+# Patches below use monkeypatch.context() so the cached functions are restored
+# before the autouse fixture's teardown calls dispose_engine().
+
+
+def test_get_db_closes_session(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = MagicMock()
-    monkeypatch.setattr(db_session, "get_session_factory", lambda: lambda: fake)
-    generator = db_session.get_db()
-    assert next(generator) is fake
-    generator.close()
+    with monkeypatch.context() as patch:
+        patch.setattr(db_session, "get_session_factory", lambda: lambda: fake)
+        generator = db_session.get_db()
+        assert next(generator) is fake
+        generator.close()
     fake.close.assert_called_once()
     fake.rollback.assert_not_called()
 
 
-def test_get_db_rolls_back_on_error(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_sqlite(monkeypatch, tmp_path)
+def test_get_db_rolls_back_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = MagicMock()
-    monkeypatch.setattr(db_session, "get_session_factory", lambda: lambda: fake)
-    generator = db_session.get_db()
-    next(generator)
-    with pytest.raises(RuntimeError):
-        generator.throw(RuntimeError("boom"))
+    with monkeypatch.context() as patch:
+        patch.setattr(db_session, "get_session_factory", lambda: lambda: fake)
+        generator = db_session.get_db()
+        next(generator)
+        with pytest.raises(RuntimeError):
+            generator.throw(RuntimeError("boom"))
     fake.rollback.assert_called_once()
     fake.close.assert_called_once()
 
@@ -90,9 +94,9 @@ def test_diagnose_failure_hides_password(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     fake_engine = MagicMock()
     fake_engine.connect.side_effect = refuse
-    monkeypatch.setattr(db_session, "get_engine", lambda: fake_engine)
-
-    result = db_session.diagnose_database()
+    with monkeypatch.context() as patch:
+        patch.setattr(db_session, "get_engine", lambda: fake_engine)
+        result = db_session.diagnose_database()
     assert (result.ok, result.category) == (False, "connection_refused")
     assert "s3cret-pw" not in repr(result)
     assert result.url.startswith("postgresql+psycopg://app:***@db.example")

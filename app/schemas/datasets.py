@@ -50,6 +50,7 @@ class ColumnSummary(BaseModel):
     missing_count: int
     missing_ratio: float
     unique_count: int
+    infinite_count: int | None = None
     stats: dict[str, Any] | None = None
     top_values: list[dict[str, Any]] | None = None
 

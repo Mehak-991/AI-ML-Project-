@@ -25,11 +25,13 @@ class AppError(Exception):
         code: str | None = None,
         status_code: int | None = None,
         details: Any = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.message = message or self.message
         self.code = code or self.code
         self.status_code = status_code or self.status_code
         self.details = details
+        self.headers = headers
         super().__init__(self.message)
 
 
@@ -90,3 +92,69 @@ class ServiceUnavailableError(AppError):
 class DatabaseNotConfiguredError(ServiceUnavailableError):
     code = "database_not_configured"
     message = "The database is not configured."
+
+
+# --- AI / LLM ---------------------------------------------------------------------
+
+
+class OptionalDependencyMissingError(ServiceUnavailableError):
+    code = "optional_dependency_missing"
+    message = "An optional AI dependency is not installed."
+
+
+class ModelLoadError(ServiceUnavailableError):
+    code = "model_load_failed"
+    message = "The AI model could not be loaded."
+
+
+class InferenceTimeoutError(AppError):
+    status_code = 504
+    code = "inference_timeout"
+    message = "Model inference did not finish in time."
+
+
+class ProviderNotConfiguredError(ServiceUnavailableError):
+    code = "provider_not_configured"
+    message = "The LLM provider is not configured."
+
+
+class ProviderError(AppError):
+    """Upstream LLM provider failure. Messages never include provider payloads or keys."""
+
+    status_code = 502
+    code = "provider_error"
+    message = "The LLM provider returned an error."
+
+
+class ProviderAuthenticationError(ProviderError):
+    code = "provider_authentication_failed"
+    message = "The LLM provider rejected the configured credentials. Check OPENAI_API_KEY."
+
+
+class ProviderRateLimitError(ProviderError):
+    status_code = 429
+    code = "provider_rate_limited"
+    message = "The LLM provider rate limit was reached. Retry later."
+
+
+class ProviderQuotaExceededError(ProviderError):
+    status_code = 429
+    code = "provider_quota_exceeded"
+    message = "The LLM provider account has no remaining quota. Check billing."
+
+
+class ProviderTimeoutError(ProviderError):
+    status_code = 504
+    code = "provider_timeout"
+    message = "The LLM provider did not respond in time."
+
+
+class ProviderUnavailableError(ProviderError):
+    code = "provider_unavailable"
+    message = "The LLM provider could not be reached or is temporarily unavailable."
+
+
+class ProviderRequestRejectedError(ProviderError):
+    status_code = 422
+    code = "provider_rejected_request"
+    message = "The LLM provider rejected the request."

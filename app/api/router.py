@@ -1,0 +1,8 @@
+"""Aggregates all versioned API routers. Register new v1 route modules here."""
+
+from fastapi import APIRouter
+
+from app.api.routes import health
+
+api_v1_router = APIRouter()
+api_v1_router.include_router(health.router)

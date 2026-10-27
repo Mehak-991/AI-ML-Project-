@@ -11,7 +11,8 @@ from app.database.models import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep loggers created before migrations (e.g. app.*) working when run in-process.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 settings = get_settings()
 if settings.DATABASE_URL is None:

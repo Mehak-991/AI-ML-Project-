@@ -8,7 +8,6 @@ SHA-256 matches the hash recorded at save time. Never load user-supplied files.
 import hashlib
 import logging
 import os
-import pickle
 import re
 import uuid
 from dataclasses import dataclass
@@ -114,14 +113,8 @@ def _load_verified(path: str, sha256: str) -> dict[str, Any]:
     """Cached by (path, hash): a changed file has a new hash and is reloaded."""
     try:
         payload = joblib.load(path)
-    except (
-        AttributeError,
-        ImportError,
-        TypeError,
-        ValueError,
-        EOFError,
-        pickle.UnpicklingError,
-    ) as exc:
+    except Exception as exc:  # unpickling can fail with almost any exception type
+        # (KeyError on bad opcodes, AttributeError/ImportError on renamed classes, ...).
         logger.error("Could not unpickle model artifact: %s", type(exc).__name__)
         raise ModelIncompatibleError(
             "The stored model could not be loaded by this server version. Retrain it."

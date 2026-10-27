@@ -1,0 +1,40 @@
+# Keep the build context small and free of secrets and local data.
+.git
+.gitignore
+.dockerignore
+Dockerfile
+compose*.yaml
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+# Environments and caches
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+.ipynb_checkpoints
+.vscode
+.idea
+
+# Runtime data and artifacts (mounted as volumes instead)
+uploads
+trained_models
+logs
+reports
+model_cache
+datasets
+notebooks
+*.db
+*.sqlite3
+
+# Not needed at runtime
+tests
+README.md

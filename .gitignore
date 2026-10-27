@@ -37,3 +37,12 @@ trained_models/*
 !trained_models/.gitkeep
 logs/*
 !logs/.gitkeep
+
+# Runtime-generated (never commit)
+model_cache/
+*.db
+*.sqlite3
+*.joblib
+*.tmp
+*.part
+compose.override.yaml

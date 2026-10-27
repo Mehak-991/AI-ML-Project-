@@ -1,0 +1,79 @@
+# Production-style stack: API + PostgreSQL.
+#
+#   cp .env.example .env        # then set POSTGRES_PASSWORD (and OPENAI_API_KEY if used)
+#   docker compose up -d --build
+#   docker compose ps           # both services should become "healthy"
+#
+# The database has NO published port: only the app can reach it on the internal
+# network. The API is published on 127.0.0.1 only; put a TLS reverse proxy in front
+# of it (see README "Production deployment") instead of exposing it directly.
+# For local development with a reachable database, add compose.dev.yaml.
+
+name: aiproject
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aiproject}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-aiproject}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [backend]
+    security_opt: ["no-new-privileges:true"]
+
+  app:
+    build:
+      context: .
+      args:
+        INSTALL_LLM: ${INSTALL_LLM:-false}
+        INSTALL_NLP: ${INSTALL_NLP:-false}
+    image: aiproject:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Overrides whatever DATABASE_URL .env holds for local (non-Docker) runs.
+      # URL-encode special characters in the password (e.g. @ -> %40).
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aiproject}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-aiproject}
+      APP_ENV: production
+      DEBUG: "false"
+      LOG_FORMAT: json
+      RUN_MIGRATIONS: "true"
+      UPLOAD_DIR: /data/uploads
+      MODEL_DIR: /data/trained_models
+      AI_MODEL_CACHE_DIR: /data/model_cache
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    volumes:
+      - uploads:/data/uploads
+      - models:/data/trained_models
+      - model_cache:/data/model_cache
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [backend, frontend]
+
+networks:
+  backend:
+    internal: true  # no route to the outside world; db lives only here
+  frontend: {}
+
+volumes:
+  pgdata:
+  uploads:
+  models:
+  model_cache:

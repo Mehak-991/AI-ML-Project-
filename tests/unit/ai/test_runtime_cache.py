@@ -183,3 +183,21 @@ def test_namespace_directory_is_not_mistaken_for_library(
     assert not is_available("fake_ns_pkg_xyz")
     with pytest.raises(OptionalDependencyMissingError):
         require("fake_ns_pkg_xyz", "test")
+
+
+def test_installed_namespace_package_is_detected() -> None:
+    """langgraph 1.x ships as a namespace package; it must still count as installed."""
+    pytest.importorskip("langgraph.graph")
+    assert is_available("langgraph")
+    require("langgraph.graph", "test")
+
+
+def test_project_datasets_folder_is_not_huggingface_datasets() -> None:
+    import importlib.metadata
+
+    try:
+        importlib.metadata.distribution("datasets")
+        pytest.skip("Hugging Face datasets is installed")
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    assert not is_available("datasets")

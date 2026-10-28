@@ -8,7 +8,7 @@ from app.ai.classification import TextClassificationService
 from app.ai.embeddings import EmbeddingService, SentenceTransformerBackend
 from app.ai.model_cache import ModelCache
 from app.ai.runtime import InferenceExecutor
-from app.ai.tokens import TokenCounter, load_tiktoken_encoding
+from app.ai.tokens import EstimatedEncoding, TokenCounter, load_tiktoken_encoding
 from app.ai.transformer_inference import TransformerInferenceService
 from app.core.exceptions import (
     DataValidationError,
@@ -309,4 +309,9 @@ def test_tiktoken_unknown_model_uses_default_encoding(monkeypatch: pytest.Monkey
     stub.encoding_for_model = unknown
     stub.get_encoding = lambda name: FakeEncoding()
     monkeypatch.setitem(sys.modules, "tiktoken", stub)
-    assert isinstance(load_tiktoken_encoding("brand-new-model"), FakeEncoding)
+    encoding = load_tiktoken_encoding("brand-new-model")
+    # Unknown models (e.g. Llama via Ollama) get the default BPE, flagged as an estimate.
+    assert isinstance(encoding, EstimatedEncoding)
+    assert encoding.name == "fake_bpe"
+    counter = TokenCounter("brand-new-model", loader=load_tiktoken_encoding)
+    assert counter.count("one two").approximate is True

@@ -67,7 +67,19 @@ class Settings(BaseSettings):
     # (pickles are not guaranteed compatible); warn: load anyway and log a warning.
     MODEL_COMPATIBILITY_CHECK: Literal["strict", "warn"] = "strict"
 
-    # --- LLM provider (OpenAI). Optional: the app starts without a key. ---
+    # --- LLM provider. "openai" (hosted, needs OPENAI_API_KEY) or "ollama" (local, free). ---
+    # Default stays "openai" so deployments without this setting behave exactly as before.
+    LLM_PROVIDER: Literal["openai", "ollama"] = "openai"
+
+    # Ollama (used when LLM_PROVIDER=ollama). No API key involved.
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
+    OLLAMA_MODEL: str = "llama3.2:3b"
+    # Other locally pulled models a request may select (comma-separated).
+    OLLAMA_ALLOWED_MODELS: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Local CPU inference is slow; this bounds one whole /api/chat call (incl. model load).
+    OLLAMA_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0, le=3600)
+
+    # OpenAI (used when LLM_PROVIDER=openai). Optional: the app starts without a key.
     OPENAI_API_KEY: SecretStr | None = None
     OPENAI_MODEL: str = "gpt-5.4-mini"
     # Models a request may select; empty means only OPENAI_MODEL.
@@ -120,7 +132,15 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
-    @field_validator("OPENAI_ALLOWED_MODELS", mode="before")
+    @field_validator("OLLAMA_BASE_URL")
+    @classmethod
+    def _validate_ollama_url(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("OLLAMA_BASE_URL must start with http:// or https://")
+        return value
+
+    @field_validator("OPENAI_ALLOWED_MODELS", "OLLAMA_ALLOWED_MODELS", mode="before")
     @classmethod
     def _split_models(cls, value: object) -> object:
         if isinstance(value, str):
@@ -185,8 +205,19 @@ class Settings(BaseSettings):
         return int(self.MAX_REQUEST_BODY_MB * 1024 * 1024)
 
     @property
+    def active_llm_model(self) -> str:
+        """Default chat model of the selected provider."""
+        return self.OLLAMA_MODEL if self.LLM_PROVIDER == "ollama" else self.OPENAI_MODEL
+
+    @property
     def allowed_llm_models(self) -> list[str]:
-        return list(dict.fromkeys([self.OPENAI_MODEL, *self.OPENAI_ALLOWED_MODELS]))
+        """Models a chat request may select, for the selected provider only."""
+        extra = (
+            self.OLLAMA_ALLOWED_MODELS
+            if self.LLM_PROVIDER == "ollama"
+            else self.OPENAI_ALLOWED_MODELS
+        )
+        return list(dict.fromkeys([self.active_llm_model, *extra]))
 
     @property
     def cors_origins(self) -> list[str]:

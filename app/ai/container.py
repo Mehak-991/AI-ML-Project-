@@ -11,7 +11,7 @@ from typing import Any
 
 from app.ai.classification import TextClassificationService
 from app.ai.embeddings import EmbeddingService, SentenceTransformerBackend
-from app.ai.llm import ChatLimits, ChatService, OpenAIChatService
+from app.ai.llm import ChatLimits, ChatService, OllamaChatService, OpenAIChatService
 from app.ai.model_cache import ModelCache
 from app.ai.optional import EXTRA_FOR_MODULE, is_available, require
 from app.ai.runtime import InferenceExecutor, configure_hf_environment, resolve_device
@@ -30,7 +30,8 @@ class AIServices:
         self.executor = InferenceExecutor(
             settings.AI_MAX_CONCURRENT_INFERENCES, settings.AI_INFERENCE_TIMEOUT_SECONDS
         )
-        self.token_counter = TokenCounter(settings.OPENAI_MODEL)
+        # Default model = the selected provider's model (exact for OpenAI, estimated for Ollama).
+        self.token_counter = TokenCounter(settings.active_llm_model)
         self._lock = threading.Lock()
         self._chat: ChatService | None = None
         self._device: str | None = None
@@ -70,15 +71,41 @@ class AIServices:
             max_chars=s.CLASSIFIER_MAX_TEXT_CHARS,
         )
 
+    def _chat_limits(self) -> ChatLimits:
+        s = self.settings
+        return ChatLimits(
+            max_messages=s.LLM_MAX_MESSAGES,
+            max_input_chars=s.LLM_MAX_INPUT_CHARS,
+            max_input_tokens=s.LLM_MAX_INPUT_TOKENS,
+            max_output_tokens=s.LLM_MAX_OUTPUT_TOKENS,
+            default_output_tokens=s.LLM_DEFAULT_OUTPUT_TOKENS,
+        )
+
     def chat_service(self) -> ChatService:
-        """The configured LLM provider; raises a clear 503 if no key is set."""
+        """The LLM selected by LLM_PROVIDER (built once, reused across requests).
+
+        ollama: local server, no API key needed. openai: raises a clear 503 if no key is set.
+        """
         if self._chat is not None:
             return self._chat
         s = self.settings
+        if s.LLM_PROVIDER == "ollama":
+            with self._lock:
+                if self._chat is None:
+                    self._chat = OllamaChatService(
+                        base_url=s.OLLAMA_BASE_URL,
+                        default_model=s.OLLAMA_MODEL,
+                        allowed_models=s.allowed_llm_models,
+                        limits=self._chat_limits(),
+                        token_counter=self.token_counter,
+                        timeout_seconds=s.OLLAMA_TIMEOUT_SECONDS,
+                        log_content=s.LLM_LOG_CONTENT,
+                    )
+            return self._chat
         if s.OPENAI_API_KEY is None:
             raise ProviderNotConfiguredError(
-                "No LLM provider is configured. Set OPENAI_API_KEY in .env (see .env.example) "
-                "and restart the server.",
+                "No LLM provider is configured. Set OPENAI_API_KEY in .env (see .env.example), "
+                "or use a local model with LLM_PROVIDER=ollama, and restart the server.",
                 details={"setting": "OPENAI_API_KEY"},
             )
         require("openai", "LLM chat completion")
@@ -88,13 +115,7 @@ class AIServices:
                     api_key=s.OPENAI_API_KEY.get_secret_value(),
                     default_model=s.OPENAI_MODEL,
                     allowed_models=s.allowed_llm_models,
-                    limits=ChatLimits(
-                        max_messages=s.LLM_MAX_MESSAGES,
-                        max_input_chars=s.LLM_MAX_INPUT_CHARS,
-                        max_input_tokens=s.LLM_MAX_INPUT_TOKENS,
-                        max_output_tokens=s.LLM_MAX_OUTPUT_TOKENS,
-                        default_output_tokens=s.LLM_DEFAULT_OUTPUT_TOKENS,
-                    ),
+                    limits=self._chat_limits(),
                     token_counter=self.token_counter,
                     timeout_seconds=s.OPENAI_TIMEOUT_SECONDS,
                     max_retries=s.OPENAI_MAX_RETRIES,
@@ -117,9 +138,11 @@ class AIServices:
         return {
             "packages": {module: is_available(module) for module in sorted(EXTRA_FOR_MODULE)},
             "llm": {
-                "provider": "openai",
-                "configured": s.OPENAI_API_KEY is not None,
-                "default_model": s.OPENAI_MODEL,
+                "provider": s.LLM_PROVIDER,
+                # ollama needs no key; whether the local server is up shows on first use.
+                "configured": s.LLM_PROVIDER == "ollama" or s.OPENAI_API_KEY is not None,
+                "requires_api_key": s.LLM_PROVIDER == "openai",
+                "default_model": s.active_llm_model,
                 "allowed_models": s.allowed_llm_models,
             },
             "embeddings": {"model": s.EMBEDDING_MODEL, "expected_dimension": s.EMBEDDING_DIMENSION},
@@ -132,3 +155,8 @@ class AIServices:
     def shutdown(self) -> None:
         self.executor.shutdown()
         self.model_cache.clear()
+        with self._lock:
+            chat, self._chat = self._chat, None
+        close = getattr(chat, "close", None)
+        if callable(close):  # releases the Ollama HTTP connection pool
+            close()

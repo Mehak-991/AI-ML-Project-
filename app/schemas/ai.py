@@ -75,11 +75,18 @@ class ChatMessageSchema(StrictModel):
 class ChatRequest(StrictModel):
     messages: list[ChatMessageSchema] = Field(min_length=1, max_length=500)
     model: ModelName | None = Field(
-        default=None, description="Must be OPENAI_MODEL or listed in OPENAI_ALLOWED_MODELS."
+        default=None,
+        description=(
+            "Defaults to the selected provider's model (OLLAMA_MODEL or OPENAI_MODEL). Other "
+            "values must be in OLLAMA_ALLOWED_MODELS / OPENAI_ALLOWED_MODELS."
+        ),
     )
     max_output_tokens: int | None = Field(default=None, ge=16, le=32_768)
     temperature: float | None = Field(
-        default=None, ge=0, le=2, description="Omit for reasoning models that reject it."
+        default=None,
+        ge=0,
+        le=2,
+        description="Omit to use the model default (OpenAI reasoning models reject it).",
     )
 
 

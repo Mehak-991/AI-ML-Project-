@@ -43,11 +43,21 @@ SETTINGS_ENV_VARS = [
     "MAX_DATASET_COLUMNS",
     "MAX_PREDICTION_RECORDS",
     "OPENAI_API_KEY",
+    "OPENAI_MODEL",
+    "OPENAI_ALLOWED_MODELS",
+    "LLM_PROVIDER",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
+    "OLLAMA_ALLOWED_MODELS",
+    "OLLAMA_TIMEOUT_SECONDS",
 ]
 
 
 @pytest.fixture(autouse=True)
 def isolated_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    # Never read the developer's .env: code paths that use the global get_settings()
+    # (e.g. the DB session layer) would otherwise reach a real database or provider.
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
     for name in SETTINGS_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
     get_settings.cache_clear()

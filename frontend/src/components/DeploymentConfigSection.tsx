@@ -3,12 +3,7 @@ import {
   Server,
   Play,
   Square,
-  CheckCircle2,
   AlertCircle,
-  Clock,
-  Layers,
-  FileCode,
-  ShieldCheck,
   History,
 } from 'lucide-react';
 import type { ModelRead } from '../types/model';
@@ -59,6 +54,11 @@ export const DeploymentConfigSection: React.FC<DeploymentConfigSectionProps> = (
           <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
             <Server className="w-4 h-4 text-indigo-600" />
             Model Deployment Lifecycle & Configuration
+            {health?.environment && (
+              <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-600 uppercase">
+                {health.environment}
+              </span>
+            )}
           </h3>
           <p className="text-xs text-slate-500 mt-0.5">
             Manage live deployment states, version tracking, and environment routing for{' '}

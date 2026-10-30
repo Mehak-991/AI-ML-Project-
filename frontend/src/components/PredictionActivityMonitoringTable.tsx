@@ -1,17 +1,11 @@
 import React, { useState } from 'react';
 import {
   Activity,
-  Search,
-  Filter,
   CheckCircle2,
   XCircle,
-  Calendar,
-  Layers,
   ChevronDown,
   ChevronUp,
   Tag,
-  Clock,
-  Sparkles,
 } from 'lucide-react';
 import type { PredictionLogRead } from '../types/deployment';
 import type { ModelRead } from '../types/model';

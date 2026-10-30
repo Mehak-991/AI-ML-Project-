@@ -267,7 +267,9 @@ def _execute_worker_task(job_id: uuid.UUID, settings: Settings) -> None:
             duration = time.perf_counter() - start_time
             logger.exception("Job %s execution failed: %s", job.id, exc)
 
-            if job.retry_count < job.max_retries and job.status != "cancelled":
+            # Validation and missing entity errors are permanent; do not retry them blindly
+            is_permanent_error = isinstance(exc, (DataValidationError, NotFoundError))
+            if not is_permanent_error and job.retry_count < job.max_retries and job.status != "cancelled":
                 job.status = "retry_pending"
                 job.current_stage = f"Failure: {exc}. Scheduled for retry."
             else:

@@ -246,3 +246,25 @@ def _execute_worker_task(job_id: uuid.UUID, settings: Settings) -> None:
 def dispatch_job(job_id: uuid.UUID, settings: Settings) -> None:
     """Submit worker task to isolated threadpool executor."""
     executor.submit(_execute_worker_task, job_id, settings)
+
+
+def run_worker_loop(settings: Settings, poll_interval_seconds: float = 2.0) -> None:
+    """Standalone worker poll loop claiming queued jobs from PostgreSQL."""
+    logger.info("Starting standalone PostgreSQL background worker (poll_interval=%.1fs)...", poll_interval_seconds)
+    session_factory = get_session_factory()
+    
+    while True:
+        try:
+            with session_factory() as session:
+                # Find oldest queued job
+                stmt = select(Job).where(Job.status == "queued").order_by(Job.created_at).limit(1)
+                job = session.scalars(stmt).first()
+                if job:
+                    logger.info("Claimed job %s of type %s", job.id, job.job_type)
+                    # Dispatch to worker pool
+                    dispatch_job(job.id, settings)
+        except Exception as exc:
+            logger.error("Error in background worker loop: %s", exc)
+
+        time.sleep(poll_interval_seconds)
+

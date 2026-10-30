@@ -9,6 +9,7 @@ from app.database.types import JSONType
 
 if TYPE_CHECKING:
     from app.database.models.dataset import Dataset
+    from app.database.models.deployment import Deployment, PredictionLog
 
 
 class MLModel(TimestampMixin, Base):
@@ -35,3 +36,9 @@ class MLModel(TimestampMixin, Base):
     sklearn_version: Mapped[str] = mapped_column(String(32))
 
     dataset: Mapped["Dataset"] = relationship(back_populates="models")
+    deployments: Mapped[list["Deployment"]] = relationship(
+        back_populates="model", cascade="all, delete-orphan"
+    )
+    prediction_logs: Mapped[list["PredictionLog"]] = relationship(
+        back_populates="model", cascade="all, delete-orphan"
+    )

@@ -3,14 +3,27 @@
 .env.*
 !.env.example
 
-# Python
+# Python virtual environments (ALL common naming conventions)
+.venv/
+.venv*/
+venv/
+venv*/
+env/
+env*/
+ENV/
+.env/
+
+# Frontend build outputs and dependencies
+frontend/node_modules/
+frontend/dist/
+node_modules/
+
+
+# Python caches and build artifacts
 __pycache__/
 *.py[cod]
 *.egg-info/
 build/
-dist/
-.venv/
-venv/
 
 # Tooling
 .pytest_cache/

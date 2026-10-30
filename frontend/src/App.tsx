@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { DatasetManagementPage } from './pages/DatasetManagementPage';
 import { ModelManagementPage } from './pages/ModelManagementPage';
+import { PredictionManagementPage } from './pages/PredictionManagementPage';
 
 type NavTab = 'models' | 'datasets' | 'training' | 'inference' | 'settings';
 

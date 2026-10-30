@@ -566,4 +566,109 @@ export const authApi = {
   },
 };
 
+export const driftApi = {
+  /**
+   * Get cross-model drift overview
+   * GET /api/v1/drift/overview
+   */
+  async getOverview(): Promise<import('../types/drift').DriftOverviewResponse> {
+    const response = await apiClient.get<import('../types/drift').DriftOverviewResponse>('/drift/overview');
+    return response.data;
+  },
+
+  /**
+   * List drift/quality reports for a specific model
+   * GET /api/v1/drift/models/{model_id}/reports
+   */
+  async listReports(
+    modelId: string,
+    params?: { report_type?: string; offset?: number; limit?: number }
+  ): Promise<import('../types/drift').DriftReportList> {
+    const response = await apiClient.get<import('../types/drift').DriftReportList>(
+      `/drift/models/${modelId}/reports`,
+      { params }
+    );
+    return response.data;
+  },
+
+  /**
+   * List drift alerts for a specific model
+   * GET /api/v1/drift/models/{model_id}/alerts
+   */
+  async listModelAlerts(
+    modelId: string,
+    params?: { severity?: string; resolved?: boolean; offset?: number; limit?: number }
+  ): Promise<import('../types/drift').DriftAlertList> {
+    const response = await apiClient.get<import('../types/drift').DriftAlertList>(
+      `/drift/models/${modelId}/alerts`,
+      { params }
+    );
+    return response.data;
+  },
+
+  /**
+   * List platform-wide drift alerts
+   * GET /api/v1/drift/alerts
+   */
+  async listAllAlerts(params?: {
+    severity?: string;
+    resolved?: boolean;
+    offset?: number;
+    limit?: number;
+  }): Promise<import('../types/drift').DriftAlertList> {
+    const response = await apiClient.get<import('../types/drift').DriftAlertList>('/drift/alerts', {
+      params,
+    });
+    return response.data;
+  },
+
+  /**
+   * Resolve an alert
+   * POST /api/v1/drift/alerts/{alert_id}/resolve
+   */
+  async resolveAlert(alertId: string): Promise<import('../types/drift').DriftAlertRead> {
+    const response = await apiClient.post<import('../types/drift').DriftAlertRead>(
+      `/drift/alerts/${alertId}/resolve`
+    );
+    return response.data;
+  },
+
+  /**
+   * Trigger on-demand data quality check
+   * POST /api/v1/drift/models/{model_id}/analyze-quality
+   */
+  async analyzeQuality(modelId: string): Promise<import('../types/drift').DriftReportRead> {
+    const response = await apiClient.post<import('../types/drift').DriftReportRead>(
+      `/drift/models/${modelId}/analyze-quality`
+    );
+    return response.data;
+  },
+
+  /**
+   * Trigger on-demand feature drift analysis (PSI, KS, Chi-Square)
+   * POST /api/v1/drift/models/{model_id}/analyze-drift
+   */
+  async analyzeDrift(
+    modelId: string,
+    params?: import('../types/drift').AnalyzeDriftRequest
+  ): Promise<import('../types/drift').DriftReportRead> {
+    const response = await apiClient.post<import('../types/drift').DriftReportRead>(
+      `/drift/models/${modelId}/analyze-drift`,
+      params || {}
+    );
+    return response.data;
+  },
+
+  /**
+   * Trigger on-demand model performance analysis vs baseline
+   * POST /api/v1/drift/models/{model_id}/analyze-performance
+   */
+  async analyzePerformance(modelId: string): Promise<import('../types/drift').DriftReportRead> {
+    const response = await apiClient.post<import('../types/drift').DriftReportRead>(
+      `/drift/models/${modelId}/analyze-performance`
+    );
+    return response.data;
+  },
+};
+
 

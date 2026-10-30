@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.routes import ai, auth, datasets, deployments, health, models, monitoring, predictions
+from app.api.routes import ai, auth, datasets, deployments, drift, health, models, monitoring, predictions
 from app.schemas.common import ErrorResponse
 
 # Errors any route can return (validation, middleware limits, unexpected/DB failures).
@@ -24,5 +24,6 @@ api_v1_router.include_router(models.router)
 api_v1_router.include_router(deployments.router)
 api_v1_router.include_router(predictions.router)
 api_v1_router.include_router(monitoring.router)
+api_v1_router.include_router(drift.router)
 api_v1_router.include_router(ai.router)
 

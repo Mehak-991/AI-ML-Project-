@@ -6,13 +6,20 @@ from app.database.models.ml_model import MLModel
 from app.ml.persistence import save_artifact
 
 
+import hashlib
+import sklearn
+
 def _create_test_model(session, tmp_path, settings) -> MLModel:
-    artifact_filename = f"test_model_{uuid.uuid4().hex[:8]}.joblib"
-    fake_payload = {"pipeline": None}  # Dummy payload
-    # Save a minimal dummy artifact
-    path = settings.MODEL_DIR / artifact_filename
+    filename = f"{uuid.uuid4().hex}.joblib"
+    fake_payload = {"pipeline": "fake_pipeline"}
+    path = tmp_path / filename
     import joblib
     joblib.dump(fake_payload, path)
+
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        digest.update(f.read())
+    sha = digest.hexdigest()
 
     model = MLModel(
         name="test-churn",
@@ -24,9 +31,9 @@ def _create_test_model(session, tmp_path, settings) -> MLModel:
         feature_schema=[{"name": "tenure", "kind": "numeric"}],
         metrics={"test": {"accuracy": 0.95}},
         training_metadata={"trained_at": "2026-10-30T10:00:00Z", "training_seconds": 1.2},
-        artifact_filename=artifact_filename,
-        artifact_sha256="fake_sha256",
-        sklearn_version="1.9.1",
+        artifact_filename=filename,
+        artifact_sha256=sha,
+        sklearn_version=sklearn.__version__,
     )
     session.add(model)
     session.commit()

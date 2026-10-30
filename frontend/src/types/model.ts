@@ -117,3 +117,25 @@ export interface TrainModelRequest {
   random_state?: number;
   drop_duplicates?: boolean;
 }
+
+export type FeaturePrimitive = string | number | boolean | null;
+
+export interface PredictRequest {
+  records: Array<Record<string, FeaturePrimitive>>;
+  allow_missing?: boolean;
+}
+
+export interface PredictResponse {
+  model_id: string;
+  problem_type: ProblemType;
+  predictions: Array<string | number | boolean | null>;
+  probabilities?: Array<Record<string, number>> | null;
+}
+
+export interface PredictionResultItem {
+  index: number;
+  input: Record<string, FeaturePrimitive>;
+  prediction: string | number | boolean | null;
+  probabilities?: Record<string, number> | null;
+  timestamp: string;
+}

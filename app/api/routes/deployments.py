@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import DbSession, SettingsDep
+from app.api.deps import DbSession, SettingsDep, require_role
 from app.repositories.deployments import DeploymentRepository
 from app.schemas.common import ErrorResponse
 from app.schemas.deployments import DeploymentList, DeploymentRead, DeployRequest
@@ -15,14 +15,17 @@ router = APIRouter(tags=["deployments"])
 
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Model or deployment not found"}}
 UNPROCESSABLE = {422: {"model": ErrorResponse, "description": "Invalid input or data"}}
+UNAUTHORIZED = {401: {"model": ErrorResponse, "description": "Authentication required"}}
+FORBIDDEN = {403: {"model": ErrorResponse, "description": "Admin privileges required"}}
 
 
 @router.post(
     "/models/{model_id}/deploy",
     response_model=DeploymentRead,
     status_code=status.HTTP_200_OK,
-    summary="Deploy a trained model to production serving",
-    responses=NOT_FOUND | UNPROCESSABLE,
+    summary="Deploy a trained model to production serving (Admin only)",
+    responses=NOT_FOUND | UNPROCESSABLE | UNAUTHORIZED | FORBIDDEN,
+    dependencies=[Depends(require_role("admin"))],
 )
 def deploy_model(
     model_id: uuid.UUID,
@@ -38,8 +41,9 @@ def deploy_model(
     "/models/{model_id}/undeploy",
     response_model=DeploymentRead,
     status_code=status.HTTP_200_OK,
-    summary="Undeploy an active model from production serving",
-    responses=NOT_FOUND,
+    summary="Undeploy an active model from production serving (Admin only)",
+    responses=NOT_FOUND | UNAUTHORIZED | FORBIDDEN,
+    dependencies=[Depends(require_role("admin"))],
 )
 def undeploy_model(model_id: uuid.UUID, db: DbSession) -> DeploymentRead:
     deployment = deployment_service.undeploy_model(db, model_id)

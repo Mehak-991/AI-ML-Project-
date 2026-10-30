@@ -4,6 +4,7 @@ import {
   BrainCircuit,
   Cpu,
   Layers,
+  Server,
   Settings,
   Menu,
   X,
@@ -13,8 +14,9 @@ import {
 import { DatasetManagementPage } from './pages/DatasetManagementPage';
 import { ModelManagementPage } from './pages/ModelManagementPage';
 import { PredictionManagementPage } from './pages/PredictionManagementPage';
+import { DeploymentMonitoringPage } from './pages/DeploymentMonitoringPage';
 
-type NavTab = 'models' | 'datasets' | 'training' | 'inference' | 'settings';
+type NavTab = 'models' | 'datasets' | 'training' | 'inference' | 'deployment' | 'settings';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('models');
@@ -45,6 +47,12 @@ export function App() {
       label: 'Predictions & AI',
       icon: <BrainCircuit className="w-4 h-4" />,
       phase: 'Phase 7',
+    },
+    {
+      id: 'deployment',
+      label: 'Deployment & Monitoring',
+      icon: <Server className="w-4 h-4" />,
+      phase: 'Phase 8',
     },
     {
       id: 'settings',
@@ -181,6 +189,7 @@ export function App() {
                 {activeTab === 'datasets' && 'Dataset Management'}
                 {activeTab === 'training' && 'Model Training Studio'}
                 {activeTab === 'inference' && 'Predictions & AI Engine'}
+                {activeTab === 'deployment' && 'Model Deployment & Monitoring Studio'}
                 {activeTab === 'settings' && 'System Settings'}
               </h1>
               <p className="text-xs text-slate-500 hidden sm:block">
@@ -190,6 +199,8 @@ export function App() {
                   'Upload CSV/XLSX datasets, run pre-upload validations, and inspect schemas.'}
                 {activeTab === 'training' && 'Train supervised models on registered datasets.'}
                 {activeTab === 'inference' && 'Execute batch predictions and LLM inference.'}
+                {activeTab === 'deployment' &&
+                  'Evaluate deployment readiness, inspect serving architecture, and audit performance benchmarks.'}
                 {activeTab === 'settings' && 'Runtime configuration and backend server properties.'}
               </p>
             </div>
@@ -243,27 +254,32 @@ export function App() {
 
           {activeTab === 'inference' && <PredictionManagementPage />}
 
+          {activeTab === 'deployment' && <DeploymentMonitoringPage />}
+
           {activeTab === 'datasets' && (
             <div className="bg-slate-950 text-slate-100 p-6 md:p-8 rounded-3xl shadow-lg border border-slate-800">
               <DatasetManagementPage />
             </div>
           )}
 
-          {activeTab !== 'models' && activeTab !== 'datasets' && activeTab !== 'inference' && (
+          {activeTab !== 'models' &&
+            activeTab !== 'datasets' &&
+            activeTab !== 'inference' &&
+            activeTab !== 'deployment' && (
             <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-md mx-auto my-12 shadow-sm">
               <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 mx-auto mb-4">
                 <Cpu className="w-8 h-8" />
               </div>
               <h3 className="text-lg font-bold text-slate-900 capitalize">{activeTab} View</h3>
               <p className="text-xs text-slate-500 mt-2">
-                Phase 6 (Model Registry & Analytics), Phase 7 (Prediction Studio), and Phase 4
-                (Dataset Management) are active. Additional modules will unlock in subsequent phases.
+                Phase 6 (Model Registry & Analytics), Phase 7 (Prediction Studio), Phase 8 (Deployment & Monitoring),
+                and Phase 4 (Dataset Management) are active. Additional modules will unlock in subsequent phases.
               </p>
               <button
-                onClick={() => setActiveTab('inference')}
+                onClick={() => setActiveTab('deployment')}
                 className="mt-5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors shadow-sm"
               >
-                Go to Prediction Studio
+                Go to Deployment & Monitoring
               </button>
             </div>
           )}

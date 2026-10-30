@@ -34,13 +34,13 @@ def _create_test_model(session, tmp_path, settings) -> MLModel:
     return model
 
 
-def test_deploy_and_undeploy_flow(client: TestClient, db_session, settings, tmp_path):
+def test_deploy_and_undeploy_flow(api_client: TestClient, db_session, settings, tmp_path):
     # Set model dir to tmp
     settings.MODEL_DIR = tmp_path
     model = _create_test_model(db_session, tmp_path, settings)
 
     # 1. Deploy model
-    deploy_res = client.post(
+    deploy_res = api_client.post(
         f"/api/v1/models/{model.id}/deploy",
         json={"environment": "production", "configuration": {"replicas": 2}},
     )
@@ -51,23 +51,23 @@ def test_deploy_and_undeploy_flow(client: TestClient, db_session, settings, tmp_
     assert dep_data["version"] == 1
 
     # 2. List deployments
-    list_res = client.get(f"/api/v1/deployments?model_id={model.id}")
+    list_res = api_client.get(f"/api/v1/deployments?model_id={model.id}")
     assert list_res.status_code == 200
     assert list_res.json()["total"] == 1
 
     # 3. Undeploy model
-    undep_res = client.post(f"/api/v1/models/{model.id}/undeploy")
+    undep_res = api_client.post(f"/api/v1/models/{model.id}/undeploy")
     assert undep_res.status_code == 200
     assert undep_res.json()["status"] == "Undeployed"
 
     # 4. Monitoring overview check
-    mon_res = client.get("/api/v1/monitoring/overview")
+    mon_res = api_client.get("/api/v1/monitoring/overview")
     assert mon_res.status_code == 200
     mon_data = mon_res.json()
     assert mon_data["total_deployments"] >= 1
 
 
-def test_prediction_history_and_ground_truth(client: TestClient, db_session):
+def test_prediction_history_and_ground_truth(api_client: TestClient, db_session):
     from app.services import deployment_service
     test_model_id = uuid.uuid4()
 
@@ -85,14 +85,14 @@ def test_prediction_history_and_ground_truth(client: TestClient, db_session):
     assert log is not None
 
     # Fetch via API
-    res = client.get(f"/api/v1/predictions/history?model_id={test_model_id}")
+    res = api_client.get(f"/api/v1/predictions/history?model_id={test_model_id}")
     assert res.status_code == 200
     data = res.json()
     assert data["total"] == 1
     assert data["items"][0]["id"] == str(log.id)
 
     # Submit ground truth
-    gt_res = client.post(
+    gt_res = api_client.post(
         f"/api/v1/predictions/history/{log.id}/ground-truth",
         json={"ground_truth": [0, 1]},
     )

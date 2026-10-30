@@ -11,6 +11,7 @@ from app.api.routes import (
     experiments,
     explainability,
     health,
+    jobs,
     models,
     monitoring,
     predictions,
@@ -39,5 +40,6 @@ api_v1_router.include_router(monitoring.router)
 api_v1_router.include_router(drift.router)
 api_v1_router.include_router(experiments.router)
 api_v1_router.include_router(explainability.router)
+api_v1_router.include_router(jobs.router)
 api_v1_router.include_router(ai.router)
 

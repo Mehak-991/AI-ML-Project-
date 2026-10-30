@@ -145,6 +145,12 @@ def _execute_worker_task(job_id: uuid.UUID, settings: Settings) -> None:
         if not job or job.status == "cancelled":
             return
 
+        log_context = {
+            "job_id": str(job.id),
+            "job_type": job.job_type,
+            "model_id": str(job.model_id) if job.model_id else None,
+        }
+
         # Ensure job is marked running with execution stage
         job.status = "running"
         if not job.started_at:
@@ -154,6 +160,13 @@ def _execute_worker_task(job_id: uuid.UUID, settings: Settings) -> None:
         session.commit()
 
         start_time = time.perf_counter()
+        logger.info(
+            "Starting execution for job %s [type=%s, model_id=%s]",
+            job.id,
+            job.job_type,
+            job.model_id,
+            extra=log_context,
+        )
 
         try:
             # Dispatch handler by job_type
@@ -263,9 +276,25 @@ def _execute_worker_task(job_id: uuid.UUID, settings: Settings) -> None:
             job.execution_duration_seconds = round(duration, 4)
             session.commit()
 
+            logger.info(
+                "Completed job %s [type=%s, model_id=%s] in %.4fs",
+                job.id,
+                job.job_type,
+                job.model_id,
+                duration,
+                extra={**log_context, "duration_seconds": round(duration, 4)},
+            )
+
         except Exception as exc:
             duration = time.perf_counter() - start_time
-            logger.exception("Job %s execution failed: %s", job.id, exc)
+            logger.exception(
+                "Job %s [type=%s, model_id=%s] execution failed: %s",
+                job.id,
+                job.job_type,
+                job.model_id,
+                exc,
+                extra={**log_context, "error": str(exc), "duration_seconds": round(duration, 4)},
+            )
 
             # Validation and missing entity errors are permanent; do not retry them blindly
             is_permanent_error = isinstance(exc, (DataValidationError, NotFoundError))
@@ -343,7 +372,16 @@ def run_worker_loop(
             with session_factory() as session:
                 job = claim_next_queued_job(session)
                 if job:
-                    logger.info("Claimed job %s of type %s", job.id, job.job_type)
+                    logger.info(
+                        "Claimed job %s of type %s",
+                        job.id,
+                        job.job_type,
+                        extra={
+                            "job_id": str(job.id),
+                            "job_type": job.job_type,
+                            "model_id": str(job.model_id) if job.model_id else None,
+                        },
+                    )
                     # Dispatch to worker pool
                     dispatch_job(job.id, settings)
         except Exception as exc:

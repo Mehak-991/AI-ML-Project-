@@ -5,6 +5,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import desc, select
@@ -144,8 +145,10 @@ def _execute_worker_task(job_id: uuid.UUID, settings: Settings) -> None:
         if not job or job.status == "cancelled":
             return
 
+        # Ensure job is marked running with execution stage
         job.status = "running"
-        job.started_at = datetime.now(timezone.utc)
+        if not job.started_at:
+            job.started_at = datetime.now(timezone.utc)
         job.progress_percentage = 15
         job.current_stage = "Initializing worker pipeline"
         session.commit()
@@ -209,6 +212,41 @@ def _execute_worker_task(job_id: uuid.UUID, settings: Settings) -> None:
                     "features_analyzed": len(res.feature_importances),
                 }
 
+            elif job.job_type == "batch_prediction" and job.model_id:
+                from app.services import deployment_service, model_service
+
+                job.current_stage = "Executing batch model inference"
+                job.progress_percentage = 50
+                session.commit()
+
+                records = job.input_config.get("records", [])
+                allow_missing = job.input_config.get("allow_missing", False)
+                model, predictions, probabilities = model_service.predict_with_model(
+                    session, settings, job.model_id, records, allow_missing=allow_missing
+                )
+
+                # Record prediction audit log if available
+                active_dep = deployment_service.DeploymentRepository(session).get_active_for_model(job.model_id)
+                deployment_id = active_dep.id if active_dep else None
+                deployment_service.log_prediction(
+                    session,
+                    model_id=model.id,
+                    deployment_id=deployment_id,
+                    record_count=len(records),
+                    duration_ms=50.0,
+                    status="success",
+                    problem_type=model.problem_type,
+                    prediction_summary={"count": len(predictions), "predictions": predictions[:50]},
+                )
+
+                job.result = {
+                    "model_id": str(model.id),
+                    "problem_type": model.problem_type,
+                    "record_count": len(records),
+                    "predictions": predictions,
+                    "probabilities": probabilities,
+                }
+
             else:
                 job.current_stage = "Processing general background task"
                 job.progress_percentage = 70
@@ -248,17 +286,60 @@ def dispatch_job(job_id: uuid.UUID, settings: Settings) -> None:
     executor.submit(_execute_worker_task, job_id, settings)
 
 
-def run_worker_loop(settings: Settings, poll_interval_seconds: float = 2.0) -> None:
-    """Standalone worker poll loop claiming queued jobs from PostgreSQL."""
+def claim_next_queued_job(session: Session) -> Job | None:
+    """Atomically claim the next queued job using SELECT FOR UPDATE SKIP LOCKED.
+    
+    Immediately updates the status to 'running' and commits the transaction to release
+    the row lock before heavy model inference begins. Compatible with PostgreSQL and SQLite.
+    """
+    bind = session.get_bind()
+    dialect_name = bind.dialect.name if bind is not None else ""
+    
+    stmt = select(Job).where(Job.status == "queued").order_by(Job.created_at)
+    if dialect_name == "postgresql":
+        stmt = stmt.with_for_update(skip_locked=True)
+    
+    job = session.scalars(stmt.limit(1)).first()
+    if job:
+        job.status = "running"
+        job.started_at = datetime.now(timezone.utc)
+        job.progress_percentage = 10
+        job.current_stage = "Job claimed by worker"
+        session.commit()
+        session.refresh(job)
+        return job
+    return None
+
+
+def run_worker_loop(
+    settings: Settings,
+    poll_interval_seconds: float = 2.0,
+    heartbeat_file: str | None = "/tmp/worker_heartbeat",
+) -> None:
+    """Standalone worker poll loop claiming queued jobs from PostgreSQL and writing heartbeats."""
     logger.info("Starting standalone PostgreSQL background worker (poll_interval=%.1fs)...", poll_interval_seconds)
     session_factory = get_session_factory()
     
+    def _update_heartbeat() -> None:
+        if not heartbeat_file:
+            return
+        try:
+            # Atomic write to avoid partial reads by healthcheck
+            p = Path(heartbeat_file)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp_p = p.with_name(f"{p.name}.tmp")
+            tmp_p.write_text(str(time.time()), encoding="utf-8")
+            tmp_p.replace(p)
+        except Exception as exc:
+            logger.warning("Failed to update worker heartbeat at %s: %s", heartbeat_file, exc)
+
+    # Initial heartbeat on startup
+    _update_heartbeat()
+
     while True:
         try:
             with session_factory() as session:
-                # Find oldest queued job
-                stmt = select(Job).where(Job.status == "queued").order_by(Job.created_at).limit(1)
-                job = session.scalars(stmt).first()
+                job = claim_next_queued_job(session)
                 if job:
                     logger.info("Claimed job %s of type %s", job.id, job.job_type)
                     # Dispatch to worker pool
@@ -266,5 +347,7 @@ def run_worker_loop(settings: Settings, poll_interval_seconds: float = 2.0) -> N
         except Exception as exc:
             logger.error("Error in background worker loop: %s", exc)
 
+        _update_heartbeat()
         time.sleep(poll_interval_seconds)
+
 

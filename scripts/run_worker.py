@@ -22,8 +22,16 @@ logging.basicConfig(
 logger = logging.getLogger("worker")
 
 
+HEARTBEAT_PATH = Path("/tmp/worker_heartbeat")
+
+
 def signal_handler(signum, frame):
     logger.info("Received termination signal %s. Shutting down worker gracefully...", signum)
+    try:
+        if HEARTBEAT_PATH.exists():
+            HEARTBEAT_PATH.unlink()
+    except Exception as exc:
+        logger.warning("Could not unlink heartbeat file on shutdown: %s", exc)
     sys.exit(0)
 
 
@@ -33,7 +41,7 @@ def main():
 
     settings = load_settings()
     logger.info("Worker initialized with APP_ENV=%s", settings.APP_ENV)
-    run_worker_loop(settings)
+    run_worker_loop(settings, heartbeat_file=str(HEARTBEAT_PATH))
 
 
 if __name__ == "__main__":

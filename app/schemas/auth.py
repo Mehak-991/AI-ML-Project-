@@ -34,6 +34,7 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     refresh_token: str
+    user: "UserRead"
 
 
 class UserRead(BaseModel):

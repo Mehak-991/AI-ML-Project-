@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -47,9 +48,10 @@ def create_access_token(
     else:
         expire = now + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    to_encode.update({"exp": expire, "iat": now, "type": "access"})
+    to_encode.update({"exp": expire, "iat": now, "jti": uuid.uuid4().hex, "type": "access"})
     secret = settings.JWT_SECRET_KEY.get_secret_value()
     return jwt.encode(to_encode, secret, algorithm=settings.JWT_ALGORITHM)
+
 
 
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:

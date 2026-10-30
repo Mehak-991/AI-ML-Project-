@@ -49,6 +49,19 @@ class ConflictError(AppError):
     message = "The request conflicts with the current state of the resource."
 
 
+class AuthenticationError(AppError):
+    status_code = 401
+    code = "authentication_failed"
+    message = "Authentication credentials were invalid or missing."
+
+
+class PermissionDeniedError(AppError):
+    status_code = 403
+    code = "permission_denied"
+    message = "You do not have permission to perform this action."
+
+
+
 class InvalidFileError(AppError):
     status_code = 400
     code = "invalid_file"

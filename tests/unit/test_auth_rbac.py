@@ -180,5 +180,6 @@ def test_rbac_permissions_and_last_admin_protection(api_client: TestClient) -> N
         json={"role": "viewer"},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
-    assert demote_res.status_code == 400
+    assert demote_res.status_code == 422
     assert "last active administrator" in demote_res.text.lower()
+

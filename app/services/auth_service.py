@@ -5,13 +5,14 @@ from sqlalchemy.orm import Session
 
 from app.core import security
 from app.core.config import Settings
-from app.core.exceptions import ConflictError, DataValidationError, NotFoundError
+from app.core.exceptions import AuthenticationError, ConflictError, DataValidationError, NotFoundError
 from app.database.models.user import RefreshToken, User
 from app.repositories.users import RefreshTokenRepository, UserRepository
 from app.schemas.auth import (
     RefreshTokenRequest,
     TokenResponse,
     UserLoginRequest,
+    UserRead,
     UserRegisterRequest,
     UserUpdateRequest,
 )
@@ -50,10 +51,10 @@ def authenticate_user(
     user_repo = UserRepository(session)
     user = user_repo.get_by_email(request.email)
     if not user or not security.verify_password(request.password, user.hashed_password):
-        raise DataValidationError("Invalid email or password.")
+        raise AuthenticationError("Invalid email or password.")
 
     if not user.is_active:
-        raise DataValidationError("User account is deactivated. Contact an administrator.")
+        raise AuthenticationError("User account is deactivated. Contact an administrator.")
 
     access_token = security.create_access_token(
         {"sub": str(user.id), "email": user.email, "role": user.role}, settings
@@ -77,6 +78,7 @@ def authenticate_user(
         token_type="bearer",
         expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         refresh_token=raw_refresh_token,
+        user=UserRead.model_validate(user),
     )
 
 
@@ -88,15 +90,15 @@ def refresh_access_token(
     record = token_repo.get_by_hash(token_hash)
 
     if not record or record.revoked:
-        raise DataValidationError("Invalid or revoked refresh token.")
+        raise AuthenticationError("Invalid or revoked refresh token.")
 
     expires_at = datetime.fromisoformat(record.expires_at)
     if datetime.now(timezone.utc) > expires_at:
-        raise DataValidationError("Refresh token has expired. Please log in again.")
+        raise AuthenticationError("Refresh token has expired. Please log in again.")
 
     user = UserRepository(session).get(record.user_id)
     if not user or not user.is_active:
-        raise DataValidationError("User is inactive or not found.")
+        raise AuthenticationError("User is inactive or not found.")
 
     # Token rotation: revoke used refresh token and issue new pair
     record.revoked = True
@@ -121,7 +123,9 @@ def refresh_access_token(
         token_type="bearer",
         expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         refresh_token=raw_new_refresh,
+        user=UserRead.model_validate(user),
     )
+
 
 
 def revoke_refresh_token(session: Session, refresh_token: str) -> None:

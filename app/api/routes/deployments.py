@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.api.deps import DbSession, SettingsDep, require_role
 from app.repositories.deployments import DeploymentRepository

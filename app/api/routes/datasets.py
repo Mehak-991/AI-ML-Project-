@@ -6,7 +6,7 @@ Datasets are only ever referenced by ID; clients cannot supply filesystem paths.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 
 from app.api.deps import DbSession, SettingsDep, require_role
 from app.repositories.datasets import DatasetRepository

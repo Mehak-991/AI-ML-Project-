@@ -243,3 +243,23 @@ export const modelApi = {
   },
 };
 
+export const systemApi = {
+  /**
+   * System readiness & health status probe.
+   * GET /api/v1/health
+   */
+  async getHealth(): Promise<import('../types/deployment').HealthReadinessResponse> {
+    const response = await apiClient.get<import('../types/deployment').HealthReadinessResponse>('/health');
+    return response.data;
+  },
+
+  /**
+   * AI service provider configuration and optional packages status.
+   * GET /api/v1/ai/status
+   */
+  async getAiStatus(): Promise<import('../types/deployment').AIServicesStatusResponse> {
+    const response = await apiClient.get<import('../types/deployment').AIServicesStatusResponse>('/ai/status');
+    return response.data;
+  },
+};
+

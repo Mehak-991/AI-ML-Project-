@@ -21,6 +21,7 @@ import { PredictionManagementPage } from './pages/PredictionManagementPage';
 import { DeploymentMonitoringPage } from './pages/DeploymentMonitoringPage';
 import { UserManagementPage } from './pages/UserManagementPage';
 import { DataDriftMonitoringPage } from './pages/DataDriftMonitoringPage';
+import { ExperimentTrackingPage } from './pages/ExperimentTrackingPage';
 import { AuthModal } from './components/AuthModal';
 import { useAuth } from './context/AuthContext';
 
@@ -56,9 +57,9 @@ export function App() {
     },
     {
       id: 'training',
-      label: 'Model Training Studio',
+      label: 'AutoML & Experiments',
       icon: <Cpu className="w-4 h-4" />,
-      phase: 'Phase 5',
+      phase: 'Phase 12',
     },
     {
       id: 'inference',
@@ -331,6 +332,8 @@ export function App() {
 
           {activeTab === 'drift' && <DataDriftMonitoringPage />}
 
+          {activeTab === 'training' && <ExperimentTrackingPage />}
+
           {activeTab === 'datasets' && (
             <div className="bg-slate-950 text-slate-100 p-6 md:p-8 rounded-3xl shadow-lg border border-slate-800">
               <DatasetManagementPage />
@@ -363,6 +366,7 @@ export function App() {
 
           {activeTab !== 'models' &&
             activeTab !== 'datasets' &&
+            activeTab !== 'training' &&
             activeTab !== 'inference' &&
             activeTab !== 'deployment' &&
             activeTab !== 'drift' &&

@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import DbSession, SettingsDep
+from app.api.deps import DbSession, SettingsDep, require_role
 from app.repositories.ml_models import MLModelRepository
 from app.schemas.common import ErrorResponse
 from app.schemas.models import ModelList, ModelRead, PredictRequest, PredictResponse, TrainRequest
@@ -16,14 +16,17 @@ router = APIRouter(prefix="/models", tags=["models"])
 
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Not found"}}
 UNPROCESSABLE = {422: {"model": ErrorResponse, "description": "Invalid input or data"}}
+UNAUTHORIZED = {401: {"model": ErrorResponse, "description": "Authentication required"}}
+FORBIDDEN = {403: {"model": ErrorResponse, "description": "Admin or ML Engineer privileges required"}}
 
 
 @router.post(
     "/train",
     response_model=ModelRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Train a baseline model on a stored dataset",
-    responses=NOT_FOUND | UNPROCESSABLE,
+    summary="Train a baseline model on a stored dataset (Admin & ML Engineer only)",
+    responses=NOT_FOUND | UNPROCESSABLE | UNAUTHORIZED | FORBIDDEN,
+    dependencies=[Depends(require_role("admin", "ml_engineer"))],
 )
 def train_model(request: TrainRequest, db: DbSession, settings: SettingsDep) -> ModelRead:
     # Synchronous: runs in FastAPI's threadpool. Fine for small datasets; see README limits.

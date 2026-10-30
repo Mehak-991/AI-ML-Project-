@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Query, UploadFile, status
 
-from app.api.deps import DbSession, SettingsDep
+from app.api.deps import DbSession, SettingsDep, require_role
 from app.repositories.datasets import DatasetRepository
 from app.schemas.common import ErrorResponse
 from app.schemas.datasets import (
@@ -23,6 +23,8 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 UPLOAD_ERRORS = {
     400: {"model": ErrorResponse, "description": "Invalid or unparseable file"},
+    401: {"model": ErrorResponse, "description": "Authentication required"},
+    403: {"model": ErrorResponse, "description": "Admin or ML Engineer privileges required"},
     413: {"model": ErrorResponse, "description": "File too large"},
     415: {"model": ErrorResponse, "description": "Unsupported file type"},
     422: {"model": ErrorResponse, "description": "Data validation failed"},
@@ -59,8 +61,9 @@ def validate_dataset_file(
     "",
     response_model=DatasetCreateResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Upload and register a dataset",
+    summary="Upload and register a dataset (Admin & ML Engineer only)",
     responses=UPLOAD_ERRORS,
+    dependencies=[Depends(require_role("admin", "ml_engineer"))],
 )
 def upload_dataset(
     settings: SettingsDep,

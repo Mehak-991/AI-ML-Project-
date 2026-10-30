@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import DbSession
+from app.api.deps import DbSession, require_role
 from app.core.exceptions import NotFoundError
 from app.repositories.deployments import PredictionLogRepository
 from app.schemas.common import ErrorResponse
@@ -16,6 +16,8 @@ from app.services import deployment_service
 router = APIRouter(tags=["predictions"])
 
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Prediction log not found"}}
+UNAUTHORIZED = {401: {"model": ErrorResponse, "description": "Authentication required"}}
+FORBIDDEN = {403: {"model": ErrorResponse, "description": "Admin or ML Engineer privileges required"}}
 
 
 @router.get(
@@ -106,8 +108,9 @@ def list_model_prediction_history(
 @router.post(
     "/predictions/history/{prediction_id}/ground-truth",
     response_model=PredictionLogRead,
-    summary="Submit ground-truth labels for production accuracy evaluation",
-    responses=NOT_FOUND,
+    summary="Submit ground-truth labels for production accuracy evaluation (Admin & ML Engineer only)",
+    responses=NOT_FOUND | UNAUTHORIZED | FORBIDDEN,
+    dependencies=[Depends(require_role("admin", "ml_engineer"))],
 )
 def submit_ground_truth(
     prediction_id: uuid.UUID,

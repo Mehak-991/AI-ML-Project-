@@ -1,14 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Brain,
-  HelpCircle,
-  BarChart2,
-  ListFilter,
-  CheckCircle2,
   RefreshCw,
   Info,
   ChevronDown,
-  ChevronRight,
   TrendingUp,
   TrendingDown,
 } from 'lucide-react';
@@ -20,8 +14,6 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
-  Cell,
-  Legend,
 } from 'recharts';
 import { modelApi, explainabilityApi } from '../services/api';
 import type { ModelRead } from '../types/model';
@@ -383,7 +375,7 @@ export function ExplainabilityStudioPage() {
                   <span className="text-slate-500 block">Predicted Output</span>
                   <span className="text-base font-bold text-slate-900">{String(limeResult.prediction)}</span>
                 </div>
-                {limeResult.score !== null && (
+                {limeResult.score != null && (
                   <div className="text-right">
                     <span className="text-slate-500 block">Local Fidelity (R²)</span>
                     <span className="font-mono font-semibold text-slate-700">

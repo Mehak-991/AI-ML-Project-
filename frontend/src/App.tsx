@@ -350,6 +350,8 @@ export function App() {
 
           {activeTab === 'training' && <ExperimentTrackingPage />}
 
+          {activeTab === 'explainability' && <ExplainabilityStudioPage />}
+
           {activeTab === 'datasets' && (
             <div className="bg-slate-950 text-slate-100 p-6 md:p-8 rounded-3xl shadow-lg border border-slate-800">
               <DatasetManagementPage />
@@ -386,6 +388,7 @@ export function App() {
             activeTab !== 'inference' &&
             activeTab !== 'deployment' &&
             activeTab !== 'drift' &&
+            activeTab !== 'explainability' &&
             activeTab !== 'users' && (
             <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-md mx-auto my-12 shadow-sm">
               <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 mx-auto mb-4">

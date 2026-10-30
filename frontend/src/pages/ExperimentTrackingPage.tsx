@@ -1,17 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Cpu,
   Play,
   RotateCcw,
   StopCircle,
   Plus,
-  BarChart2,
   CheckCircle2,
   XCircle,
   Clock,
-  Layers,
-  ArrowRight,
-  Sliders,
   Check,
   AlertTriangle,
 } from 'lucide-react';
@@ -502,6 +497,44 @@ export function ExperimentTrackingPage() {
                   placeholder="e.g., customer_churn_opt_v1"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Description (Optional)</label>
+                <input
+                  type="text"
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                  placeholder="e.g., Testing hyperparameter tuning on churn data"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Test Split (0.1 - 0.5)</label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0.1"
+                    max="0.5"
+                    value={formTestSize}
+                    onChange={(e) => setFormTestSize(parseFloat(e.target.value) || 0.2)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Val Split (0.05 - 0.4)</label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0.05"
+                    max="0.4"
+                    value={formValidationSize}
+                    onChange={(e) => setFormValidationSize(parseFloat(e.target.value) || 0.1)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

@@ -130,6 +130,8 @@ def db_session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
 @pytest.fixture
 def api_client(app: FastAPI, session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
     """Client whose get_db and auth dependencies are backed by the SQLite test database."""
+    from typing import Any
+    from datetime import datetime, timezone
     from app.api.deps import get_current_user, get_current_user_optional
     from app.database.models.user import User
     import uuid
@@ -141,6 +143,8 @@ def api_client(app: FastAPI, session_factory: sessionmaker[Session]) -> Iterator
         hashed_password="mock",
         role="admin",
         is_active=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
 
     def _get_db() -> Iterator[Session]:
@@ -153,9 +157,30 @@ def api_client(app: FastAPI, session_factory: sessionmaker[Session]) -> Iterator
         finally:
             session.close()
 
+    real_get_current_user = get_current_user
+    real_get_current_user_optional = get_current_user_optional
+
+    def _conditional_get_current_user(
+        auth: Any = None,
+        db: Session = None,
+        settings: Any = None,
+    ):
+        if auth and auth.credentials:
+            return real_get_current_user(auth, db, settings)
+        return mock_admin
+
+    def _conditional_get_current_user_optional(
+        auth: Any = None,
+        db: Session = None,
+        settings: Any = None,
+    ):
+        if auth and auth.credentials:
+            return real_get_current_user_optional(auth, db, settings)
+        return mock_admin
+
     app.dependency_overrides[get_db] = _get_db
-    app.dependency_overrides[get_current_user] = lambda: mock_admin
-    app.dependency_overrides[get_current_user_optional] = lambda: mock_admin
+    app.dependency_overrides[get_current_user] = _conditional_get_current_user
+    app.dependency_overrides[get_current_user_optional] = _conditional_get_current_user_optional
 
     with TestClient(app, raise_server_exceptions=False) as test_client:
         yield test_client

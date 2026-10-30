@@ -671,4 +671,95 @@ export const driftApi = {
   },
 };
 
+export const experimentApi = {
+  /**
+   * List experiments with optional pagination and status filter.
+   * GET /api/v1/experiments
+   */
+  async listExperiments(params?: {
+    offset?: number;
+    limit?: number;
+    status?: string;
+  }): Promise<import('../types/experiment').ExperimentListResponse> {
+    const response = await apiClient.get<import('../types/experiment').ExperimentListResponse>(
+      '/experiments',
+      { params }
+    );
+    return response.data;
+  },
+
+  /**
+   * Get single experiment by ID.
+   * GET /api/v1/experiments/{experiment_id}
+   */
+  async getExperiment(experimentId: string): Promise<import('../types/experiment').ExperimentRead> {
+    const response = await apiClient.get<import('../types/experiment').ExperimentRead>(
+      `/experiments/${experimentId}`
+    );
+    return response.data;
+  },
+
+  /**
+   * Create a new ML experiment.
+   * POST /api/v1/experiments
+   */
+  async createExperiment(
+    payload: import('../types/experiment').ExperimentCreatePayload
+  ): Promise<import('../types/experiment').ExperimentRead> {
+    const response = await apiClient.post<import('../types/experiment').ExperimentRead>(
+      '/experiments',
+      payload
+    );
+    return response.data;
+  },
+
+  /**
+   * Execute pipeline run for an experiment.
+   * POST /api/v1/experiments/{experiment_id}/run
+   */
+  async runExperiment(experimentId: string): Promise<import('../types/experiment').ExperimentRunRead> {
+    const response = await apiClient.post<import('../types/experiment').ExperimentRunRead>(
+      `/experiments/${experimentId}/run`
+    );
+    return response.data;
+  },
+
+  /**
+   * Cancel a pending or running experiment.
+   * POST /api/v1/experiments/{experiment_id}/cancel
+   */
+  async cancelExperiment(experimentId: string): Promise<import('../types/experiment').ExperimentRead> {
+    const response = await apiClient.post<import('../types/experiment').ExperimentRead>(
+      `/experiments/${experimentId}/cancel`
+    );
+    return response.data;
+  },
+
+  /**
+   * Rerun an experiment.
+   * POST /api/v1/experiments/{experiment_id}/rerun
+   */
+  async rerunExperiment(experimentId: string): Promise<import('../types/experiment').ExperimentRunRead> {
+    const response = await apiClient.post<import('../types/experiment').ExperimentRunRead>(
+      `/experiments/${experimentId}/rerun`
+    );
+    return response.data;
+  },
+
+  /**
+   * Compare multiple experiments.
+   * GET /api/v1/experiments/compare?experiment_ids=...
+   */
+  async compareExperiments(
+    experimentIds: string[]
+  ): Promise<import('../types/experiment').ExperimentComparisonResponse> {
+    const params = new URLSearchParams();
+    experimentIds.forEach((id) => params.append('experiment_ids', id));
+    const response = await apiClient.get<import('../types/experiment').ExperimentComparisonResponse>(
+      `/experiments/compare?${params.toString()}`
+    );
+    return response.data;
+  },
+};
+
 

@@ -28,11 +28,13 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import DataValidationError, NotFoundError
 from app.database.models.dataset import Dataset
 from app.database.models.experiment import Experiment, ExperimentRun
 from app.database.models.ml_model import MLModel
-from app.ml.persistence import save_model_artifact
+from app.ml.persistence import save_artifact
+from app.ml.preprocessing import FeatureSpec
+from app.ml.training import TrainingResult
 from app.services.dataset_service import get_dataset, load_dataset_frame
 
 logger = logging.getLogger(__name__)
@@ -115,7 +117,7 @@ def execute_pipeline_run(
 
     # Verify dataset reproducibility fingerprint
     if experiment.dataset_fingerprint and dataset.sha256 != experiment.dataset_fingerprint:
-        raise ValidationError(
+        raise DataValidationError(
             f"Dataset fingerprint mismatch: original={experiment.dataset_fingerprint}, current={dataset.sha256}"
         )
 
@@ -140,7 +142,7 @@ def execute_pipeline_run(
         # 1. Dataset Loading
         df = load_dataset_frame(settings, dataset)
         if experiment.target_column not in df.columns:
-            raise ValidationError(f"Target column '{experiment.target_column}' missing from dataset")
+            raise DataValidationError(f"Target column '{experiment.target_column}' missing from dataset")
 
         # 2. Feature Selection
         if experiment.selected_features:
@@ -149,7 +151,7 @@ def execute_pipeline_run(
             features = [c for c in df.columns if c != experiment.target_column]
 
         if not features:
-            raise ValidationError("No valid features selected for training")
+            raise DataValidationError("No valid features selected for training")
 
         # 3. Clean Missing Target Rows
         df = df.dropna(subset=[experiment.target_column])
@@ -278,12 +280,29 @@ def execute_pipeline_run(
 
         # 9. Register in MLModel Registry
         duration = time.perf_counter() - start_time
-        feature_schema = [
-            {"name": col, "kind": "numeric" if col in numeric_cols else "categorical"}
+        feature_specs = [
+            FeatureSpec(name=col, kind="numeric" if col in numeric_cols else "categorical")
             for col in features
         ]
-        artifact_filename = f"{uuid.uuid4()}.joblib"
-        save_model_artifact(settings, artifact_filename, full_pipeline)
+        import sklearn
+
+        training_result = TrainingResult(
+            pipeline=full_pipeline,
+            problem_type=experiment.problem_type,
+            algorithm=experiment.algorithm,
+            target_column=experiment.target_column,
+            features=feature_specs,
+            class_labels=list(full_pipeline.classes_) if hasattr(full_pipeline, "classes_") else None,
+            metrics={"validation": val_metrics, "test": test_metrics},
+            metadata={
+                "trained_at": datetime.now(timezone.utc).isoformat(),
+                "training_seconds": round(duration, 4),
+                "experiment_id": str(experiment.id),
+                "run_id": str(run.id),
+                "best_hyperparameters": best_params,
+            },
+        )
+        saved_art = save_artifact(training_result, settings.MODEL_DIR)
 
         latest_ver = session.scalar(
             select(MLModel.version)
@@ -300,16 +319,12 @@ def execute_pipeline_run(
             problem_type=experiment.problem_type,
             algorithm=experiment.algorithm,
             target_column=experiment.target_column,
-            feature_schema=feature_schema,
+            feature_schema=[s.to_dict() for s in feature_specs],
             metrics={"validation": val_metrics, "test": test_metrics},
-            training_metadata={
-                "trained_at": datetime.now(timezone.utc).isoformat(),
-                "training_seconds": round(duration, 4),
-                "experiment_id": str(experiment.id),
-                "run_id": str(run.id),
-                "best_hyperparameters": best_params,
-            },
-            artifact_filename=artifact_filename,
+            training_metadata=training_result.metadata,
+            artifact_filename=saved_art.filename,
+            artifact_sha256=saved_art.sha256,
+            sklearn_version=sklearn.__version__,
         )
         session.add(registered_model)
         session.flush()
@@ -352,7 +367,7 @@ def execute_pipeline_run(
 def cancel_experiment(session: Session, experiment_id: uuid.UUID) -> Experiment:
     experiment = get_experiment(session, experiment_id)
     if experiment.status not in ("pending", "running"):
-        raise ValidationError(f"Cannot cancel experiment in '{experiment.status}' status")
+        raise DataValidationError(f"Cannot cancel experiment in '{experiment.status}' status")
 
     experiment.status = "cancelled"
     experiment.completed_at = datetime.now(timezone.utc)

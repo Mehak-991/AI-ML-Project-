@@ -16,7 +16,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import DataValidationError, NotFoundError
 from app.ml import persistence
 from app.ml.prediction import predict, validate_records
 from app.repositories.ml_models import MLModelRepository
@@ -240,14 +240,18 @@ def compute_local_shap_explanation(
             return p[:, 1] if p.shape[1] == 2 else p
         return pipeline.predict(data)
 
-    explainer = shap.Explainer(predict_fn, background_df)
-    shap_res = explainer(input_df)
+    # KernelExplainer supports categorical strings and tabular data reliably
+    explainer = shap.KernelExplainer(predict_fn, background_df)
+    shap_vals = explainer.shap_values(input_df, nsamples=min(50, len(background_df) * 2))
 
-    values = shap_res.values[0]
-    base_val = float(shap_res.base_values[0]) if hasattr(shap_res, "base_values") else 0.0
+    # KernelExplainer returns list for multiclass or 2D array for single output
+    if isinstance(shap_vals, list):
+        values = shap_vals[1] if len(shap_vals) > 1 else shap_vals[0]
+        values = values[0]
+    else:
+        values = shap_vals[0]
 
-    if values.ndim > 1:
-        values = values[:, 0]  # Take primary class
+    base_val = float(explainer.expected_value[1] if isinstance(explainer.expected_value, (list, np.ndarray)) else explainer.expected_value)
 
     contributions: list[FeatureContributionItem] = []
     for feat, val, contr in zip(feature_names, input_df.iloc[0], values):

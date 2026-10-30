@@ -762,4 +762,64 @@ export const experimentApi = {
   },
 };
 
+export const explainabilityApi = {
+  /**
+   * Get explainability summary & capabilities for a model.
+   * GET /api/v1/models/{model_id}/explainability/summary
+   */
+  async getSummary(
+    modelId: string
+  ): Promise<import('../types/explainability').ExplainabilitySummaryResponse> {
+    const response = await apiClient.get<import('../types/explainability').ExplainabilitySummaryResponse>(
+      `/models/${modelId}/explainability/summary`
+    );
+    return response.data;
+  },
+
+  /**
+   * Get global feature importance (SHAP / weights).
+   * GET /api/v1/models/{model_id}/explainability/feature-importance
+   */
+  async getGlobalImportance(
+    modelId: string,
+    sampleSize = 50
+  ): Promise<import('../types/explainability').GlobalFeatureImportanceResponse> {
+    const response = await apiClient.get<import('../types/explainability').GlobalFeatureImportanceResponse>(
+      `/models/${modelId}/explainability/feature-importance`,
+      { params: { sample_size: sampleSize } }
+    );
+    return response.data;
+  },
+
+  /**
+   * Compute local prediction explanation via SHAP.
+   * POST /api/v1/models/{model_id}/explainability/shap
+   */
+  async explainWithShap(
+    modelId: string,
+    request: import('../types/explainability').ExplainPredictionRequest
+  ): Promise<import('../types/explainability').LocalShapExplanationResponse> {
+    const response = await apiClient.post<import('../types/explainability').LocalShapExplanationResponse>(
+      `/models/${modelId}/explainability/shap`,
+      request
+    );
+    return response.data;
+  },
+
+  /**
+   * Compute local prediction explanation via LIME.
+   * POST /api/v1/models/{model_id}/explainability/lime
+   */
+  async explainWithLime(
+    modelId: string,
+    request: import('../types/explainability').ExplainPredictionRequest
+  ): Promise<import('../types/explainability').LocalLimeExplanationResponse> {
+    const response = await apiClient.post<import('../types/explainability').LocalLimeExplanationResponse>(
+      `/models/${modelId}/explainability/lime`,
+      request
+    );
+    return response.data;
+  },
+};
+
 

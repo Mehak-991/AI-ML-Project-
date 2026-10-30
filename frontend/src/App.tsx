@@ -22,10 +22,20 @@ import { DeploymentMonitoringPage } from './pages/DeploymentMonitoringPage';
 import { UserManagementPage } from './pages/UserManagementPage';
 import { DataDriftMonitoringPage } from './pages/DataDriftMonitoringPage';
 import { ExperimentTrackingPage } from './pages/ExperimentTrackingPage';
+import { ExplainabilityStudioPage } from './pages/ExplainabilityStudioPage';
 import { AuthModal } from './components/AuthModal';
 import { useAuth } from './context/AuthContext';
 
-type NavTab = 'models' | 'datasets' | 'training' | 'inference' | 'deployment' | 'drift' | 'users' | 'settings';
+type NavTab =
+  | 'models'
+  | 'datasets'
+  | 'training'
+  | 'inference'
+  | 'deployment'
+  | 'drift'
+  | 'explainability'
+  | 'users'
+  | 'settings';
 
 export function App() {
   const { user, logout } = useAuth();
@@ -78,6 +88,12 @@ export function App() {
       label: 'Drift & Data Quality',
       icon: <ShieldAlert className="w-4 h-4" />,
       phase: 'Phase 11',
+    },
+    {
+      id: 'explainability',
+      label: 'Explainability (XAI)',
+      icon: <BrainCircuit className="w-4 h-4" />,
+      phase: 'Phase 13',
     },
     {
       id: 'users',

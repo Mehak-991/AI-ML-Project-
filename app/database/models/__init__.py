@@ -9,6 +9,7 @@ from app.database.models.dataset import Dataset
 from app.database.models.deployment import Deployment, PredictionLog
 from app.database.models.drift import DriftAlert, DriftReport
 from app.database.models.experiment import Experiment, ExperimentRun
+from app.database.models.job import Job
 from app.database.models.ml_model import MLModel
 from app.database.models.user import RefreshToken, User
 
@@ -20,6 +21,7 @@ __all__ = [
     "DriftReport",
     "Experiment",
     "ExperimentRun",
+    "Job",
     "MLModel",
     "PredictionLog",
     "RefreshToken",

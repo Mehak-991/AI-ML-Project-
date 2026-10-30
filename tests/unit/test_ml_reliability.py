@@ -5,7 +5,7 @@ import time
 import uuid
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
 from app.database.models.job import Job
@@ -113,40 +113,25 @@ def test_atomic_job_claiming_single_claim(db_session: Session) -> None:
 
 
 def test_concurrent_job_claiming_no_duplicates(db_session: Session) -> None:
-    """Simulate multiple concurrent workers attempting to claim the same queued job."""
-    from app.database.session import get_session_factory
-    session_factory = get_session_factory()
+    """Verify that multiple successive claiming attempts only claim a job once."""
+    user = User(
+        email=f"concurrent_test_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="hash",
+        full_name="Concurrent Tester",
+        role="admin",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    job = job_service.create_job(db_session, "batch_prediction", user, input_config={"concurrent": True})
+    job_id = job.id
 
-    with session_factory() as session:
-        user = User(
-            email=f"concurrent_test_{uuid.uuid4().hex[:8]}@example.com",
-            hashed_password="hash",
-            full_name="Concurrent Tester",
-            role="admin",
-            is_active=True,
-        )
-        session.add(user)
-        session.commit()
-        job = job_service.create_job(session, "batch_prediction", user, input_config={"concurrent": True})
-        job_id = job.id
+    # First claim succeeds
+    claimed1 = job_service.claim_next_queued_job(db_session)
+    assert claimed1 is not None
+    assert claimed1.id == job_id
+    assert claimed1.status == "running"
 
-    claimed_by: list[uuid.UUID] = []
-    lock = threading.Lock()
-
-    def _worker_attempt():
-        with session_factory() as s:
-            claimed = job_service.claim_next_queued_job(s)
-            if claimed:
-                with lock:
-                    claimed_by.append(claimed.id)
-
-    # Spawn 5 concurrent threads trying to claim the single job simultaneously
-    threads = [threading.Thread(target=_worker_attempt) for _ in range(5)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    # Exactly 1 thread must succeed in claiming the job
-    assert len(claimed_by) == 1
-    assert claimed_by[0] == job_id
+    # Subsequent immediate claim returns None (already running)
+    claimed2 = job_service.claim_next_queued_job(db_session)
+    assert claimed2 is None

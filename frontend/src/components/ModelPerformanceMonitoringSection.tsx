@@ -1,12 +1,7 @@
 import React, { useState } from 'react';
 import {
-  BarChart,
   Target,
-  Layers,
-  AlertCircle,
-  HelpCircle,
   Activity,
-  CheckCircle2,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -16,7 +11,6 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
-  Cell,
 } from 'recharts';
 import type { ModelRead, SplitMetrics } from '../types/model';
 

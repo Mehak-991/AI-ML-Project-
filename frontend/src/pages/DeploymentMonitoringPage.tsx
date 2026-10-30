@@ -6,7 +6,6 @@ import {
   RefreshCw,
   Layers,
   Activity,
-  Cpu,
   BarChart2,
 } from 'lucide-react';
 import { modelApi, systemApi, parseApiError, type ErrorDetails } from '../services/api';

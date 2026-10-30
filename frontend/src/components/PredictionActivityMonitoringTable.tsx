@@ -2,12 +2,9 @@ import React, { useState } from 'react';
 import {
   Activity,
   Search,
-  Filter,
   FileQuestion,
   Info,
-  Calendar,
   Layers,
-  CheckCircle2,
 } from 'lucide-react';
 import type { ModelRead } from '../types/model';
 

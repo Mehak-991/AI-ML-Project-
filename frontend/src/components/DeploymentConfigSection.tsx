@@ -2,11 +2,6 @@ import React from 'react';
 import {
   Server,
   AlertTriangle,
-  Info,
-  CheckCircle2,
-  FileCode,
-  ShieldAlert,
-  ArrowRight,
   Code2,
 } from 'lucide-react';
 import type { ModelRead } from '../types/model';

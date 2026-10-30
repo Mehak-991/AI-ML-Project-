@@ -20,10 +20,11 @@ import { ModelManagementPage } from './pages/ModelManagementPage';
 import { PredictionManagementPage } from './pages/PredictionManagementPage';
 import { DeploymentMonitoringPage } from './pages/DeploymentMonitoringPage';
 import { UserManagementPage } from './pages/UserManagementPage';
+import { DataDriftMonitoringPage } from './pages/DataDriftMonitoringPage';
 import { AuthModal } from './components/AuthModal';
 import { useAuth } from './context/AuthContext';
 
-type NavTab = 'models' | 'datasets' | 'training' | 'inference' | 'deployment' | 'users' | 'settings';
+type NavTab = 'models' | 'datasets' | 'training' | 'inference' | 'deployment' | 'drift' | 'users' | 'settings';
 
 export function App() {
   const { user, logout } = useAuth();
@@ -70,6 +71,12 @@ export function App() {
       label: 'Deployment & Monitoring',
       icon: <Server className="w-4 h-4" />,
       phase: 'Phase 8 & 9',
+    },
+    {
+      id: 'drift',
+      label: 'Drift & Data Quality',
+      icon: <ShieldAlert className="w-4 h-4" />,
+      phase: 'Phase 11',
     },
     {
       id: 'users',
@@ -218,6 +225,7 @@ export function App() {
                 {activeTab === 'training' && 'Model Training Studio'}
                 {activeTab === 'inference' && 'Predictions & AI Engine'}
                 {activeTab === 'deployment' && 'Model Deployment & Monitoring Studio'}
+                {activeTab === 'drift' && 'Data Quality & Drift Monitoring'}
                 {activeTab === 'users' && 'Enterprise User Administration'}
                 {activeTab === 'settings' && 'System Settings'}
               </h1>
@@ -230,6 +238,8 @@ export function App() {
                 {activeTab === 'inference' && 'Execute batch predictions and LLM inference.'}
                 {activeTab === 'deployment' &&
                   'Evaluate deployment readiness, inspect serving architecture, and audit performance benchmarks.'}
+                {activeTab === 'drift' &&
+                  'Detect feature distribution shifts (PSI/KS), missing value rates, outliers, and performance degradation.'}
                 {activeTab === 'users' &&
                   'Role-Based Access Control, user provisioning, account statuses, and admin security.'}
                 {activeTab === 'settings' && 'Runtime configuration and backend server properties.'}
@@ -319,6 +329,8 @@ export function App() {
 
           {activeTab === 'deployment' && <DeploymentMonitoringPage />}
 
+          {activeTab === 'drift' && <DataDriftMonitoringPage />}
+
           {activeTab === 'datasets' && (
             <div className="bg-slate-950 text-slate-100 p-6 md:p-8 rounded-3xl shadow-lg border border-slate-800">
               <DatasetManagementPage />
@@ -353,6 +365,7 @@ export function App() {
             activeTab !== 'datasets' &&
             activeTab !== 'inference' &&
             activeTab !== 'deployment' &&
+            activeTab !== 'drift' &&
             activeTab !== 'users' && (
             <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-md mx-auto my-12 shadow-sm">
               <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 mx-auto mb-4">

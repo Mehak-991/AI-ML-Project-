@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.routes import ai, datasets, deployments, health, models, monitoring, predictions
+from app.api.routes import ai, auth, datasets, deployments, health, models, monitoring, predictions
 from app.schemas.common import ErrorResponse
 
 # Errors any route can return (validation, middleware limits, unexpected/DB failures).
@@ -18,9 +18,11 @@ COMMON_ERROR_RESPONSES: dict[int | str, dict] = {
 
 api_v1_router = APIRouter(responses=COMMON_ERROR_RESPONSES)
 api_v1_router.include_router(health.router)
+api_v1_router.include_router(auth.router)
 api_v1_router.include_router(datasets.router)
 api_v1_router.include_router(models.router)
 api_v1_router.include_router(deployments.router)
 api_v1_router.include_router(predictions.router)
 api_v1_router.include_router(monitoring.router)
 api_v1_router.include_router(ai.router)
+

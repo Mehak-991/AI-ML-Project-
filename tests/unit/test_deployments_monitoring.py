@@ -2,79 +2,60 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from app.database.models.ml_model import MLModel
-from app.ml.persistence import save_artifact
+from app.schemas.datasets import DatasetCreateResponse
+from app.schemas.models import ModelRead
+from tests.helpers import to_csv_bytes
+from app.ml.synthetic import make_classification_frame
 
 
-import hashlib
-import sklearn
+API = "/api/v1"
 
-def _create_test_model(session, tmp_path, settings) -> MLModel:
-    filename = f"{uuid.uuid4().hex}.joblib"
-    fake_payload = {"pipeline": "fake_pipeline"}
-    path = tmp_path / filename
-    import joblib
-    joblib.dump(fake_payload, path)
 
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        digest.update(f.read())
-    sha = digest.hexdigest()
-
-    model = MLModel(
-        name="test-churn",
-        version=1,
-        dataset_id=uuid.uuid4(),
-        problem_type="classification",
-        algorithm="linear",
-        target_column="churn",
-        feature_schema=[{"name": "tenure", "kind": "numeric"}],
-        metrics={"test": {"accuracy": 0.95}},
-        training_metadata={"trained_at": "2026-10-30T10:00:00Z", "training_seconds": 1.2},
-        artifact_filename=filename,
-        artifact_sha256=sha,
-        sklearn_version=sklearn.__version__,
+def test_deploy_and_undeploy_workflow(api_client: TestClient) -> None:
+    # 1. Create dataset and train a real model
+    upload_res = api_client.post(
+        f"{API}/datasets",
+        files={"file": ("test_data.csv", to_csv_bytes(make_classification_frame(100, seed=12)))},
+        data={"name": "test_dataset"},
     )
-    session.add(model)
-    session.commit()
-    session.refresh(model)
-    return model
+    assert upload_res.status_code == 201
+    dataset = DatasetCreateResponse.model_validate(upload_res.json()).dataset
 
+    trained = api_client.post(
+        f"{API}/models/train", json={"dataset_id": str(dataset.id), "target_column": "label"}
+    )
+    assert trained.status_code == 201
+    model = ModelRead.model_validate(trained.json())
 
-def test_deploy_and_undeploy_flow(api_client: TestClient, db_session, settings, tmp_path):
-    # Set model dir to tmp
-    settings.MODEL_DIR = tmp_path
-    model = _create_test_model(db_session, tmp_path, settings)
-
-    # 1. Deploy model
+    # 2. Deploy model
     deploy_res = api_client.post(
-        f"/api/v1/models/{model.id}/deploy",
+        f"{API}/models/{model.id}/deploy",
         json={"environment": "production", "configuration": {"replicas": 2}},
     )
-    assert deploy_res.status_code == 200
+    assert deploy_res.status_code == 200, deploy_res.text
     dep_data = deploy_res.json()
     assert dep_data["status"] == "Deployed"
     assert dep_data["model_id"] == str(model.id)
     assert dep_data["version"] == 1
 
-    # 2. List deployments
-    list_res = api_client.get(f"/api/v1/deployments?model_id={model.id}")
+    # 3. List deployments
+    list_res = api_client.get(f"{API}/deployments?model_id={model.id}")
     assert list_res.status_code == 200
     assert list_res.json()["total"] == 1
 
-    # 3. Undeploy model
-    undep_res = api_client.post(f"/api/v1/models/{model.id}/undeploy")
+    # 4. Undeploy model
+    undep_res = api_client.post(f"{API}/models/{model.id}/undeploy")
     assert undep_res.status_code == 200
     assert undep_res.json()["status"] == "Undeployed"
 
-    # 4. Monitoring overview check
-    mon_res = api_client.get("/api/v1/monitoring/overview")
+    # 5. Monitoring overview check
+    mon_res = api_client.get(f"{API}/monitoring/overview")
     assert mon_res.status_code == 200
     mon_data = mon_res.json()
     assert mon_data["total_deployments"] >= 1
 
 
-def test_prediction_history_and_ground_truth(api_client: TestClient, db_session):
+def test_prediction_history_and_ground_truth(api_client: TestClient, db_session) -> None:
     from app.services import deployment_service
     test_model_id = uuid.uuid4()
 
@@ -92,7 +73,7 @@ def test_prediction_history_and_ground_truth(api_client: TestClient, db_session)
     assert log is not None
 
     # Fetch via API
-    res = api_client.get(f"/api/v1/predictions/history?model_id={test_model_id}")
+    res = api_client.get(f"{API}/predictions/history?model_id={test_model_id}")
     assert res.status_code == 200
     data = res.json()
     assert data["total"] == 1
@@ -100,7 +81,7 @@ def test_prediction_history_and_ground_truth(api_client: TestClient, db_session)
 
     # Submit ground truth
     gt_res = api_client.post(
-        f"/api/v1/predictions/history/{log.id}/ground-truth",
+        f"{API}/predictions/history/{log.id}/ground-truth",
         json={"ground_truth": [0, 1]},
     )
     assert gt_res.status_code == 200

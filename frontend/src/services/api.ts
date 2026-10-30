@@ -822,4 +822,49 @@ export const explainabilityApi = {
   },
 };
 
+/**
+ * Phase 14: Background Jobs & Distributed Task Queue API
+ */
+export const jobsApi = {
+  async submitJob(payload: import('../types/job').JobCreatePayload): Promise<import('../types/job').Job> {
+    const response = await apiClient.post<import('../types/job').Job>('/jobs', payload);
+    return response.data;
+  },
+
+  async listJobs(params?: {
+    offset?: number;
+    limit?: number;
+    status?: string;
+    job_type?: string;
+  }): Promise<import('../types/job').JobListResponse> {
+    const response = await apiClient.get<import('../types/job').JobListResponse>('/jobs', { params });
+    return response.data;
+  },
+
+  async getJob(jobId: string): Promise<import('../types/job').Job> {
+    const response = await apiClient.get<import('../types/job').Job>(`/jobs/${jobId}`);
+    return response.data;
+  },
+
+  async getJobMetrics(): Promise<import('../types/job').JobMetricsResponse> {
+    const response = await apiClient.get<import('../types/job').JobMetricsResponse>('/jobs/metrics');
+    return response.data;
+  },
+
+  async cancelJob(jobId: string): Promise<import('../types/job').Job> {
+    const response = await apiClient.post<import('../types/job').Job>(`/jobs/${jobId}/cancel`);
+    return response.data;
+  },
+
+  async retryJob(jobId: string): Promise<import('../types/job').Job> {
+    const response = await apiClient.post<import('../types/job').Job>(`/jobs/${jobId}/retry`);
+    return response.data;
+  },
+
+  async getJobResult(jobId: string): Promise<Record<string, any> | null> {
+    const response = await apiClient.get<Record<string, any> | null>(`/jobs/${jobId}/result`);
+    return response.data;
+  },
+};
+
 

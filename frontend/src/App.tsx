@@ -23,6 +23,7 @@ import { UserManagementPage } from './pages/UserManagementPage';
 import { DataDriftMonitoringPage } from './pages/DataDriftMonitoringPage';
 import { ExperimentTrackingPage } from './pages/ExperimentTrackingPage';
 import { ExplainabilityStudioPage } from './pages/ExplainabilityStudioPage';
+import { JobManagementPage } from './pages/JobManagementPage';
 import { AuthModal } from './components/AuthModal';
 import { useAuth } from './context/AuthContext';
 
@@ -34,6 +35,7 @@ type NavTab =
   | 'deployment'
   | 'drift'
   | 'explainability'
+  | 'jobs'
   | 'users'
   | 'settings';
 
@@ -94,6 +96,12 @@ export function App() {
       label: 'Explainability (XAI)',
       icon: <BrainCircuit className="w-4 h-4" />,
       phase: 'Phase 13',
+    },
+    {
+      id: 'jobs',
+      label: 'Background Jobs & Tasks',
+      icon: <Layers className="w-4 h-4" />,
+      phase: 'Phase 14',
     },
     {
       id: 'users',
@@ -351,6 +359,8 @@ export function App() {
           {activeTab === 'training' && <ExperimentTrackingPage />}
 
           {activeTab === 'explainability' && <ExplainabilityStudioPage />}
+
+          {activeTab === 'jobs' && <JobManagementPage />}
 
           {activeTab === 'datasets' && (
             <div className="bg-slate-950 text-slate-100 p-6 md:p-8 rounded-3xl shadow-lg border border-slate-800">

@@ -11,8 +11,6 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
-  Sparkles,
-  Info,
 } from 'lucide-react';
 import type { User, UserRole } from '../types/auth';
 import { authApi, parseApiError } from '../services/api';

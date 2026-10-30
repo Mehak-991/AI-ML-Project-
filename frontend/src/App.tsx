@@ -13,10 +13,7 @@ import {
   Users,
   LogIn,
   LogOut,
-  User as UserIcon,
   ShieldAlert,
-  ShieldCheck,
-  Shield,
 } from 'lucide-react';
 import { DatasetManagementPage } from './pages/DatasetManagementPage';
 import { ModelManagementPage } from './pages/ModelManagementPage';
@@ -29,10 +26,11 @@ import { useAuth } from './context/AuthContext';
 type NavTab = 'models' | 'datasets' | 'training' | 'inference' | 'deployment' | 'users' | 'settings';
 
 export function App() {
-  const { user, logout, loading: authLoading } = useAuth();
+  const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<NavTab>('models');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   const [authModalOpen, setAuthModalOpen] = useState(false);
 
   const navItems: Array<{
@@ -125,8 +123,11 @@ export function App() {
                 ML Platform Modules
               </div>
             )}
-            {navItems.map((item) => {
-              const isActive = activeTab === item.id;
+            {navItems
+              .filter((item) => !item.adminOnly || user?.role === 'admin')
+              .map((item) => {
+                const isActive = activeTab === item.id;
+
               return (
                 <button
                   key={item.id}
@@ -217,6 +218,7 @@ export function App() {
                 {activeTab === 'training' && 'Model Training Studio'}
                 {activeTab === 'inference' && 'Predictions & AI Engine'}
                 {activeTab === 'deployment' && 'Model Deployment & Monitoring Studio'}
+                {activeTab === 'users' && 'Enterprise User Administration'}
                 {activeTab === 'settings' && 'System Settings'}
               </h1>
               <p className="text-xs text-slate-500 hidden sm:block">
@@ -228,6 +230,8 @@ export function App() {
                 {activeTab === 'inference' && 'Execute batch predictions and LLM inference.'}
                 {activeTab === 'deployment' &&
                   'Evaluate deployment readiness, inspect serving architecture, and audit performance benchmarks.'}
+                {activeTab === 'users' &&
+                  'Role-Based Access Control, user provisioning, account statuses, and admin security.'}
                 {activeTab === 'settings' && 'Runtime configuration and backend server properties.'}
               </p>
             </div>
@@ -244,12 +248,44 @@ export function App() {
               <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
             </a>
 
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-700">
+            {user ? (
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 py-1 px-2.5 rounded-xl">
+                <div className="w-7 h-7 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-xs">
+                  {user.email.slice(0, 2).toUpperCase()}
+                </div>
+                <div className="hidden md:block text-left pr-1">
+                  <div className="text-xs font-semibold text-slate-800 leading-tight">
+                    {user.full_name || user.email.split('@')[0]}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono capitalize">
+                    {user.role.replace('_', ' ')}
+                  </div>
+                </div>
+                <button
+                  onClick={() => logout()}
+                  title="Sign Out"
+                  className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors ml-1 cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setAuthModalOpen(true)}
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-all shadow-indigo-600/20 cursor-pointer"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Sign In</span>
+              </button>
+            )}
+
+            <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-700">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               API Connected
             </div>
           </div>
         </header>
+
 
         {/* Mobile menu overlay */}
         {mobileMenuOpen && (
@@ -289,10 +325,35 @@ export function App() {
             </div>
           )}
 
+          {activeTab === 'users' && (
+            user?.role === 'admin' ? (
+              <UserManagementPage />
+            ) : (
+              <div className="bg-white border border-rose-200 rounded-2xl p-12 text-center max-w-md mx-auto my-12 shadow-sm">
+                <div className="w-16 h-16 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 mx-auto mb-4">
+                  <ShieldAlert className="w-8 h-8" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-900">Access Restricted</h3>
+                <p className="text-xs text-slate-500 mt-2">
+                  User Administration requires Administrator privileges. Please contact an administrator or sign in with an admin account.
+                </p>
+                {!user && (
+                  <button
+                    onClick={() => setAuthModalOpen(true)}
+                    className="mt-5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer"
+                  >
+                    Sign In as Administrator
+                  </button>
+                )}
+              </div>
+            )
+          )}
+
           {activeTab !== 'models' &&
             activeTab !== 'datasets' &&
             activeTab !== 'inference' &&
-            activeTab !== 'deployment' && (
+            activeTab !== 'deployment' &&
+            activeTab !== 'users' && (
             <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-md mx-auto my-12 shadow-sm">
               <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 mx-auto mb-4">
                 <Cpu className="w-8 h-8" />
@@ -300,11 +361,11 @@ export function App() {
               <h3 className="text-lg font-bold text-slate-900 capitalize">{activeTab} View</h3>
               <p className="text-xs text-slate-500 mt-2">
                 Phase 6 (Model Registry & Analytics), Phase 7 (Prediction Studio), Phase 8 (Deployment & Monitoring),
-                and Phase 4 (Dataset Management) are active. Additional modules will unlock in subsequent phases.
+                and Phase 10 (Enterprise Security & RBAC) are active. Additional modules will unlock in subsequent phases.
               </p>
               <button
                 onClick={() => setActiveTab('deployment')}
-                className="mt-5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors shadow-sm"
+                className="mt-5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer"
               >
                 Go to Deployment & Monitoring
               </button>
@@ -312,13 +373,17 @@ export function App() {
           )}
         </main>
 
+        {/* Auth Modal for Login / Registration */}
+        <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
+
         {/* Light Footer */}
         <footer className="border-t border-slate-200 bg-white py-4 px-8 text-center text-xs text-slate-500">
-          AIProject Enterprise MLOps Platform • Phase 6: Model Management & Analytics
+          AIProject Enterprise MLOps Platform • Phase 10: Authentication, Authorization & Enterprise Security
         </footer>
       </div>
     </div>
   );
 }
+
 
 export default App;

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Lock, Mail, User, ShieldAlert, ArrowRight, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Lock, Mail, User, ShieldAlert, ArrowRight, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+
 
 export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
   isOpen,

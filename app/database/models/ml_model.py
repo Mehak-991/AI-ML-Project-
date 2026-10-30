@@ -10,6 +10,7 @@ from app.database.types import JSONType
 if TYPE_CHECKING:
     from app.database.models.dataset import Dataset
     from app.database.models.deployment import Deployment, PredictionLog
+    from app.database.models.drift import DriftAlert, DriftReport
 
 
 class MLModel(TimestampMixin, Base):
@@ -40,5 +41,11 @@ class MLModel(TimestampMixin, Base):
         back_populates="model", cascade="all, delete-orphan"
     )
     prediction_logs: Mapped[list["PredictionLog"]] = relationship(
+        back_populates="model", cascade="all, delete-orphan"
+    )
+    drift_reports: Mapped[list["DriftReport"]] = relationship(
+        back_populates="model", cascade="all, delete-orphan"
+    )
+    drift_alerts: Mapped[list["DriftAlert"]] = relationship(
         back_populates="model", cascade="all, delete-orphan"
     )

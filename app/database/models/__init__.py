@@ -8,5 +8,6 @@ from app.database.base import Base
 from app.database.models.dataset import Dataset
 from app.database.models.deployment import Deployment, PredictionLog
 from app.database.models.ml_model import MLModel
+from app.database.models.user import RefreshToken, User
 
-__all__ = ["Base", "Dataset", "Deployment", "MLModel", "PredictionLog"]
+__all__ = ["Base", "Dataset", "Deployment", "MLModel", "PredictionLog", "RefreshToken", "User"]

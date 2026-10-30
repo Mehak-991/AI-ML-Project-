@@ -43,6 +43,16 @@ class Settings(BaseSettings):
     RATE_LIMIT_DEFAULT_PER_MINUTE: int = Field(default=300, ge=1)
     RATE_LIMIT_AI_PER_MINUTE: int = Field(default=30, ge=1)
     RATE_LIMIT_TRAINING_PER_MINUTE: int = Field(default=10, ge=1)
+    RATE_LIMIT_AUTH_PER_MINUTE: int = Field(default=20, ge=1)
+
+    # JWT Authentication & Authorization
+    JWT_SECRET_KEY: SecretStr = Field(
+        default=SecretStr("insecure-dev-secret-key-change-in-production-min-32-bytes"),
+        description="Secret key for signing JWT tokens.",
+    )
+    JWT_ALGORITHM: str = Field(default="HS256")
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, ge=1)
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7, ge=1)
 
     # Comma-separated in the environment, e.g. "https://a.com,https://b.com".
     # None means "use the environment's default" (empty list in production).

@@ -241,27 +241,29 @@ export function App() {
         <main className="flex-1 p-6 md:p-8 max-w-7xl w-full mx-auto">
           {activeTab === 'models' && <ModelManagementPage />}
 
+          {activeTab === 'inference' && <PredictionManagementPage />}
+
           {activeTab === 'datasets' && (
             <div className="bg-slate-950 text-slate-100 p-6 md:p-8 rounded-3xl shadow-lg border border-slate-800">
               <DatasetManagementPage />
             </div>
           )}
 
-          {activeTab !== 'models' && activeTab !== 'datasets' && (
+          {activeTab !== 'models' && activeTab !== 'datasets' && activeTab !== 'inference' && (
             <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-md mx-auto my-12 shadow-sm">
               <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 mx-auto mb-4">
                 <Cpu className="w-8 h-8" />
               </div>
               <h3 className="text-lg font-bold text-slate-900 capitalize">{activeTab} View</h3>
               <p className="text-xs text-slate-500 mt-2">
-                Phase 6 (Model Management & Analytics) and Phase 4 (Dataset Management) are active.
-                Additional modules will unlock in subsequent phases.
+                Phase 6 (Model Registry & Analytics), Phase 7 (Prediction Studio), and Phase 4
+                (Dataset Management) are active. Additional modules will unlock in subsequent phases.
               </p>
               <button
-                onClick={() => setActiveTab('models')}
+                onClick={() => setActiveTab('inference')}
                 className="mt-5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors shadow-sm"
               >
-                Go to Model Management & Analytics
+                Go to Prediction Studio
               </button>
             </div>
           )}

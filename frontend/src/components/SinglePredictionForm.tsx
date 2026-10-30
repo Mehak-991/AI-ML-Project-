@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Send, AlertTriangle, RefreshCw, Sparkles, CheckCircle } from 'lucide-react';
+import { Send, AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
 import type { ModelRead, FeaturePrimitive } from '../types/model';
 
 interface SinglePredictionFormProps {

@@ -3,10 +3,8 @@ import {
   Download,
   CheckCircle2,
   Calendar,
-  Layers,
   ChevronDown,
   ChevronUp,
-  BarChart2,
   Table,
 } from 'lucide-react';
 import type { ModelRead, PredictionResultItem } from '../types/model';

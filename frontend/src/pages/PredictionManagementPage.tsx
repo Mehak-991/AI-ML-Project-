@@ -5,8 +5,6 @@ import {
   Send,
   FileSpreadsheet,
   AlertCircle,
-  HelpCircle,
-  Sparkles,
 } from 'lucide-react';
 import { modelApi, parseApiError, type ErrorDetails } from '../services/api';
 import type { ModelRead, FeaturePrimitive, PredictionResultItem } from '../types/model';
@@ -196,7 +194,7 @@ export const PredictionManagementPage: React.FC = () => {
                 )}
               </div>
               <p className="mt-0.5 text-red-700">{errorDetails.message}</p>
-              {errorDetails.details && (
+              {errorDetails.details !== undefined && errorDetails.details !== null && (
                 <pre className="mt-1.5 p-2 bg-red-100/60 rounded text-[10px] font-mono overflow-x-auto max-h-32">
                   {typeof errorDetails.details === 'object'
                     ? JSON.stringify(errorDetails.details, null, 2)

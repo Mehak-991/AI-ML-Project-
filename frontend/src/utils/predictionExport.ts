@@ -116,7 +116,6 @@ export function parseCsvToRecords(
     headerMap[h] = idx;
   });
 
-  const schemaMap = new Map(featureSchema.map((f) => [f.name, f.kind]));
   const missingHeaders: string[] = [];
 
   featureSchema.forEach((f) => {

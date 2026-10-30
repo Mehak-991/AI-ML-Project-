@@ -129,7 +129,19 @@ def db_session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
 
 @pytest.fixture
 def api_client(app: FastAPI, session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
-    """Client whose get_db dependency is backed by the SQLite test database."""
+    """Client whose get_db and auth dependencies are backed by the SQLite test database."""
+    from app.api.deps import get_current_user, get_current_user_optional
+    from app.database.models.user import User
+    import uuid
+
+    mock_admin = User(
+        id=uuid.uuid4(),
+        email="test_admin@example.com",
+        full_name="Test Admin",
+        hashed_password="mock",
+        role="admin",
+        is_active=True,
+    )
 
     def _get_db() -> Iterator[Session]:
         session = session_factory()
@@ -142,6 +154,9 @@ def api_client(app: FastAPI, session_factory: sessionmaker[Session]) -> Iterator
             session.close()
 
     app.dependency_overrides[get_db] = _get_db
+    app.dependency_overrides[get_current_user] = lambda: mock_admin
+    app.dependency_overrides[get_current_user_optional] = lambda: mock_admin
+
     with TestClient(app, raise_server_exceptions=False) as test_client:
         yield test_client
 

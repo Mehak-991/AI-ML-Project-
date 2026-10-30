@@ -129,11 +129,23 @@ def test_upload_errors(api_client: TestClient, settings, filename, content, stat
 
 
 def test_upload_too_large(make_settings, session_factory) -> None:
+    from app.api.deps import get_current_user, get_current_user_optional
+    from app.database.models.user import User
     from app.database.session import get_db
     from app.main import create_app
 
     app = create_app(make_settings(APP_ENV="testing", MAX_UPLOAD_SIZE_MB=1))
+    mock_admin = User(
+        id=uuid.uuid4(),
+        email="admin@example.com",
+        full_name="Admin",
+        hashed_password="mock",
+        role="admin",
+        is_active=True,
+    )
     app.dependency_overrides[get_db] = lambda: session_factory()
+    app.dependency_overrides[get_current_user] = lambda: mock_admin
+    app.dependency_overrides[get_current_user_optional] = lambda: mock_admin
     with TestClient(app) as client:
         response = upload(client, b"a\n" + b"1\n" * 600_000)
     assert response.status_code == 413

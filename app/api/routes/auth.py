@@ -1,6 +1,7 @@
 """Authentication routes for registration, login, token refresh, and user profile."""
 
 from typing import Annotated
+import uuid
 
 from fastapi import APIRouter, Depends, Query, status
 
@@ -117,13 +118,10 @@ def list_users(
     dependencies=[Depends(require_role("admin"))],
 )
 def update_user(
-    user_id: import_uuid.UUID,
+    user_id: uuid.UUID,
     request: UserUpdateRequest,
     current_user: CurrentUserDep,
     db: DbSession,
 ) -> UserRead:
     updated = auth_service.update_user_by_admin(db, current_user.id, user_id, request)
     return UserRead.model_validate(updated)
-
-
-import uuid as import_uuid

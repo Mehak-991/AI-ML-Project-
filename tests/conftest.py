@@ -157,22 +157,27 @@ def api_client(app: FastAPI, session_factory: sessionmaker[Session]) -> Iterator
         finally:
             session.close()
 
+    from typing import Annotated
+    from fastapi import Security
+    from fastapi.security import HTTPAuthorizationCredentials
+    from app.api.deps import DbSession, SettingsDep, security_bearer
+
     real_get_current_user = get_current_user
     real_get_current_user_optional = get_current_user_optional
 
     def _conditional_get_current_user(
-        auth: Any = None,
-        db: Session = None,
-        settings: Any = None,
+        auth: Annotated[HTTPAuthorizationCredentials | None, Security(security_bearer)],
+        db: DbSession,
+        settings: SettingsDep,
     ):
         if auth and auth.credentials:
             return real_get_current_user(auth, db, settings)
         return mock_admin
 
     def _conditional_get_current_user_optional(
-        auth: Any = None,
-        db: Session = None,
-        settings: Any = None,
+        auth: Annotated[HTTPAuthorizationCredentials | None, Security(security_bearer)],
+        db: DbSession,
+        settings: SettingsDep,
     ):
         if auth and auth.credentials:
             return real_get_current_user_optional(auth, db, settings)

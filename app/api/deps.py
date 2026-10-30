@@ -38,3 +38,97 @@ def get_chat_service(ai: AIServicesDep) -> ChatService:
 
 def get_token_counter(ai: AIServicesDep) -> TokenCounter:
     return ai.token_counter
+
+
+from fastapi import HTTPException, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import uuid
+from app.core import security
+from app.database.models.user import User
+from app.repositories.users import UserRepository
+
+security_bearer = HTTPBearer(auto_error=False)
+
+
+def get_current_user_optional(
+    auth: Annotated[HTTPAuthorizationCredentials | None, Security(security_bearer)],
+    db: DbSession,
+    settings: SettingsDep,
+) -> User | None:
+    if not auth or not auth.credentials:
+        return None
+    try:
+        payload = security.decode_access_token(auth.credentials, settings)
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            return None
+        user_id = uuid.UUID(user_id_str)
+        user = UserRepository(db).get(user_id)
+        if not user or not user.is_active:
+            return None
+        return user
+    except Exception:
+        return None
+
+
+def get_current_user(
+    auth: Annotated[HTTPAuthorizationCredentials | None, Security(security_bearer)],
+    db: DbSession,
+    settings: SettingsDep,
+) -> User:
+    if not auth or not auth.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Please provide a valid Bearer token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        payload = security.decode_access_token(auth.credentials, settings)
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        user_id = uuid.UUID(user_id_str)
+        user = UserRepository(db).get(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account is deactivated.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token verification failed: {exc}",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+
+CurrentUserDep = Annotated[User, Depends(get_current_user)]
+CurrentUserOptionalDep = Annotated[User | None, Depends(get_current_user_optional)]
+
+
+def require_role(*allowed_roles: str):
+    """Factory dependency enforcing RBAC roles: 'admin', 'ml_engineer', 'viewer'."""
+
+    def _role_checker(current_user: CurrentUserDep) -> User:
+        if current_user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access forbidden: role '{current_user.role}' lacks permission for this action. Required: {', '.join(allowed_roles)}.",
+            )
+        return current_user
+
+    return _role_checker

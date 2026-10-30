@@ -15,6 +15,98 @@ export const apiClient = axios.create({
   },
 });
 
+const TOKEN_KEY = 'aiml_access_token';
+const REFRESH_KEY = 'aiml_refresh_token';
+
+export const tokenStorage = {
+  getAccessToken: () => sessionStorage.getItem(TOKEN_KEY),
+  setAccessToken: (token: string) => sessionStorage.setItem(TOKEN_KEY, token),
+  getRefreshToken: () => sessionStorage.getItem(REFRESH_KEY),
+  setRefreshToken: (token: string) => sessionStorage.setItem(REFRESH_KEY, token),
+  clear: () => {
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(REFRESH_KEY);
+  },
+};
+
+// Request interceptor: attach Bearer token
+apiClient.interceptors.request.use((config) => {
+  const token = tokenStorage.getAccessToken();
+  if (token && config.headers) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Response interceptor: handle 401 with refresh attempt
+let isRefreshing = false;
+let failedQueue: Array<{
+  resolve: (value?: unknown) => void;
+  reject: (reason?: unknown) => void;
+}> = [];
+
+const processQueue = (error: unknown, token: string | null = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    if (error.response?.status === 401 && !originalRequest._retry && !originalRequest.url?.includes('/auth/login') && !originalRequest.url?.includes('/auth/refresh')) {
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        })
+          .then((token) => {
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+            return apiClient(originalRequest);
+          })
+          .catch((err) => Promise.reject(err));
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      const currentRefresh = tokenStorage.getRefreshToken();
+      if (!currentRefresh) {
+        tokenStorage.clear();
+        isRefreshing = false;
+        return Promise.reject(error);
+      }
+
+      try {
+        const refreshRes = await axios.post('/api/v1/auth/refresh', {
+          refresh_token: currentRefresh,
+        });
+        const { access_token, refresh_token: newRefresh } = refreshRes.data;
+        tokenStorage.setAccessToken(access_token);
+        if (newRefresh) {
+          tokenStorage.setRefreshToken(newRefresh);
+        }
+        processQueue(null, access_token);
+        originalRequest.headers.Authorization = `Bearer ${access_token}`;
+        return apiClient(originalRequest);
+      } catch (refreshErr) {
+        processQueue(refreshErr, null);
+        tokenStorage.clear();
+        return Promise.reject(refreshErr);
+      } finally {
+        isRefreshing = false;
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+
 export interface ErrorDetails {
   status?: number;
   code: string;

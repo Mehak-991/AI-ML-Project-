@@ -115,7 +115,7 @@ def restore_backup(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Safe PostgreSQL Database Restore Utility")
     parser.add_argument("--backup", type=Path, required=True, help="Path to .sql.gz backup file")
-    parser.add_argument("--target-db", type=str, required=True, help="Target PostgreSQL database name")
+    parser.add_argument("--target-db", type=str, default=None, help="Target PostgreSQL database name")
     parser.add_argument("--container", type=str, default="aiproject-db-1", help="Database docker container name")
     parser.add_argument("--user", type=str, default="aiproject", help="PostgreSQL user")
     parser.add_argument("--confirm", action="store_true", help="Explicit confirmation to execute restore")
@@ -126,6 +126,10 @@ def main() -> None:
     if args.verify_only:
         valid = verify_checksum(args.backup)
         sys.exit(0 if valid else 1)
+
+    if not args.target_db:
+        logger.error("--target-db is required when restoring.")
+        sys.exit(1)
 
     try:
         restore_backup(

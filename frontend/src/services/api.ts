@@ -226,5 +226,20 @@ export const modelApi = {
     );
     return response.data;
   },
+
+  /**
+   * Run inference on single or multiple records using a saved model.
+   * POST /api/v1/models/{model_id}/predict
+   */
+  async predict(
+    modelId: string,
+    request: import('../types/model').PredictRequest
+  ): Promise<import('../types/model').PredictResponse> {
+    const response = await apiClient.post<import('../types/model').PredictResponse>(
+      `/models/${modelId}/predict`,
+      request
+    );
+    return response.data;
+  },
 };
 

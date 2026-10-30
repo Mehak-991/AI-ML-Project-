@@ -486,3 +486,84 @@ export const monitoringApi = {
   },
 };
 
+export const authApi = {
+  /**
+   * Register a new user account.
+   * POST /api/v1/auth/register
+   */
+  async register(data: import('../types/auth').RegisterCredentials): Promise<import('../types/auth').User> {
+    const response = await apiClient.post<import('../types/auth').User>('/auth/register', data);
+    return response.data;
+  },
+
+  /**
+   * Login with email and password.
+   * POST /api/v1/auth/login
+   */
+  async login(data: import('../types/auth').LoginCredentials): Promise<import('../types/auth').TokenResponse> {
+    const response = await apiClient.post<import('../types/auth').TokenResponse>('/auth/login', data);
+    return response.data;
+  },
+
+  /**
+   * Refresh access token.
+   * POST /api/v1/auth/refresh
+   */
+  async refresh(refreshToken: string): Promise<import('../types/auth').TokenResponse> {
+    const response = await apiClient.post<import('../types/auth').TokenResponse>('/auth/refresh', {
+      refresh_token: refreshToken,
+    });
+    return response.data;
+  },
+
+  /**
+   * Logout and revoke refresh token.
+   * POST /api/v1/auth/logout
+   */
+  async logout(refreshToken: string): Promise<void> {
+    await apiClient.post('/auth/logout', { refresh_token: refreshToken });
+  },
+
+  /**
+   * Get current authenticated user profile.
+   * GET /api/v1/auth/me
+   */
+  async getMe(): Promise<import('../types/auth').User> {
+    const response = await apiClient.get<import('../types/auth').User>('/auth/me');
+    return response.data;
+  },
+
+  /**
+   * List users with optional filtering (Admin only).
+   * GET /api/v1/auth/users
+   */
+  async listUsers(params?: {
+    role?: string;
+    is_active?: boolean;
+    search?: string;
+    offset?: number;
+    limit?: number;
+  }): Promise<import('../types/auth').UserListResponse> {
+    const response = await apiClient.get<import('../types/auth').UserListResponse>('/auth/users', {
+      params,
+    });
+    return response.data;
+  },
+
+  /**
+   * Update user status or role (Admin only).
+   * PATCH /api/v1/auth/users/{user_id}
+   */
+  async updateUser(
+    userId: string,
+    payload: import('../types/auth').UserUpdatePayload
+  ): Promise<import('../types/auth').User> {
+    const response = await apiClient.patch<import('../types/auth').User>(
+      `/auth/users/${userId}`,
+      payload
+    );
+    return response.data;
+  },
+};
+
+

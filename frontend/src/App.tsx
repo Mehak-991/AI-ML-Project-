@@ -10,20 +10,39 @@ import {
   X,
   ExternalLink,
   ChevronRight,
+  Users,
+  LogIn,
+  LogOut,
+  User as UserIcon,
+  ShieldAlert,
+  ShieldCheck,
+  Shield,
 } from 'lucide-react';
 import { DatasetManagementPage } from './pages/DatasetManagementPage';
 import { ModelManagementPage } from './pages/ModelManagementPage';
 import { PredictionManagementPage } from './pages/PredictionManagementPage';
 import { DeploymentMonitoringPage } from './pages/DeploymentMonitoringPage';
+import { UserManagementPage } from './pages/UserManagementPage';
+import { AuthModal } from './components/AuthModal';
+import { useAuth } from './context/AuthContext';
 
-type NavTab = 'models' | 'datasets' | 'training' | 'inference' | 'deployment' | 'settings';
+type NavTab = 'models' | 'datasets' | 'training' | 'inference' | 'deployment' | 'users' | 'settings';
 
 export function App() {
+  const { user, logout, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<NavTab>('models');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
-  const navItems: Array<{ id: NavTab; label: string; icon: React.ReactNode; phase: string }> = [
+  const navItems: Array<{
+    id: NavTab;
+    label: string;
+    icon: React.ReactNode;
+    phase: string;
+    adminOnly?: boolean;
+    requiredRoles?: Array<'admin' | 'ml_engineer' | 'viewer'>;
+  }> = [
     {
       id: 'models',
       label: 'Model Registry & Analytics',
@@ -52,7 +71,14 @@ export function App() {
       id: 'deployment',
       label: 'Deployment & Monitoring',
       icon: <Server className="w-4 h-4" />,
-      phase: 'Phase 8',
+      phase: 'Phase 8 & 9',
+    },
+    {
+      id: 'users',
+      label: 'User Administration',
+      icon: <Users className="w-4 h-4" />,
+      phase: 'Phase 10',
+      adminOnly: true,
     },
     {
       id: 'settings',
@@ -61,6 +87,7 @@ export function App() {
       phase: 'System',
     },
   ];
+
 
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans text-slate-800">

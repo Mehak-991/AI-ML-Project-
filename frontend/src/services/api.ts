@@ -263,3 +263,134 @@ export const systemApi = {
   },
 };
 
+export const deploymentApi = {
+  /**
+   * Deploy a model to production serving.
+   * POST /api/v1/models/{model_id}/deploy
+   */
+  async deployModel(
+    modelId: string,
+    request: import('../types/deployment').DeployModelRequest = {}
+  ): Promise<import('../types/deployment').DeploymentRead> {
+    const response = await apiClient.post<import('../types/deployment').DeploymentRead>(
+      `/models/${modelId}/deploy`,
+      request
+    );
+    return response.data;
+  },
+
+  /**
+   * Undeploy an active model from production.
+   * POST /api/v1/models/{model_id}/undeploy
+   */
+  async undeployModel(modelId: string): Promise<import('../types/deployment').DeploymentRead> {
+    const response = await apiClient.post<import('../types/deployment').DeploymentRead>(
+      `/models/${modelId}/undeploy`
+    );
+    return response.data;
+  },
+
+  /**
+   * List deployments with optional model filter and pagination.
+   * GET /api/v1/deployments
+   */
+  async listDeployments(
+    offset = 0,
+    limit = 20,
+    modelId?: string
+  ): Promise<import('../types/deployment').DeploymentListResponse> {
+    const response = await apiClient.get<import('../types/deployment').DeploymentListResponse>(
+      '/deployments',
+      {
+        params: { offset, limit, model_id: modelId || undefined },
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Get single deployment by ID.
+   * GET /api/v1/deployments/{deployment_id}
+   */
+  async getDeployment(deploymentId: string): Promise<import('../types/deployment').DeploymentRead> {
+    const response = await apiClient.get<import('../types/deployment').DeploymentRead>(
+      `/deployments/${deploymentId}`
+    );
+    return response.data;
+  },
+};
+
+export const predictionLogApi = {
+  /**
+   * List prediction audit history with pagination and filters.
+   * GET /api/v1/predictions/history
+   */
+  async listHistory(params?: {
+    offset?: number;
+    limit?: number;
+    model_id?: string;
+    deployment_id?: string;
+    status?: string;
+    start_date?: string;
+    end_date?: string;
+  }): Promise<import('../types/deployment').PredictionLogListResponse> {
+    const response = await apiClient.get<import('../types/deployment').PredictionLogListResponse>(
+      '/predictions/history',
+      { params }
+    );
+    return response.data;
+  },
+
+  /**
+   * Get single prediction audit record.
+   * GET /api/v1/predictions/history/{prediction_id}
+   */
+  async getHistoryItem(predictionId: string): Promise<import('../types/deployment').PredictionLogRead> {
+    const response = await apiClient.get<import('../types/deployment').PredictionLogRead>(
+      `/predictions/history/${predictionId}`
+    );
+    return response.data;
+  },
+
+  /**
+   * Submit ground-truth labels for production evaluation.
+   * POST /api/v1/predictions/history/{prediction_id}/ground-truth
+   */
+  async submitGroundTruth(
+    predictionId: string,
+    groundTruth: unknown[]
+  ): Promise<import('../types/deployment').PredictionLogRead> {
+    const response = await apiClient.post<import('../types/deployment').PredictionLogRead>(
+      `/predictions/history/${predictionId}/ground-truth`,
+      { ground_truth: groundTruth }
+    );
+    return response.data;
+  },
+};
+
+export const monitoringApi = {
+  /**
+   * Aggregated production monitoring overview.
+   * GET /api/v1/monitoring/overview
+   */
+  async getOverview(): Promise<import('../types/deployment').MonitoringOverviewResponse> {
+    const response = await apiClient.get<import('../types/deployment').MonitoringOverviewResponse>(
+      '/monitoring/overview'
+    );
+    return response.data;
+  },
+
+  /**
+   * Model-specific monitoring telemetry.
+   * GET /api/v1/monitoring/models/{model_id}
+   */
+  async getModelMonitoring(
+    modelId: string
+  ): Promise<import('../types/deployment').ModelMonitoringResponse> {
+    const response = await apiClient.get<import('../types/deployment').ModelMonitoringResponse>(
+      `/monitoring/models/${modelId}`
+    );
+    return response.data;
+  },
+};
+

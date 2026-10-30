@@ -6,10 +6,15 @@ import {
   CheckCircle2,
   XCircle,
 } from 'lucide-react';
-import type { HealthReadinessResponse, AIServicesStatusResponse } from '../types/deployment';
+import type {
+  HealthReadinessResponse,
+  AIServicesStatusResponse,
+  MonitoringOverviewResponse,
+} from '../types/deployment';
 
 interface MonitoringKpiCardsProps {
   totalTrainedModels: number;
+  overview: MonitoringOverviewResponse | null;
   health: HealthReadinessResponse | null;
   aiStatus: AIServicesStatusResponse | null;
   loading: boolean;
@@ -17,13 +22,14 @@ interface MonitoringKpiCardsProps {
 
 export const MonitoringKpiCards: React.FC<MonitoringKpiCardsProps> = ({
   totalTrainedModels,
+  overview,
   health,
   aiStatus,
   loading,
 }) => {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-      {/* 1. Total Trained Models (Real API count) */}
+      {/* 1. Total Trained Models */}
       <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm relative overflow-hidden">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -37,72 +43,81 @@ export const MonitoringKpiCards: React.FC<MonitoringKpiCardsProps> = ({
           <span className="text-3xl font-extrabold font-mono text-slate-900">
             {loading ? '...' : totalTrainedModels}
           </span>
-          <span className="text-xs text-slate-500 ml-2">in registry</span>
+          <span className="text-xs text-slate-500 ml-2">registered</span>
         </div>
         <p className="text-[11px] text-slate-400 mt-1">Verified via GET /api/v1/models</p>
       </div>
 
-      {/* 2. Total Deployed Models (Empirical status - No dedicated deploy endpoint) */}
+      {/* 2. Total Deployed Models */}
       <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm relative overflow-hidden">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Deployed Models
+            Active Deployments
           </span>
-          <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
+          <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
             <Server className="w-4 h-4" />
           </div>
         </div>
-        <div className="mt-3">
-          <span className="text-lg font-bold font-mono text-slate-800">
-            On-Demand Runtime
+        <div className="mt-3 flex items-baseline gap-2">
+          <span className="text-3xl font-extrabold font-mono text-emerald-700">
+            {overview ? overview.active_deployments : '...'}
+          </span>
+          <span className="text-xs text-slate-500">
+            / {overview ? overview.total_deployments : 0} total
           </span>
         </div>
-        <p className="text-[11px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded mt-2 inline-block">
-          No dedicated deployment table
+        <p className="text-[11px] text-emerald-700 font-medium mt-1">
+          Managed via /api/v1/deployments
         </p>
       </div>
 
-      {/* 3. Total Predictions (Historical monitoring table missing) */}
+      {/* 3. Total Predictions Audited */}
       <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm relative overflow-hidden">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Total Predictions
+            Predictions Audited
           </span>
-          <div className="p-2 rounded-xl bg-slate-100 text-slate-600">
+          <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
             <Activity className="w-4 h-4" />
           </div>
         </div>
         <div className="mt-3">
-          <span className="text-base font-bold font-mono text-slate-600 italic">
-            Data Unavailable
+          <span className="text-3xl font-extrabold font-mono text-slate-900">
+            {overview ? overview.total_predictions : '...'}
           </span>
+          <span className="text-xs text-slate-500 ml-2">in audit log</span>
         </div>
-        <p className="text-[11px] text-slate-400 mt-2">
-          No prediction-history API endpoint
+        <p className="text-[11px] text-slate-500 mt-1 font-mono">
+          {overview?.total_records_processed ?? 0} total records
         </p>
       </div>
 
-      {/* 4. Successful / Failed Predictions (Real-time telemetry missing) */}
+      {/* 4. Successful & Failed Inferences */}
       <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm relative overflow-hidden">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Prediction Telemetry
+            Inference Success
           </span>
-          <div className="p-2 rounded-xl bg-slate-100 text-slate-600">
+          <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
             <CheckCircle2 className="w-4 h-4" />
           </div>
         </div>
-        <div className="mt-3">
-          <span className="text-base font-bold font-mono text-slate-600 italic">
-            Data Unavailable
+        <div className="mt-3 flex items-baseline gap-2">
+          <span className="text-2xl font-extrabold font-mono text-slate-900">
+            {overview ? overview.successful_predictions : 0}
+          </span>
+          <span className="text-xs text-emerald-600 font-bold">
+            ({overview && overview.total_predictions > 0
+              ? `${Math.round((overview.successful_predictions / overview.total_predictions) * 100)}%`
+              : '100%'})
           </span>
         </div>
-        <p className="text-[11px] text-slate-400 mt-2">
-          Backend lacks logging database
+        <p className="text-[11px] text-slate-400 mt-1 font-mono">
+          Avg latency: {overview?.average_duration_ms ?? 0}ms
         </p>
       </div>
 
-      {/* 5. Live Server Readiness (Verified via GET /api/v1/health) */}
+      {/* 5. Live Engine Health */}
       <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm relative overflow-hidden">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">

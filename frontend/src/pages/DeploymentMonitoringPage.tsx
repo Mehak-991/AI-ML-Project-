@@ -8,12 +8,23 @@ import {
   Activity,
   BarChart2,
 } from 'lucide-react';
-import { modelApi, systemApi, parseApiError, type ErrorDetails } from '../services/api';
+import {
+  modelApi,
+  systemApi,
+  deploymentApi,
+  predictionLogApi,
+  monitoringApi,
+  parseApiError,
+  type ErrorDetails,
+} from '../services/api';
 import type { ModelRead, FeaturePrimitive } from '../types/model';
 import type {
   HealthReadinessResponse,
   AIServicesStatusResponse,
   ReadinessCheckItem,
+  DeploymentRead,
+  PredictionLogRead,
+  MonitoringOverviewResponse,
 } from '../types/deployment';
 import { ModelSelector } from '../components/ModelSelector';
 import { DeploymentReadinessChecklist } from '../components/DeploymentReadinessChecklist';
@@ -28,6 +39,21 @@ export const DeploymentMonitoringPage: React.FC = () => {
   const [totalModels, setTotalModels] = useState<number>(0);
   const [health, setHealth] = useState<HealthReadinessResponse | null>(null);
   const [aiStatus, setAiStatus] = useState<AIServicesStatusResponse | null>(null);
+  const [monitoringOverview, setMonitoringOverview] = useState<MonitoringOverviewResponse | null>(null);
+
+  // Deployments state
+  const [deploymentHistory, setDeploymentHistory] = useState<DeploymentRead[]>([]);
+  const [activeDeployment, setActiveDeployment] = useState<DeploymentRead | null>(null);
+  const [isActionLoading, setIsActionLoading] = useState<boolean>(false);
+
+  // Prediction audit logs state
+  const [predictionLogs, setPredictionLogs] = useState<PredictionLogRead[]>([]);
+  const [totalLogs, setTotalLogs] = useState<number>(0);
+  const [logOffset, setLogOffset] = useState<number>(0);
+  const logLimit = 10;
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [modelFilter, setModelFilter] = useState<string>('');
+  const [loadingLogs, setLoadingLogs] = useState<boolean>(false);
 
   const [loading, setLoading] = useState<boolean>(false);
   const [errorDetails, setErrorDetails] = useState<ErrorDetails | null>(null);
@@ -44,15 +70,16 @@ export const DeploymentMonitoringPage: React.FC = () => {
   // Active navigation sub-tab in Deployment page
   const [activeSubTab, setActiveSubTab] = useState<'readiness' | 'performance' | 'activity' | 'config'>('readiness');
 
-  // Load models and system health
+  // Load models, health, and monitoring overview
   const fetchData = useCallback(async () => {
     setLoading(true);
     setErrorDetails(null);
     try {
-      const [modelsData, healthData, aiData] = await Promise.all([
+      const [modelsData, healthData, aiData, overviewData] = await Promise.all([
         modelApi.listModels(0, 50),
         systemApi.getHealth().catch(() => null),
         systemApi.getAiStatus().catch(() => null),
+        monitoringApi.getOverview().catch(() => null),
       ]);
 
       setModels(modelsData.items);
@@ -62,6 +89,7 @@ export const DeploymentMonitoringPage: React.FC = () => {
       }
       if (healthData) setHealth(healthData);
       if (aiData) setAiStatus(aiData);
+      if (overviewData) setMonitoringOverview(overviewData);
     } catch (err: unknown) {
       setErrorDetails(parseApiError(err));
     } finally {
@@ -72,6 +100,95 @@ export const DeploymentMonitoringPage: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Load deployment history for selected model
+  const fetchDeploymentsForModel = useCallback(async (modelId: string) => {
+    try {
+      const res = await deploymentApi.listDeployments(0, 50, modelId);
+      setDeploymentHistory(res.items);
+      const active = res.items.find((d) => d.status === 'Deployed');
+      setActiveDeployment(active || null);
+    } catch (err: unknown) {
+      console.error('Error fetching deployments:', err);
+    }
+  }, []);
+
+  // Load prediction audit logs
+  const fetchPredictionLogs = useCallback(
+    async (offsetVal = 0) => {
+      setLoadingLogs(true);
+      try {
+        const res = await predictionLogApi.listHistory({
+          offset: offsetVal,
+          limit: logLimit,
+          model_id: modelFilter || undefined,
+          status: statusFilter || undefined,
+        });
+        setPredictionLogs(res.items);
+        setTotalLogs(res.total);
+        setLogOffset(res.offset);
+      } catch (err: unknown) {
+        console.error('Error fetching prediction logs:', err);
+      } finally {
+        setLoadingLogs(false);
+      }
+    },
+    [modelFilter, statusFilter, logLimit]
+  );
+
+  useEffect(() => {
+    if (selectedModel) {
+      fetchDeploymentsForModel(selectedModel.id);
+    }
+  }, [selectedModel?.id, fetchDeploymentsForModel]);
+
+  useEffect(() => {
+    fetchPredictionLogs(0);
+  }, [fetchPredictionLogs]);
+
+  // Deploy action
+  const handleDeploy = async (modelId: string, env: string) => {
+    setIsActionLoading(true);
+    setErrorDetails(null);
+    try {
+      await deploymentApi.deployModel(modelId, { environment: env });
+      await fetchDeploymentsForModel(modelId);
+      const overview = await monitoringApi.getOverview();
+      setMonitoringOverview(overview);
+    } catch (err: unknown) {
+      setErrorDetails(parseApiError(err));
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  // Undeploy action
+  const handleUndeploy = async (modelId: string) => {
+    setIsActionLoading(true);
+    setErrorDetails(null);
+    try {
+      await deploymentApi.undeployModel(modelId);
+      await fetchDeploymentsForModel(modelId);
+      const overview = await monitoringApi.getOverview();
+      setMonitoringOverview(overview);
+    } catch (err: unknown) {
+      setErrorDetails(parseApiError(err));
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  // Ground truth submission action
+  const handleSubmitGroundTruth = async (logId: string, truthVal: unknown) => {
+    try {
+      await predictionLogApi.submitGroundTruth(logId, [truthVal]);
+      await fetchPredictionLogs(logOffset);
+      const overview = await monitoringApi.getOverview();
+      setMonitoringOverview(overview);
+    } catch (err: unknown) {
+      setErrorDetails(parseApiError(err));
+    }
+  };
 
   // Handle manual model ID fetch
   const handleFetchManualModel = async () => {
@@ -97,7 +214,6 @@ export const DeploymentMonitoringPage: React.FC = () => {
     if (!selectedModel) return;
     setIsProbing(true);
     try {
-      // Build a valid synthetic sample row from the model's feature schema
       const sampleRecord: Record<string, FeaturePrimitive> = {};
       selectedModel.feature_schema.forEach((f) => {
         sampleRecord[f.name] = f.kind === 'numeric' ? 10 : 'probe';
@@ -113,6 +229,8 @@ export const DeploymentMonitoringPage: React.FC = () => {
         setEndpointProbeMessage(
           `Probe 200 OK: Prediction returned [${String(res.predictions[0])}] via POST /api/v1/models/${selectedModel.id}/predict.`
         );
+        // Refresh audit logs after probe
+        fetchPredictionLogs(logOffset);
       } else {
         setEndpointProbeResult(false);
         setEndpointProbeMessage('Prediction endpoint returned empty response.');
@@ -142,7 +260,6 @@ export const DeploymentMonitoringPage: React.FC = () => {
     const featureSchemaAvailable = Array.isArray(model.feature_schema) && model.feature_schema.length > 0;
     const metricsAvailable = !!model.metrics && (!!model.metrics.test || !!model.metrics.train);
 
-    // Database & server restart readiness
     const dbHealthy = health?.status === 'ok';
 
     return [
@@ -229,8 +346,8 @@ export const DeploymentMonitoringPage: React.FC = () => {
             </h2>
           </div>
           <p className="text-xs text-slate-500 mt-1 max-w-2xl">
-            Evaluate production deployment readiness, inspect runtime serving parameters, and audit model
-            performance benchmarks across evaluation splits.
+            Evaluate production deployment readiness, manage live deployment lifecycles, and audit inference
+            telemetry across registered models.
           </p>
         </div>
 
@@ -274,9 +391,10 @@ export const DeploymentMonitoringPage: React.FC = () => {
         </div>
       )}
 
-      {/* 2. Monitoring KPI Cards (Real Data Only + Data Unavailable) */}
+      {/* 2. Monitoring KPI Cards (Live Persisted Telemetry) */}
       <MonitoringKpiCards
         totalTrainedModels={totalModels}
+        overview={monitoringOverview}
         health={health}
         aiStatus={aiStatus}
         loading={loading}
@@ -312,15 +430,15 @@ export const DeploymentMonitoringPage: React.FC = () => {
 
           <button
             type="button"
-            onClick={() => setActiveSubTab('performance')}
+            onClick={() => setActiveSubTab('config')}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-              activeSubTab === 'performance'
+              activeSubTab === 'config'
                 ? 'bg-indigo-600 text-white shadow-xs'
                 : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
-            <BarChart2 className="w-4 h-4" />
-            Model Performance Benchmarks
+            <Server className="w-4 h-4" />
+            Deployment Lifecycle & History
           </button>
 
           <button
@@ -333,20 +451,20 @@ export const DeploymentMonitoringPage: React.FC = () => {
             }`}
           >
             <Activity className="w-4 h-4" />
-            Prediction Activity Audit
+            Prediction Audit Telemetry ({totalLogs})
           </button>
 
           <button
             type="button"
-            onClick={() => setActiveSubTab('config')}
+            onClick={() => setActiveSubTab('performance')}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-              activeSubTab === 'config'
+              activeSubTab === 'performance'
                 ? 'bg-indigo-600 text-white shadow-xs'
                 : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
-            <Server className="w-4 h-4" />
-            Runtime Configuration & RFC
+            <BarChart2 className="w-4 h-4" />
+            Model Performance Benchmarks
           </button>
         </div>
       )}
@@ -365,16 +483,37 @@ export const DeploymentMonitoringPage: React.FC = () => {
             />
           )}
 
-          {activeSubTab === 'performance' && (
-            <ModelPerformanceMonitoringSection model={selectedModel} />
+          {activeSubTab === 'config' && (
+            <DeploymentConfigSection
+              model={selectedModel}
+              health={health}
+              activeDeployment={activeDeployment}
+              deploymentHistory={deploymentHistory}
+              onDeploy={handleDeploy}
+              onUndeploy={handleUndeploy}
+              isActionLoading={isActionLoading}
+            />
           )}
 
           {activeSubTab === 'activity' && (
-            <PredictionActivityMonitoringTable models={models} />
+            <PredictionActivityMonitoringTable
+              logs={predictionLogs}
+              models={models}
+              loading={loadingLogs}
+              totalLogs={totalLogs}
+              offset={logOffset}
+              limit={logLimit}
+              onPageChange={(newOffset) => fetchPredictionLogs(newOffset)}
+              onSubmitGroundTruth={handleSubmitGroundTruth}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
+              modelFilter={modelFilter}
+              onModelFilterChange={setModelFilter}
+            />
           )}
 
-          {activeSubTab === 'config' && (
-            <DeploymentConfigSection model={selectedModel} health={health} />
+          {activeSubTab === 'performance' && (
+            <ModelPerformanceMonitoringSection model={selectedModel} />
           )}
         </>
       ) : (

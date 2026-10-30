@@ -5,7 +5,6 @@ import {
   Activity,
   CheckCircle2,
   XCircle,
-  Database,
 } from 'lucide-react';
 import type { HealthReadinessResponse, AIServicesStatusResponse } from '../types/deployment';
 
@@ -130,6 +129,7 @@ export const MonitoringKpiCards: React.FC<MonitoringKpiCardsProps> = ({
           <span className="text-xl font-extrabold font-mono text-slate-900 uppercase">
             {health?.status || 'Unknown'}
           </span>
+        </div>
         <p className="text-[11px] text-slate-500 mt-1 flex items-center justify-between font-mono">
           <span>DB: {health?.components?.database || 'checking'}</span>
           <span>LLM: {aiStatus?.llm?.provider || 'ollama'}</span>

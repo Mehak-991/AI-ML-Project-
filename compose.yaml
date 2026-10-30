@@ -32,7 +32,7 @@ services:
   migration:
     build:
       context: .
-    image: aiproject-backend:latest
+    image: aiproject-backend:${APP_VERSION:-0.4.0}
     depends_on:
       db:
         condition: service_healthy
@@ -57,7 +57,7 @@ services:
       args:
         INSTALL_LLM: ${INSTALL_LLM:-false}
         INSTALL_NLP: ${INSTALL_NLP:-false}
-    image: aiproject-backend:latest
+    image: aiproject-backend:${APP_VERSION:-0.4.0}
     restart: unless-stopped
     depends_on:
       db:
@@ -95,7 +95,7 @@ services:
   worker:
     build:
       context: .
-    image: aiproject-backend:latest
+    image: aiproject-backend:${APP_VERSION:-0.4.0}
     restart: unless-stopped
     depends_on:
       db:
@@ -137,7 +137,7 @@ services:
   frontend:
     build:
       context: ./frontend
-    image: aiproject-frontend:latest
+    image: aiproject-frontend:${APP_VERSION:-0.4.0}
     restart: unless-stopped
     depends_on:
       - app

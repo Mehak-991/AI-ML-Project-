@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app import __version__
 from app.core.config import Settings, get_settings
 from app.database.session import get_db
-from app.schemas.common import RootResponse
+from app.schemas.common import ErrorResponse, RootResponse
 from app.schemas.health import HealthResponse
 from app.services import health_service
 
@@ -39,6 +39,17 @@ def liveness(settings: SettingsDep) -> HealthResponse:
     "/metrics",
     summary="Prometheus metrics exporter",
     response_class=PlainTextResponse,
+    responses={
+        200: {
+            "content": {"text/plain; version=0.0.4; charset=utf-8": {}},
+            "description": "OpenMetrics / Prometheus text representation",
+        },
+        500: {
+            "model": ErrorResponse,
+            "description": "Unexpected server error",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
+        },
+    },
 )
 def get_metrics(
     db: Annotated[Session, Depends(get_db)],

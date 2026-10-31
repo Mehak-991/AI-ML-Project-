@@ -19,6 +19,7 @@ from app.database.models.ml_model import MLModel
 from app.database.models.user import User
 from app.database.session import get_session_factory
 from app.schemas.job import JobMetricsResponse
+from app.services import authorization
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,12 @@ def create_job(
     experiment_id: uuid.UUID | None = None,
     max_retries: int = 3,
 ) -> Job:
-    # Validate linked entities exist
-    if model_id and not session.get(MLModel, model_id):
-        raise NotFoundError(f"Model {model_id} not found.")
+    # Validate linked entities exist and the caller may use the model
+    if model_id:
+        model = session.get(MLModel, model_id)
+        if not model:
+            raise NotFoundError(f"Model {model_id} not found.")
+        authorization.ensure_model_access(user, model)
     if experiment_id and not session.get(Experiment, experiment_id):
         raise NotFoundError(f"Experiment {experiment_id} not found.")
 
@@ -194,7 +198,7 @@ def _execute_worker_task(job_id: uuid.UUID, settings: Settings) -> None:
                 session.commit()
 
                 req = TrainRequest(**job.input_config)
-                model = model_service.train(session, settings, req)
+                model = model_service.train(session, settings, req, owner_id=job.created_by_id)
                 job.result = {
                     "model_id": str(model.id),
                     "model_name": model.name,
@@ -250,6 +254,7 @@ def _execute_worker_task(job_id: uuid.UUID, settings: Settings) -> None:
                     status="success",
                     problem_type=model.problem_type,
                     prediction_summary={"count": len(predictions), "predictions": predictions[:50]},
+                    requested_by_id=job.created_by_id,
                 )
 
                 job.result = {

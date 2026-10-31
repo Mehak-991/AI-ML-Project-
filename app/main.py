@@ -39,6 +39,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     # DEBUG only makes logging verbose. Tracebacks go to the server log, never to clients.
     configure_logging("DEBUG" if settings.DEBUG else settings.LOG_LEVEL, settings.LOG_FORMAT)
+    if settings.is_production and settings.jwt_secret_is_weak:
+        # Not fatal yet so existing deployments keep starting; anyone with the default
+        # secret can forge tokens. Set JWT_SECRET_KEY (>= 32 random bytes) in .env.
+        logger.critical(
+            "JWT_SECRET_KEY is the public default or shorter than 32 bytes; "
+            "access tokens can be forged. Set a strong JWT_SECRET_KEY now."
+        )
 
     app = FastAPI(
         title=settings.APP_NAME,
@@ -70,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             default_per_minute=settings.RATE_LIMIT_DEFAULT_PER_MINUTE,
             ai_per_minute=settings.RATE_LIMIT_AI_PER_MINUTE,
             training_per_minute=settings.RATE_LIMIT_TRAINING_PER_MINUTE,
+            auth_per_minute=settings.RATE_LIMIT_AUTH_PER_MINUTE,
         )
     origins = settings.cors_origins
     if origins:

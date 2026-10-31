@@ -35,6 +35,11 @@ class MLModel(TimestampMixin, Base):
     artifact_filename: Mapped[str] = mapped_column(String(255), unique=True)
     artifact_sha256: Mapped[str] = mapped_column(String(64))
     sklearn_version: Mapped[str] = mapped_column(String(32))
+    # Owner for object-level authorization. NULL = created before ownership tracking
+    # (Phase 20); such legacy models stay usable by every authenticated user.
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     dataset: Mapped["Dataset"] = relationship(back_populates="models")
     deployments: Mapped[list["Deployment"]] = relationship(

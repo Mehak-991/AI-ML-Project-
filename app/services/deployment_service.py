@@ -88,6 +88,7 @@ def log_prediction(
     error_category: str | None = None,
     error_message: str | None = None,
     prediction_summary: dict[str, Any] | None = None,
+    requested_by_id: uuid.UUID | None = None,
 ) -> PredictionLog:
     """Safe audit logging for prediction execution."""
     try:
@@ -101,6 +102,7 @@ def log_prediction(
             error_category=error_category,
             error_message=error_message,
             prediction_summary=prediction_summary,
+            requested_by_id=requested_by_id,
         )
         session.add(log_entry)
         session.commit()

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query, status
 from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
 from app.repositories.users import UserRepository
 from app.schemas.auth import (
+    ChangePasswordRequest,
     RefreshTokenRequest,
     TokenResponse,
     UserList,
@@ -67,6 +68,21 @@ def refresh(request: RefreshTokenRequest, db: DbSession, settings: SettingsDep) 
 def logout(request: RefreshTokenRequest, db: DbSession) -> dict[str, str]:
     auth_service.revoke_refresh_token(db, request.refresh_token)
     return {"message": "Successfully logged out."}
+
+
+@router.post(
+    "/change-password",
+    status_code=status.HTTP_200_OK,
+    summary="Change own password and revoke all of own refresh tokens",
+    responses=UNAUTHORIZED,
+)
+def change_password(
+    request: ChangePasswordRequest, db: DbSession, current_user: CurrentUserDep
+) -> dict[str, str]:
+    auth_service.change_password(
+        db, current_user, request.current_password, request.new_password
+    )
+    return {"message": "Password changed. All sessions must log in again."}
 
 
 @router.get(

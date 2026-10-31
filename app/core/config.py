@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from app.core.exceptions import ConfigurationError
 
 Environment = Literal["development", "testing", "production"]
+DEFAULT_JWT_SECRET = "insecure-dev-secret-key-change-in-production-min-32-bytes"
 
 DEFAULT_DEV_CORS_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
@@ -47,7 +48,7 @@ class Settings(BaseSettings):
 
     # JWT Authentication & Authorization
     JWT_SECRET_KEY: SecretStr = Field(
-        default=SecretStr("insecure-dev-secret-key-change-in-production-min-32-bytes"),
+        default=SecretStr(DEFAULT_JWT_SECRET),
         description="Secret key for signing JWT tokens.",
     )
     JWT_ALGORITHM: str = Field(default="HS256")
@@ -201,6 +202,12 @@ class Settings(BaseSettings):
         if problems:
             raise ValueError("; ".join(problems))
         return self
+
+    @property
+    def jwt_secret_is_weak(self) -> bool:
+        """True for the shipped default secret or anything under 32 bytes."""
+        secret = self.JWT_SECRET_KEY.get_secret_value()
+        return secret == DEFAULT_JWT_SECRET or len(secret.encode("utf-8")) < 32
 
     @property
     def is_production(self) -> bool:

@@ -59,6 +59,10 @@ class PredictionLog(TimestampMixin, Base):
     # Ground-truth evaluation foundation
     ground_truth: Mapped[list[Any] | None] = mapped_column(JSONType, nullable=True)
     is_evaluated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # User who requested the prediction (NULL for logs written before Phase 20).
+    requested_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     model: Mapped["MLModel"] = relationship(back_populates="prediction_logs")
     deployment: Mapped["Deployment | None"] = relationship(back_populates="predictions")

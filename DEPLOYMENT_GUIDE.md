@@ -118,39 +118,62 @@ docker compose logs -f worker
 
 ---
 
-## 6. Backup & Restore Procedures
+---
 
-### Database Backup:
+## 6. Observability & Prometheus Metrics
+
+The platform provides standard OpenMetrics / Prometheus exporter endpoint at `/metrics`:
+
+- **Endpoint**: `GET /metrics`
+- **Output Content-Type**: `text/plain; version=0.0.4; charset=utf-8`
+- **Key Metric Families**:
+  - `aiml_models_total`: Total number of registered machine learning models (gauge)
+  - `aiml_jobs_by_status`: Count of background jobs partitioned by status (`queued`, `running`, `completed`, `failed`, `cancelled`, `retry_pending`) (gauge)
+  - `aiml_predictions_total`: Total prediction requests processed partitioned by outcome status (counter)
+  - `aiml_prediction_records_total`: Total individual records predicted across requests (counter)
+  - `aiml_prediction_duration_ms_avg`: Average prediction duration in milliseconds by status (gauge)
+  - `aiml_worker_health_status`: Dedicated background worker heartbeat liveness status (`1` = healthy, `0` = stale/dead) (gauge)
+
+---
+
+## 7. Automated Backup & Safe Restore Procedures
+
+### Automated Backup Creation:
+Executes non-blocking `pg_dump`, gzip compresses output, writes a SHA-256 sidecar file, records JSON metadata, and automatically enforces retention (default: keeps the last 7 daily backups, never deleting the only remaining backup):
 ```bash
-docker compose exec -t db pg_dump -U aiproject aiproject > backup_$(date +%Y%m%d_%H%M%S).sql
+python scripts/backup_db.py --retention 7
 ```
 
-### Database Restore:
+### Checksum Verification (Pre-Restore Validation):
+Validates SHA-256 integrity against the recorded sidecar without modifying any database:
 ```bash
-cat backup_*.sql | docker compose exec -T db psql -U aiproject -d aiproject
+python scripts/restore_db.py --backup backups/db_backup_aiproject_<timestamp>.sql.gz --verify-only
 ```
 
-### Model Artifact Backup:
+### Isolated Test Restore (Disaster Recovery Drill):
+Restores into a separate isolated test database to verify backup integrity safely:
 ```bash
-docker run --rm -v aiproject_models:/data -v $(pwd):/backup alpine tar czf /backup/models_backup.tar.gz /data
+python scripts/restore_db.py --backup backups/db_backup_aiproject_<timestamp>.sql.gz --target-db aiproject_test_restore --confirm
 ```
 
 ---
 
-## 7. Graceful Shutdown & Rollback
+## 8. Versioning, Rollback & Deployment Hardening
 
-### Stop Stack Gracefully:
+### Docker Image Versioning:
+All service images are versioned via the `${APP_VERSION}` environment variable (default: `0.4.0`):
 ```bash
-docker compose down
+APP_VERSION=0.4.0 docker compose up -d
 ```
 
-### Stop and Wipe Volumes (Disaster Cleanup Only):
+### Rollback Runbook:
+To rollback to a previous version without affecting volumes or database records:
 ```bash
-docker compose down -v
+# 1. Select target previous image tag or checkout release commit
+APP_VERSION=0.3.0 docker compose up -d app worker frontend
+
+# 2. Verify health
+docker compose ps
+curl http://localhost/health
 ```
 
-### Rollback to Previous Version:
-```bash
-git checkout <previous_commit_tag>
-docker compose up -d --build
-```

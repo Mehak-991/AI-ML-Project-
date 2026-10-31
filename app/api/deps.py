@@ -40,14 +40,18 @@ def get_token_counter(ai: AIServicesDep) -> TokenCounter:
     return ai.token_counter
 
 
+import logging
+import uuid
+
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-import uuid
+
 from app.core import security
 from app.database.models.user import User
 from app.repositories.users import UserRepository
 
 security_bearer = HTTPBearer(auto_error=False)
+auth_logger = logging.getLogger("app.auth")
 
 
 def get_current_user_optional(
@@ -109,9 +113,13 @@ def get_current_user(
     except HTTPException:
         raise
     except Exception as exc:
+        # Parser details stay server-side; never log the token itself.
+        auth_logger.warning(
+            "Access token rejected: %s", type(exc).__name__, extra={"error_type": type(exc).__name__}
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token verification failed: {exc}",
+            detail="Could not validate credentials.",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 

@@ -217,11 +217,13 @@ class RateLimitRule:
 class RateLimitMiddleware:
     """Per-client rate limits with separate budgets for expensive endpoints.
 
-    Clients are identified by their socket address. Behind a reverse proxy run
-    uvicorn with --proxy-headers and --forwarded-allow-ips set to the proxy's
-    address, otherwise all clients share the proxy's budget. Limits are per
-    process: with N workers the effective limit is up to N times higher. Use a
-    shared store (e.g. Redis) or the gateway's limiter for strict global limits.
+    Clients are identified by their socket address; X-Forwarded-For is never read
+    here. uvicorn's --proxy-headers rewrites the address only when the direct peer
+    is listed in FORWARDED_ALLOW_IPS, taking the right-most untrusted hop, so
+    client-supplied headers cannot spoof it. If the proxy is not trusted, all
+    clients share the proxy's budget. Limits are per process: with N workers (or
+    replicas) the effective limit is up to N times higher. Use a shared store
+    (e.g. Redis) or the gateway's limiter for strict global limits.
     """
 
     def __init__(
@@ -232,6 +234,7 @@ class RateLimitMiddleware:
         default_per_minute: int,
         ai_per_minute: int,
         training_per_minute: int,
+        auth_per_minute: int | None = None,
         limiter: TokenBucketLimiter | None = None,
     ) -> None:
         self.app = app
@@ -239,6 +242,12 @@ class RateLimitMiddleware:
         self.default = RateLimitRule("default", default_per_minute)
         self.ai = RateLimitRule("ai", ai_per_minute)
         self.training = RateLimitRule("training", training_per_minute)
+        # Credential endpoints get their own small budget (brute-force protection).
+        self.auth = RateLimitRule("auth", auth_per_minute) if auth_per_minute else None
+        self.auth_routes = {
+            ("POST", f"{api_prefix}/auth/{p}")
+            for p in ("login", "register", "refresh", "change-password")
+        }
         self.exempt = {"/health", f"{api_prefix}/health", "/docs", "/redoc", "/openapi.json"}
         self.ai_prefixes = tuple(f"{api_prefix}{p}" for p in ("/llm", "/nlp", "/embeddings"))
         self.training_routes = {
@@ -254,6 +263,8 @@ class RateLimitMiddleware:
             return self.ai
         if (method, path.rstrip("/")) in self.training_routes:
             return self.training
+        if self.auth is not None and (method, path.rstrip("/")) in self.auth_routes:
+            return self.auth
         return self.default
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:

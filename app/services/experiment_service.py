@@ -325,6 +325,7 @@ def execute_pipeline_run(
             artifact_filename=saved_art.filename,
             artifact_sha256=saved_art.sha256,
             sklearn_version=sklearn.__version__,
+            owner_id=experiment.created_by_id,
         )
         session.add(registered_model)
         session.flush()

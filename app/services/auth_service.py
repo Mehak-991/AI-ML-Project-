@@ -136,6 +136,22 @@ def revoke_refresh_token(session: Session, refresh_token: str) -> None:
         session.commit()
 
 
+def change_password(
+    session: Session, user: User, current_password: str, new_password: str
+) -> None:
+    """Change the user's password and revoke all of *their* refresh tokens.
+
+    Other users' sessions are untouched. Access tokens already issued stay valid
+    until they expire (JWT_ACCESS_TOKEN_EXPIRE_MINUTES).
+    """
+    if not security.verify_password(current_password, user.hashed_password):
+        raise AuthenticationError("Current password is incorrect.")
+    security.validate_password_strength(new_password)
+    user.hashed_password = security.hash_password(new_password)
+    RefreshTokenRepository(session).revoke_all_for_user(user.id)
+    session.commit()
+
+
 def update_user_by_admin(
     session: Session, current_user_id: uuid.UUID, target_user_id: uuid.UUID, request: UserUpdateRequest
 ) -> User:
@@ -157,6 +173,8 @@ def update_user_by_admin(
         target.role = request.role
     if request.is_active is not None:
         target.is_active = request.is_active
+        if request.is_active is False:  # security event: end the account's sessions
+            RefreshTokenRepository(session).revoke_all_for_user(target.id)
     if request.full_name is not None:
         target.full_name = request.full_name.strip()
 

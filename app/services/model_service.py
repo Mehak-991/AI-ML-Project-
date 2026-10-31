@@ -21,7 +21,12 @@ from app.services.dataset_service import get_dataset, load_dataset_frame
 logger = logging.getLogger(__name__)
 
 
-def train(session: Session, settings: Settings, request: TrainRequest) -> MLModel:
+def train(
+    session: Session,
+    settings: Settings,
+    request: TrainRequest,
+    owner_id: uuid.UUID | None = None,
+) -> MLModel:
     dataset = get_dataset(session, request.dataset_id)
     frame = load_dataset_frame(settings, dataset)
 
@@ -62,6 +67,7 @@ def train(session: Session, settings: Settings, request: TrainRequest) -> MLMode
         artifact_filename=artifact.filename,
         artifact_sha256=artifact.sha256,
         sklearn_version=result.metadata["versions"]["scikit-learn"],
+        owner_id=owner_id,
     )
     repo = MLModelRepository(session)
     try:

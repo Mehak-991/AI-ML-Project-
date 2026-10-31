@@ -15,7 +15,7 @@ from app.schemas.explainability import (
     LocalLimeExplanationResponse,
     LocalShapExplanationResponse,
 )
-from app.services import explainability_service
+from app.services import authorization, explainability_service, model_service
 
 router = APIRouter(prefix="/models/{model_id}/explainability", tags=["explainability"])
 
@@ -35,7 +35,7 @@ def get_explainability_summary(
     model_id: uuid.UUID,
     db: DbSession,
     settings: SettingsDep,
-    _user: CurrentUserDep,
+    user: CurrentUserDep,
 ) -> ExplainabilitySummaryResponse:
     return explainability_service.get_explainability_summary(db, settings, model_id)
 
@@ -50,9 +50,10 @@ def get_global_feature_importance(
     model_id: uuid.UUID,
     db: DbSession,
     settings: SettingsDep,
-    _user: CurrentUserDep,
+    user: CurrentUserDep,
     sample_size: int = Query(default=50, ge=10, le=200),
 ) -> GlobalFeatureImportanceResponse:
+    authorization.ensure_model_access(user, model_service.get_model(db, model_id))
     return explainability_service.compute_global_feature_importance(
         db, settings, model_id, sample_size=sample_size
     )
@@ -69,8 +70,9 @@ def explain_with_shap(
     request: ExplainPredictionRequest,
     db: DbSession,
     settings: SettingsDep,
-    _user: CurrentUserDep,
+    user: CurrentUserDep,
 ) -> LocalShapExplanationResponse:
+    authorization.ensure_model_access(user, model_service.get_model(db, model_id))
     return explainability_service.compute_local_shap_explanation(
         session=db,
         settings=settings,
@@ -92,8 +94,9 @@ def explain_with_lime(
     request: ExplainPredictionRequest,
     db: DbSession,
     settings: SettingsDep,
-    _user: CurrentUserDep,
+    user: CurrentUserDep,
 ) -> LocalLimeExplanationResponse:
+    authorization.ensure_model_access(user, model_service.get_model(db, model_id))
     return explainability_service.compute_local_lime_explanation(
         session=db,
         settings=settings,

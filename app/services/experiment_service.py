@@ -24,7 +24,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -102,7 +102,7 @@ def list_experiments(
     if status:
         stmt = stmt.where(Experiment.status == status)
 
-    total = len(session.scalars(stmt).all())
+    total = session.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     items = session.scalars(stmt.offset(offset).limit(limit)).all()
     return list(items), total
 

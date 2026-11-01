@@ -46,6 +46,14 @@ class Settings(BaseSettings):
     RATE_LIMIT_TRAINING_PER_MINUTE: int = Field(default=10, ge=1)
     RATE_LIMIT_AUTH_PER_MINUTE: int = Field(default=20, ge=1)
 
+    # Background jobs: a running job whose heartbeat is older than its timeout is
+    # treated as abandoned and re-queued (or failed once retries are exhausted).
+    JOB_STALE_TIMEOUT_MINUTES: int = Field(default=15, ge=1)
+    # Per-job-type overrides, e.g. JOB_STALE_TIMEOUT_BY_TYPE='{"model_training": 60}'.
+    JOB_STALE_TIMEOUT_BY_TYPE: dict[str, int] = Field(default_factory=dict)
+    JOB_HEARTBEAT_INTERVAL_SECONDS: int = Field(default=30, ge=1)
+    JOB_REAPER_INTERVAL_SECONDS: int = Field(default=60, ge=10)
+
     # JWT Authentication & Authorization
     JWT_SECRET_KEY: SecretStr = Field(
         default=SecretStr(DEFAULT_JWT_SECRET),
@@ -185,6 +193,16 @@ class Settings(BaseSettings):
                 url = "postgresql+psycopg://" + url[len(prefix) :]
                 break
         return SecretStr(url)
+
+    @model_validator(mode="after")
+    def _validate_job_timeouts(self) -> "Settings":
+        # A live job must heartbeat several times within its stale timeout.
+        timeouts = [self.JOB_STALE_TIMEOUT_MINUTES, *self.JOB_STALE_TIMEOUT_BY_TYPE.values()]
+        if min(timeouts) * 60 < 3 * self.JOB_HEARTBEAT_INTERVAL_SECONDS:
+            raise ValueError(
+                "Job stale timeouts must be at least 3x JOB_HEARTBEAT_INTERVAL_SECONDS"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_production(self) -> "Settings":

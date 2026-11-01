@@ -70,6 +70,13 @@ def test_api_workflow_against_postgres(pg_connection, make_settings) -> None:
 
     app.dependency_overrides[get_db] = _get_db
     with TestClient(app) as client:
+        # Dataset upload and training require an authenticated admin/ML engineer. On a
+        # fresh disposable database the first registered user is the bootstrap admin.
+        credentials = {"email": "pg-admin@example.com", "password": "Password123!"}
+        assert client.post("/api/v1/auth/register", json=credentials).status_code == 201
+        login = client.post("/api/v1/auth/login", json=credentials).json()
+        client.headers["Authorization"] = f"Bearer {login['access_token']}"
+
         created = client.post(
             "/api/v1/datasets",
             files={"file": ("d.csv", to_csv_bytes(make_classification_frame(120, seed=1)))},
@@ -81,3 +88,10 @@ def test_api_workflow_against_postgres(pg_connection, make_settings) -> None:
         )
         assert trained.status_code == 201, trained.text
         assert client.get("/api/v1/models").json()["total"] >= 1
+
+        model_id = trained.json()["id"]
+        record = {"num_a": 1.0, "num_b": 0.2, "num_c": 3, "cat_a": "red", "cat_b": "small"}
+        predicted = client.post(f"/api/v1/models/{model_id}/predict", json={"records": [record]})
+        assert predicted.status_code == 200, predicted.text
+        history = client.get("/api/v1/predictions/history", params={"model_id": model_id})
+        assert history.json()["total"] == 1

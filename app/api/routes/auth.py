@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
+from app.api.deps import CurrentUserDep, CurrentUserOptionalDep, DbSession, SettingsDep, require_role
 from app.repositories.users import UserRepository
 from app.schemas.auth import (
     ChangePasswordRequest,
@@ -32,10 +32,12 @@ CONFLICT = {409: {"model": ErrorResponse, "description": "User already exists"}}
     response_model=UserRead,
     status_code=status.HTTP_201_CREATED,
     summary="Register a new user account",
-    responses=CONFLICT,
+    responses=CONFLICT | FORBIDDEN,
 )
-def register(request: UserRegisterRequest, db: DbSession) -> UserRead:
-    user = auth_service.register_user(db, request)
+def register(
+    request: UserRegisterRequest, db: DbSession, current_user: CurrentUserOptionalDep
+) -> UserRead:
+    user = auth_service.register_user(db, request, requested_by=current_user)
     return UserRead.model_validate(user)
 
 

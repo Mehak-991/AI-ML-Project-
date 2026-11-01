@@ -5,7 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.core import security
 from app.core.config import Settings
-from app.core.exceptions import AuthenticationError, ConflictError, DataValidationError, NotFoundError
+from app.core.exceptions import (
+    AuthenticationError,
+    ConflictError,
+    DataValidationError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from app.database.models.user import RefreshToken, User
 from app.repositories.users import RefreshTokenRepository, UserRepository
 from app.schemas.auth import (
@@ -18,8 +24,18 @@ from app.schemas.auth import (
 )
 
 
-def register_user(session: Session, request: UserRegisterRequest) -> User:
+def register_user(
+    session: Session, request: UserRegisterRequest, requested_by: User | None = None
+) -> User:
     user_repo = UserRepository(session)
+    is_bootstrap = user_repo.count() == 0
+    # Self-registration yields 'viewer'; elevated roles must be granted by an admin.
+    if request.role != "viewer" and not is_bootstrap:
+        if requested_by is None or requested_by.role != "admin":
+            raise PermissionDeniedError(
+                "Only administrators can create accounts with the "
+                f"'{request.role}' role. Register as 'viewer' and ask an admin to promote you."
+            )
     existing = user_repo.get_by_email(request.email)
     if existing:
         raise ConflictError(f"A user with email '{request.email}' already exists.")
@@ -29,7 +45,7 @@ def register_user(session: Session, request: UserRegisterRequest) -> User:
 
     # First user automatically becomes admin if no users exist
     role = request.role
-    if user_repo.count() == 0:
+    if is_bootstrap:
         role = "admin"
 
     user = User(

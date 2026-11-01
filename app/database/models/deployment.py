@@ -1,7 +1,7 @@
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base, TimestampMixin
@@ -40,11 +40,14 @@ class PredictionLog(TimestampMixin, Base):
     """Audit log for single-record or batch prediction requests."""
 
     __tablename__ = "prediction_logs"
+    # Newest-first history pages (scanned backward); the composite also serves model_id lookups.
+    __table_args__ = (
+        Index("ix_prediction_logs_model_id_created_at", "model_id", "created_at"),
+        Index("ix_prediction_logs_created_at", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    model_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("ml_models.id", ondelete="CASCADE"), index=True
-    )
+    model_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ml_models.id", ondelete="CASCADE"))
     deployment_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("deployments.id", ondelete="SET NULL"), nullable=True, index=True
     )

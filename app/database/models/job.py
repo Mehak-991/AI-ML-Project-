@@ -56,6 +56,10 @@ class Job(Base, TimestampMixin):
     progress_percentage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     current_stage: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
+    # Lease: which process runs the job and when it last proved it is alive.
+    worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     execution_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)

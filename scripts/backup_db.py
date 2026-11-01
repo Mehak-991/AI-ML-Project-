@@ -163,16 +163,22 @@ def rotate_backups(output_dir: Path, retention_count: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Automated PostgreSQL Backup Utility")
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_BACKUP_DIR, help="Directory to store backups")
-    parser.add_argument("--retention", type=int, default=DEFAULT_RETENTION, help="Number of backups to retain")
-    parser.add_argument("--container", type=str, default="aiproject-db-1", help="Database docker container name")
+    parser.add_argument(
+        "--output-dir", type=Path, default=DEFAULT_BACKUP_DIR, help="Directory to store backups"
+    )
+    parser.add_argument(
+        "--retention", type=int, default=DEFAULT_RETENTION, help="Number of backups to retain"
+    )
+    parser.add_argument(
+        "--container", type=str, default="aiproject-db-1", help="Database docker container name"
+    )
     parser.add_argument("--user", type=str, default="aiproject", help="PostgreSQL user")
     parser.add_argument("--db", type=str, default="aiproject", help="PostgreSQL database name")
     parser.add_argument(
         "--remote-sync",
         type=str,
         default=None,
-        help="Command template for off-host syncing (e.g. 'aws s3 cp {file} s3://my-bucket/backups/')"
+        help="Command template for off-host syncing (e.g. 'aws s3 cp {file} s3://bucket/')"
     )
 
     args = parser.parse_args()

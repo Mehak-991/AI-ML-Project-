@@ -176,8 +176,18 @@ def test_chat_provider_errors(ai_client, chat, error, status, code) -> None:
         assert response.headers["retry-after"] == "7"
 
 
-def test_chat_without_api_key_is_actionable(ai_client: TestClient) -> None:
-    response = ai_client.post(f"{API}/llm/chat", json={"messages": [{"role": "user", "content": "x"}]})
+def test_chat_without_api_key_is_actionable(app) -> None:
+    import uuid
+    from app.api.deps import get_current_user
+    from app.database.models.user import User
+
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=uuid.uuid4(), email="u@example.com", role="admin", is_active=True
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            f"{API}/llm/chat", json={"messages": [{"role": "user", "content": "x"}]}
+        )
     assert response.status_code == 503
     error = ErrorResponse.model_validate(response.json()).error
     assert error.code == "provider_not_configured"

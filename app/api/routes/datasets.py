@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 
-from app.api.deps import DbSession, SettingsDep, require_role
+from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
 from app.repositories.datasets import DatasetRepository
 from app.schemas.common import ErrorResponse
 from app.schemas.datasets import (
@@ -30,6 +30,7 @@ UPLOAD_ERRORS = {
     422: {"model": ErrorResponse, "description": "Data validation failed"},
 }
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Dataset not found"}}
+UNAUTHORIZED = {401: {"model": ErrorResponse, "description": "Authentication required"}}
 
 UploadedFile = Annotated[UploadFile, File(description="A .csv (UTF-8) or .xlsx file.")]
 
@@ -77,9 +78,11 @@ def upload_dataset(
     )
 
 
-@router.get("", response_model=DatasetList, summary="List datasets")
+@router.get("", response_model=DatasetList, summary="List datasets",
+    responses=UNAUTHORIZED)
 def list_datasets(
     db: DbSession,
+    _user: CurrentUserDep,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> DatasetList:
@@ -88,8 +91,9 @@ def list_datasets(
     return DatasetList(items=items, total=repo.count(), offset=offset, limit=limit)
 
 
-@router.get("/{dataset_id}", response_model=DatasetRead, responses=NOT_FOUND)
-def get_dataset(dataset_id: uuid.UUID, db: DbSession) -> DatasetRead:
+@router.get("/{dataset_id}", response_model=DatasetRead,
+    responses=NOT_FOUND | UNAUTHORIZED)
+def get_dataset(dataset_id: uuid.UUID, db: DbSession, _user: CurrentUserDep) -> DatasetRead:
     return DatasetRead.model_validate(dataset_service.get_dataset(db, dataset_id))
 
 
@@ -97,12 +101,13 @@ def get_dataset(dataset_id: uuid.UUID, db: DbSession) -> DatasetRead:
     "/{dataset_id}/summary",
     response_model=DatasetValidationResponse,
     summary="Validation report and summary for a stored dataset",
-    responses=NOT_FOUND,
+    responses=NOT_FOUND | UNAUTHORIZED,
 )
 def get_dataset_summary(
     dataset_id: uuid.UUID,
     db: DbSession,
     settings: SettingsDep,
+    _user: CurrentUserDep,
     target_column: Annotated[str | None, Query(max_length=255)] = None,
 ) -> DatasetValidationResponse:
     dataset = dataset_service.get_dataset(db, dataset_id)

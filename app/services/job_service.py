@@ -376,9 +376,11 @@ def _run_claimed_job(session: Session, settings: Settings, job: Job, worker_id: 
 
             records = job.input_config.get("records", [])
             allow_missing = job.input_config.get("allow_missing", False)
+            _infer_start = time.perf_counter()
             model, predictions, probabilities = model_service.predict_with_model(
                 session, settings, job.model_id, records, allow_missing=allow_missing
             )
+            _infer_duration_ms = (time.perf_counter() - _infer_start) * 1000.0
 
             # Record prediction audit log if available
             active_dep = deployment_service.DeploymentRepository(session).get_active_for_model(job.model_id)
@@ -388,7 +390,7 @@ def _run_claimed_job(session: Session, settings: Settings, job: Job, worker_id: 
                 model_id=model.id,
                 deployment_id=deployment_id,
                 record_count=len(records),
-                duration_ms=50.0,
+                duration_ms=_infer_duration_ms,
                 status="success",
                 problem_type=model.problem_type,
                 prediction_summary={"count": len(predictions), "predictions": predictions[:50]},

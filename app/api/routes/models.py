@@ -1,5 +1,3 @@
-"""Model training, metadata and prediction endpoints."""
-
 import time
 import uuid
 from typing import Annotated
@@ -39,21 +37,25 @@ def train_model(
     return ModelRead.model_validate(model_service.train(db, settings, request, owner_id=user.id))
 
 
-@router.get("", response_model=ModelList, summary="List trained models")
+@router.get("", response_model=ModelList, summary="List trained models",
+    responses={401: {"model": ErrorResponse, "description": "Authentication required"}})
 def list_models(
     db: DbSession,
+    user: CurrentUserDep,
     dataset_id: uuid.UUID | None = None,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> ModelList:
     repo = MLModelRepository(db)
+    # Non-admins see only their own models or legacy unowned models.
+    owner_filter = None if authorization.is_admin(user) else user.id
     if dataset_id is not None:
-        models = repo.list_for_dataset(dataset_id)
+        models = repo.list_for_dataset(dataset_id, owner_id=owner_filter)
         total = len(models)
         models = models[offset : offset + limit]
     else:
-        models = repo.list(offset=offset, limit=limit)
-        total = repo.count()
+        models = repo.list(offset=offset, limit=limit, owner_id=owner_filter)
+        total = repo.count(owner_id=owner_filter)
     return ModelList(
         items=[ModelRead.model_validate(m) for m in models],
         total=total,
@@ -66,10 +68,12 @@ def list_models(
     "/{model_id}",
     response_model=ModelRead,
     summary="Model metadata, feature schema and metrics",
-    responses=NOT_FOUND,
+    responses=NOT_FOUND | {401: {"model": ErrorResponse, "description": "Authentication required"}},
 )
-def get_model(model_id: uuid.UUID, db: DbSession) -> ModelRead:
-    return ModelRead.model_validate(model_service.get_model(db, model_id))
+def get_model(model_id: uuid.UUID, db: DbSession, user: CurrentUserDep) -> ModelRead:
+    model = model_service.get_model(db, model_id)
+    authorization.ensure_model_access(user, model)
+    return ModelRead.model_validate(model)
 
 
 @router.post(

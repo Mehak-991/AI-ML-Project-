@@ -15,11 +15,13 @@ from app.ai.llm import ChatMessage, ChatService
 from app.ai.tokens import TokenCounter
 from app.api.deps import (
     AIServicesDep,
+    CurrentUserDep,
     SettingsDep,
     get_chat_service,
     get_embedding_service,
     get_text_classifier,
     get_token_counter,
+    require_role,
 )
 from app.core.exceptions import DataValidationError
 from app.schemas.ai import (
@@ -54,8 +56,9 @@ def _errors(*codes: int) -> dict:
     return {c: {"model": ErrorResponse, "description": descriptions[c]} for c in codes}
 
 
-@router.get("/ai/status", response_model=AIStatusResponse, tags=["ai"])
-def ai_status(ai: AIServicesDep) -> AIStatusResponse:
+@router.get("/ai/status", response_model=AIStatusResponse, tags=["ai"],
+    responses={401: {"description": "Authentication required"}})
+def ai_status(ai: AIServicesDep, _user: CurrentUserDep) -> AIStatusResponse:
     """Which optional AI packages are installed, provider configuration (never the key)."""
     return AIStatusResponse(**ai.status())
 
@@ -65,11 +68,12 @@ def ai_status(ai: AIServicesDep) -> AIStatusResponse:
     response_model=EmbeddingResponse,
     tags=["ai"],
     summary="Sentence embeddings",
-    responses=_errors(422, 503, 504),
+    responses=_errors(422, 503, 504) | {401: {"description": "Authentication required"}},
 )
 def create_embeddings(
     request: EmbeddingRequest,
     service: Annotated[EmbeddingService, Depends(get_embedding_service)],
+    _user: CurrentUserDep,
 ) -> EmbeddingResponse:
     result = service.embed(request.texts, normalize=request.normalize)
     return EmbeddingResponse(
@@ -85,11 +89,12 @@ def create_embeddings(
     response_model=ClassificationResponse,
     tags=["ai"],
     summary="Sentiment classification (transformer baseline)",
-    responses=_errors(422, 503, 504),
+    responses=_errors(422, 503, 504) | {401: {"description": "Authentication required"}},
 )
 def classify_texts(
     request: ClassificationRequest,
     service: Annotated[TextClassificationService, Depends(get_text_classifier)],
+    _user: CurrentUserDep,
 ) -> ClassificationResponse:
     result = service.classify(request.texts, top_k=request.top_k)
     return ClassificationResponse(
@@ -110,11 +115,12 @@ def classify_texts(
     response_model=ChatResponse,
     tags=["ai"],
     summary="LLM chat completion",
-    responses=_errors(422, 429, 502, 503, 504),
+    responses=_errors(422, 429, 502, 503, 504) | {401: {"description": "Authentication required"}, 403: {"description": "Admin or ML Engineer role required"}},
 )
 def chat(
     request: ChatRequest,
     service: Annotated[ChatService, Depends(get_chat_service)],
+    _user: Annotated[object, Depends(require_role("admin", "ml_engineer"))],
 ) -> ChatResponse:
     result = service.complete(
         [ChatMessage(m.role, m.content) for m in request.messages],
@@ -136,12 +142,13 @@ def chat(
     response_model=TokenCountResponse,
     tags=["ai"],
     summary="Count tokens for text or chat messages",
-    responses=_errors(422),
+    responses=_errors(422) | {401: {"description": "Authentication required"}},
 )
 def count_tokens(
     request: TokenCountRequest,
     counter: Annotated[TokenCounter, Depends(get_token_counter)],
     settings: SettingsDep,
+    _user: CurrentUserDep,
 ) -> TokenCountResponse:
     total_chars = len(request.text or "") + sum(len(m.content) for m in request.messages or [])
     if total_chars > settings.TOKENIZER_MAX_TEXT_CHARS:
@@ -164,9 +171,13 @@ def count_tokens(
     response_model=TextAnalysisResponse,
     tags=["ai"],
     summary="Summarise (map-reduce for long text) and score sentiment — LangGraph workflow",
-    responses=_errors(422, 429, 502, 503, 504),
+    responses=_errors(422, 429, 502, 503, 504) | {401: {"description": "Authentication required"}, 403: {"description": "Admin or ML Engineer role required"}},
 )
-def analyze_text(request: TextAnalysisRequest, ai: AIServicesDep) -> TextAnalysisResponse:
+def analyze_text(
+    request: TextAnalysisRequest,
+    ai: AIServicesDep,
+    _user: Annotated[object, Depends(require_role("admin", "ml_engineer"))],
+) -> TextAnalysisResponse:
     workflow = ai.text_analysis(include_sentiment=request.include_sentiment)
     result = workflow.run(request.text, include_sentiment=request.include_sentiment)
     return TextAnalysisResponse(

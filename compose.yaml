@@ -27,6 +27,15 @@ services:
       - backend
     security_opt:
       - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
+      - FOWNER
+      - SETGID
+      - SETUID
+    mem_limit: 1g
 
 
   migration:
@@ -85,7 +94,8 @@ services:
       UPLOAD_DIR: /data/uploads
       MODEL_DIR: /data/trained_models
       AI_MODEL_CACHE_DIR: /data/model_cache
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-insecure-dev-secret-key-change-in-production-min-32-bytes}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
+    mem_limit: 2g
     volumes:
       - uploads:/data/uploads
       - models:/data/trained_models
@@ -143,6 +153,7 @@ services:
       - ALL
     security_opt:
       - "no-new-privileges:true"
+    mem_limit: 2g
     networks:
       - backend
 
@@ -157,6 +168,7 @@ services:
       - "${FRONTEND_PORT:-80}:80"
     security_opt:
       - "no-new-privileges:true"
+    mem_limit: 512m
     networks:
       frontend:
         # Fixed so the API can trust this proxy's X-Forwarded-For (FORWARDED_ALLOW_IPS).

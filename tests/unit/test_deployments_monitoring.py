@@ -86,3 +86,17 @@ def test_prediction_history_and_ground_truth(api_client: TestClient, db_session)
     )
     assert gt_res.status_code == 200
     assert gt_res.json()["is_evaluated"] is True
+
+
+def test_monitoring_endpoints_require_authentication(settings, api_client) -> None:
+    """Finding 1.2 verification: monitoring endpoints return 401 without bearer token."""
+    from app.main import create_app
+
+    clean_app = create_app(settings)
+    with TestClient(clean_app) as unauth_client:
+        assert unauth_client.get(f"{API}/monitoring/overview").status_code == 401
+        assert unauth_client.get(f"{API}/monitoring/models/{uuid.uuid4()}").status_code == 401
+
+    # Authenticated client has access
+    assert api_client.get(f"{API}/monitoring/overview").status_code == 200
+

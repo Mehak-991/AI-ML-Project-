@@ -29,9 +29,17 @@ sys.meta_path.insert(0, Blocker())
 
 from fastapi.testclient import TestClient
 from app.main import create_app
+from app.api.deps import get_current_user
+from app.database.models.user import User
+import uuid
+
+app = create_app()
+app.dependency_overrides[get_current_user] = lambda: User(
+    id=uuid.uuid4(), email="opt@example.com", role="admin", is_active=True
+)
 
 out = {}
-with TestClient(create_app()) as client:
+with TestClient(app) as client:
     def call(method, path, body=None):
         r = client.request(method, path, json=body)
         return {"status": r.status_code, "body": r.json()}

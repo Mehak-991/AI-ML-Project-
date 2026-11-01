@@ -160,10 +160,13 @@ def change_password(
     Other users' sessions are untouched. Access tokens already issued stay valid
     until they expire (JWT_ACCESS_TOKEN_EXPIRE_MINUTES).
     """
-    if not security.verify_password(current_password, user.hashed_password):
+    db_user = UserRepository(session).get(user.id)
+    if not db_user:
+        raise AuthenticationError("User not found.")
+    if not security.verify_password(current_password, db_user.hashed_password):
         raise AuthenticationError("Current password is incorrect.")
     security.validate_password_strength(new_password)
-    user.hashed_password = security.hash_password(new_password)
+    db_user.hashed_password = security.hash_password(new_password)
     RefreshTokenRepository(session).revoke_all_for_user(user.id)
     session.commit()
 

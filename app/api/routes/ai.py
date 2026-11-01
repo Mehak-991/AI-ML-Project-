@@ -47,6 +47,8 @@ router = APIRouter()
 
 def _errors(*codes: int) -> dict:
     descriptions = {
+        401: "Authentication required",
+        403: "Admin or ML Engineer role required",
         422: "Invalid input or limits exceeded",
         429: "Provider rate limit / quota (see Retry-After)",
         502: "Provider error",
@@ -56,8 +58,12 @@ def _errors(*codes: int) -> dict:
     return {c: {"model": ErrorResponse, "description": descriptions[c]} for c in codes}
 
 
-@router.get("/ai/status", response_model=AIStatusResponse, tags=["ai"],
-    responses={401: {"description": "Authentication required"}})
+@router.get(
+    "/ai/status",
+    response_model=AIStatusResponse,
+    tags=["ai"],
+    responses=_errors(401),
+)
 def ai_status(ai: AIServicesDep, _user: CurrentUserDep) -> AIStatusResponse:
     """Which optional AI packages are installed, provider configuration (never the key)."""
     return AIStatusResponse(**ai.status())
@@ -68,7 +74,7 @@ def ai_status(ai: AIServicesDep, _user: CurrentUserDep) -> AIStatusResponse:
     response_model=EmbeddingResponse,
     tags=["ai"],
     summary="Sentence embeddings",
-    responses=_errors(422, 503, 504) | {401: {"description": "Authentication required"}},
+    responses=_errors(401, 422, 503, 504),
 )
 def create_embeddings(
     request: EmbeddingRequest,
@@ -89,7 +95,7 @@ def create_embeddings(
     response_model=ClassificationResponse,
     tags=["ai"],
     summary="Sentiment classification (transformer baseline)",
-    responses=_errors(422, 503, 504) | {401: {"description": "Authentication required"}},
+    responses=_errors(401, 422, 503, 504),
 )
 def classify_texts(
     request: ClassificationRequest,
@@ -115,12 +121,12 @@ def classify_texts(
     response_model=ChatResponse,
     tags=["ai"],
     summary="LLM chat completion",
-    responses=_errors(422, 429, 502, 503, 504) | {401: {"description": "Authentication required"}, 403: {"description": "Admin or ML Engineer role required"}},
+    responses=_errors(401, 403, 422, 429, 502, 503, 504),
 )
 def chat(
     request: ChatRequest,
-    service: Annotated[ChatService, Depends(get_chat_service)],
     _user: Annotated[object, Depends(require_role("admin", "ml_engineer"))],
+    service: Annotated[ChatService, Depends(get_chat_service)],
 ) -> ChatResponse:
     result = service.complete(
         [ChatMessage(m.role, m.content) for m in request.messages],
@@ -142,13 +148,13 @@ def chat(
     response_model=TokenCountResponse,
     tags=["ai"],
     summary="Count tokens for text or chat messages",
-    responses=_errors(422) | {401: {"description": "Authentication required"}},
+    responses=_errors(401, 422),
 )
 def count_tokens(
     request: TokenCountRequest,
+    _user: CurrentUserDep,
     counter: Annotated[TokenCounter, Depends(get_token_counter)],
     settings: SettingsDep,
-    _user: CurrentUserDep,
 ) -> TokenCountResponse:
     total_chars = len(request.text or "") + sum(len(m.content) for m in request.messages or [])
     if total_chars > settings.TOKENIZER_MAX_TEXT_CHARS:
@@ -171,12 +177,12 @@ def count_tokens(
     response_model=TextAnalysisResponse,
     tags=["ai"],
     summary="Summarise (map-reduce for long text) and score sentiment — LangGraph workflow",
-    responses=_errors(422, 429, 502, 503, 504) | {401: {"description": "Authentication required"}, 403: {"description": "Admin or ML Engineer role required"}},
+    responses=_errors(401, 403, 422, 429, 502, 503, 504),
 )
 def analyze_text(
     request: TextAnalysisRequest,
-    ai: AIServicesDep,
     _user: Annotated[object, Depends(require_role("admin", "ml_engineer"))],
+    ai: AIServicesDep,
 ) -> TextAnalysisResponse:
     workflow = ai.text_analysis(include_sentiment=request.include_sentiment)
     result = workflow.run(request.text, include_sentiment=request.include_sentiment)

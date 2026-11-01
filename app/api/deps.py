@@ -47,6 +47,8 @@ from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core import security
+from collections.abc import Generator
+from app.core.exceptions import DatabaseNotConfiguredError
 from app.database.models.user import User
 from app.repositories.users import UserRepository
 
@@ -54,9 +56,35 @@ security_bearer = HTTPBearer(auto_error=False)
 auth_logger = logging.getLogger("app.auth")
 
 
+def get_db_optional(request: Request) -> Generator[Session | None, None, None]:
+    override = request.app.dependency_overrides.get(get_db)
+    if override:
+        res = override()
+        if hasattr(res, "__next__"):
+            session = next(res)
+            try:
+                yield session
+            finally:
+                try:
+                    next(res)
+                except StopIteration:
+                    pass
+        else:
+            yield res
+        return
+    settings = get_settings()
+    if settings.DATABASE_URL is None:
+        yield None
+        return
+    yield from get_db()
+
+
+DbOptionalSession = Annotated[Session | None, Depends(get_db_optional)]
+
+
 def get_current_user_optional(
     auth: Annotated[HTTPAuthorizationCredentials | None, Security(security_bearer)],
-    db: DbSession,
+    db: DbOptionalSession,
     settings: SettingsDep,
 ) -> User | None:
     if not auth or not auth.credentials:
@@ -67,6 +95,8 @@ def get_current_user_optional(
         if not user_id_str:
             return None
         user_id = uuid.UUID(user_id_str)
+        if db is None:
+            return None
         user = UserRepository(db).get(user_id)
         if not user or not user.is_active:
             return None
@@ -77,7 +107,7 @@ def get_current_user_optional(
 
 def get_current_user(
     auth: Annotated[HTTPAuthorizationCredentials | None, Security(security_bearer)],
-    db: DbSession,
+    db: DbOptionalSession,
     settings: SettingsDep,
 ) -> User:
     if not auth or not auth.credentials:
@@ -96,6 +126,8 @@ def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         user_id = uuid.UUID(user_id_str)
+        if db is None:
+            raise DatabaseNotConfiguredError()
         user = UserRepository(db).get(user_id)
         if not user:
             raise HTTPException(
@@ -111,6 +143,8 @@ def get_current_user(
             )
         return user
     except HTTPException:
+        raise
+    except DatabaseNotConfiguredError:
         raise
     except Exception as exc:
         # Parser details stay server-side; never log the token itself.

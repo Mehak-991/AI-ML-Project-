@@ -36,6 +36,18 @@ def chat() -> FakeChat:
 
 @pytest.fixture
 def ai_client(app, chat):
+    import uuid
+    from app.api.deps import get_current_user
+    from app.database.models.user import User
+
+    mock_admin = User(
+        id=uuid.uuid4(),
+        email="ai_admin@example.com",
+        full_name="AI Admin",
+        hashed_password="mock",
+        role="admin",
+        is_active=True,
+    )
     executor = InferenceExecutor(max_workers=1, timeout_seconds=5)
     embedder = EmbeddingService(
         model_name="fake-embedder",
@@ -46,6 +58,7 @@ def ai_client(app, chat):
         max_texts=5,
         max_chars=100,
     )
+    app.dependency_overrides[get_current_user] = lambda: mock_admin
     app.dependency_overrides[get_embedding_service] = lambda: embedder
     app.dependency_overrides[get_text_classifier] = lambda: fake_classifier()
     app.dependency_overrides[get_chat_service] = lambda: chat
@@ -163,16 +176,16 @@ def test_chat_provider_errors(ai_client, chat, error, status, code) -> None:
         assert response.headers["retry-after"] == "7"
 
 
-def test_chat_without_api_key_is_actionable(client: TestClient) -> None:
-    response = client.post(f"{API}/llm/chat", json={"messages": [{"role": "user", "content": "x"}]})
+def test_chat_without_api_key_is_actionable(ai_client: TestClient) -> None:
+    response = ai_client.post(f"{API}/llm/chat", json={"messages": [{"role": "user", "content": "x"}]})
     assert response.status_code == 503
     error = ErrorResponse.model_validate(response.json()).error
     assert error.code == "provider_not_configured"
     assert "OPENAI_API_KEY" in error.message
 
 
-def test_analyze_without_api_key(client: TestClient) -> None:
-    response = client.post(f"{API}/nlp/analyze", json={"text": "hello"})
+def test_analyze_without_api_key(ai_client: TestClient) -> None:
+    response = ai_client.post(f"{API}/nlp/analyze", json={"text": "hello"})
     assert response.status_code == 503
     assert error_code(response) == "provider_not_configured"
 
@@ -212,7 +225,14 @@ def test_token_count_requires_exactly_one_input(ai_client, payload) -> None:
 
 
 def test_status_reports_configuration_without_secrets(make_settings) -> None:
+    import uuid
+    from app.api.deps import get_current_user
+    from app.database.models.user import User
+
     app = create_app(make_settings(OPENAI_API_KEY="sk-must-not-leak", OPENAI_ALLOWED_MODELS="a,b"))
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=uuid.uuid4(), email="u@example.com", role="admin", is_active=True
+    )
     with TestClient(app) as client:
         response = client.get(f"{API}/ai/status")
     assert response.status_code == 200
@@ -225,8 +245,15 @@ def test_status_reports_configuration_without_secrets(make_settings) -> None:
 
 
 def test_embeddings_without_sentence_transformers(monkeypatch, make_settings) -> None:
+    import uuid
+    from app.api.deps import get_current_user
+    from app.database.models.user import User
+
     monkeypatch.setitem(sys.modules, "sentence_transformers", None)
     app = create_app(make_settings(AI_DEVICE="cpu"))
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=uuid.uuid4(), email="u@example.com", role="admin", is_active=True
+    )
     with TestClient(app) as client:
         response = client.post(f"{API}/embeddings", json={"texts": ["hello"]})
     assert response.status_code == 503
@@ -236,8 +263,15 @@ def test_embeddings_without_sentence_transformers(monkeypatch, make_settings) ->
 
 
 def test_classify_without_torch(monkeypatch, make_settings) -> None:
+    import uuid
+    from app.api.deps import get_current_user
+    from app.database.models.user import User
+
     monkeypatch.setitem(sys.modules, "torch", None)
     app = create_app(make_settings())
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=uuid.uuid4(), email="u@example.com", role="admin", is_active=True
+    )
     with TestClient(app) as client:
         response = client.post(f"{API}/nlp/classify", json={"texts": ["hello"]})
     assert response.status_code == 503
@@ -252,10 +286,58 @@ def test_openapi_documents_ai_endpoints(client: TestClient) -> None:
 
 
 def test_token_count_respects_configured_char_limit(make_settings) -> None:
+    import uuid
+    from app.api.deps import get_current_user
+    from app.database.models.user import User
+
     app = create_app(make_settings(TOKENIZER_MAX_TEXT_CHARS=10))
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=uuid.uuid4(), email="u@example.com", role="admin", is_active=True
+    )
     app.state.ai.token_counter = TokenCounter("m", loader=lambda m: None)
     with TestClient(app) as client:
         assert client.post(f"{API}/tokens/count", json={"text": "x" * 10}).status_code == 200
         response = client.post(f"{API}/tokens/count", json={"text": "x" * 11})
     assert response.status_code == 422
     assert error_code(response) == "data_validation_error"
+
+
+def test_ai_endpoints_require_authentication(app) -> None:
+    """Finding 1.1 verification: all AI endpoints return 401 without bearer token."""
+    with TestClient(app) as client:
+        assert client.get(f"{API}/ai/status").status_code == 401
+        assert client.post(f"{API}/embeddings", json={"texts": ["a"]}).status_code == 401
+        assert client.post(f"{API}/nlp/classify", json={"texts": ["a"]}).status_code == 401
+        assert (
+            client.post(
+                f"{API}/llm/chat", json={"messages": [{"role": "user", "content": "hi"}]}
+            ).status_code
+            == 401
+        )
+        assert client.post(f"{API}/tokens/count", json={"text": "a"}).status_code == 401
+        assert client.post(f"{API}/nlp/analyze", json={"text": "a"}).status_code == 401
+
+
+def test_ai_role_enforcement_for_chat_and_analyze(app) -> None:
+    """Finding 1.1 verification: viewer role gets 403 on chat and analyze; admin is allowed."""
+    import uuid
+    from app.api.deps import get_current_user
+    from app.database.models.user import User
+
+    viewer_user = User(
+        id=uuid.uuid4(),
+        email="viewer@example.com",
+        full_name="Viewer User",
+        hashed_password="mock",
+        role="viewer",
+        is_active=True,
+    )
+    app.dependency_overrides[get_current_user] = lambda: viewer_user
+    with TestClient(app) as client:
+        assert (
+            client.post(
+                f"{API}/llm/chat", json={"messages": [{"role": "user", "content": "hi"}]}
+            ).status_code
+            == 403
+        )
+        assert client.post(f"{API}/nlp/analyze", json={"text": "hi"}).status_code == 403

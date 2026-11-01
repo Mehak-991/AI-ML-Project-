@@ -40,8 +40,8 @@ def train_model(
 @router.get("", response_model=ModelList, summary="List trained models",
     responses={401: {"model": ErrorResponse, "description": "Authentication required"}})
 def list_models(
-    db: DbSession,
     user: CurrentUserDep,
+    db: DbSession,
     dataset_id: uuid.UUID | None = None,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -70,7 +70,7 @@ def list_models(
     summary="Model metadata, feature schema and metrics",
     responses=NOT_FOUND | {401: {"model": ErrorResponse, "description": "Authentication required"}},
 )
-def get_model(model_id: uuid.UUID, db: DbSession, user: CurrentUserDep) -> ModelRead:
+def get_model(model_id: uuid.UUID, user: CurrentUserDep, db: DbSession) -> ModelRead:
     model = model_service.get_model(db, model_id)
     authorization.ensure_model_access(user, model)
     return ModelRead.model_validate(model)

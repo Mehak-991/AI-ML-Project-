@@ -19,7 +19,7 @@ UNAUTHORIZED = {401: {"model": ErrorResponse, "description": "Authentication req
     summary="Get aggregated production monitoring KPIs",
     responses=UNAUTHORIZED,
 )
-def get_monitoring_overview(db: DbSession, _user: CurrentUserDep) -> MonitoringOverviewResponse:
+def get_monitoring_overview(_user: CurrentUserDep, db: DbSession) -> MonitoringOverviewResponse:
     return deployment_service.get_monitoring_overview(db)
 
 
@@ -29,5 +29,5 @@ def get_monitoring_overview(db: DbSession, _user: CurrentUserDep) -> MonitoringO
     summary="Get model-level prediction telemetry and production evaluation",
     responses=NOT_FOUND | UNAUTHORIZED,
 )
-def get_model_monitoring(model_id: uuid.UUID, db: DbSession, _user: CurrentUserDep) -> ModelMonitoringResponse:
+def get_model_monitoring(model_id: uuid.UUID, _user: CurrentUserDep, db: DbSession) -> ModelMonitoringResponse:
     return deployment_service.get_model_monitoring(db, model_id)

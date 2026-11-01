@@ -81,8 +81,8 @@ def upload_dataset(
 @router.get("", response_model=DatasetList, summary="List datasets",
     responses=UNAUTHORIZED)
 def list_datasets(
-    db: DbSession,
     _user: CurrentUserDep,
+    db: DbSession,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> DatasetList:
@@ -93,7 +93,7 @@ def list_datasets(
 
 @router.get("/{dataset_id}", response_model=DatasetRead,
     responses=NOT_FOUND | UNAUTHORIZED)
-def get_dataset(dataset_id: uuid.UUID, db: DbSession, _user: CurrentUserDep) -> DatasetRead:
+def get_dataset(dataset_id: uuid.UUID, _user: CurrentUserDep, db: DbSession) -> DatasetRead:
     return DatasetRead.model_validate(dataset_service.get_dataset(db, dataset_id))
 
 
@@ -105,9 +105,9 @@ def get_dataset(dataset_id: uuid.UUID, db: DbSession, _user: CurrentUserDep) -> 
 )
 def get_dataset_summary(
     dataset_id: uuid.UUID,
+    _user: CurrentUserDep,
     db: DbSession,
     settings: SettingsDep,
-    _user: CurrentUserDep,
     target_column: Annotated[str | None, Query(max_length=255)] = None,
 ) -> DatasetValidationResponse:
     dataset = dataset_service.get_dataset(db, dataset_id)

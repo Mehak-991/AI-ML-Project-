@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   backend-lint-and-test:
     name: Backend Regression & Lint (Python 3.12)
@@ -32,9 +35,13 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      - name: Run Ruff Linter
+      - name: Run Ruff Linter & Security Checks
         run: |
-          ruff check . --select=E9,F63,F7,F82
+          ruff check . --select=E9,F63,F7,F82,S
+
+      - name: Security audit Python dependencies
+        run: |
+          pip-audit -r requirements.txt
 
       - name: Run Backend Regression Test Suite
         env:
@@ -44,8 +51,12 @@ jobs:
         run: |
           pytest tests/unit/ -v --tb=short
 
+      - name: Test Alembic Migrations & Schema Compatibility
+        run: |
+          pytest tests/integration/test_migrations.py -v --tb=short
+
   frontend-build:
-    name: Frontend Typecheck & Build (Node 22)
+    name: Frontend Typecheck, Audit & Build (Node 22)
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -64,6 +75,11 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
+
+      - name: Security audit Frontend dependencies
+        working-directory: frontend
+        run: |
+          npm audit --audit-level=high
 
       - name: Frontend Build & Typecheck
         working-directory: frontend

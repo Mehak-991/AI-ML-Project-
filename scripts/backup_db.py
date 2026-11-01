@@ -20,7 +20,7 @@ import json
 import logging
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -45,10 +45,11 @@ def run_backup(
     db_container: str = "aiproject-db-1",
     db_user: str = "aiproject",
     db_name: str = "aiproject",
+    remote_sync_cmd: str | None = None,
 ) -> Path:
     """Create a compressed database dump, generate checksum, and rotate old backups."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     backup_filename = f"db_backup_{db_name}_{timestamp}.sql.gz"
     backup_path = output_dir / backup_filename
     checksum_path = output_dir / f"{backup_filename}.sha256"
@@ -92,7 +93,8 @@ def run_backup(
         if dump_proc.returncode != 0:
             if backup_path.exists():
                 backup_path.unlink()
-            raise RuntimeError(f"pg_dump failed with exit code {dump_proc.returncode}: {stderr.decode('utf-8', errors='replace')}")
+            err_msg = stderr.decode("utf-8", errors="replace")
+            raise RuntimeError(f"pg_dump failed with exit code {dump_proc.returncode}: {err_msg}")
 
     except Exception as exc:
         logger.error("Backup failed: %s", exc)
@@ -105,7 +107,7 @@ def run_backup(
 
     # Write metadata
     metadata = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "database": db_name,
         "user": db_user,
         "filename": backup_filename,
@@ -116,6 +118,25 @@ def run_backup(
 
     # Rotate old backups
     rotate_backups(output_dir, retention_count)
+
+    # Off-host replication hook (e.g. AWS S3, Rclone, or Azure Blob)
+    if remote_sync_cmd:
+        sync_formatted = remote_sync_cmd.format(
+            file=str(backup_path),
+            checksum=str(checksum_path),
+            meta=str(metadata_path),
+            dir=str(output_dir),
+        )
+        logger.info("Syncing backup to off-host target via: %s", sync_formatted)
+        try:
+            import shlex
+
+            sync_args = shlex.split(sync_formatted)
+            subprocess.run(sync_args, capture_output=True, text=True, check=True)
+            logger.info("Off-host sync completed successfully.")
+        except Exception as exc:
+            logger.error("Off-host sync command failed: %s", exc)
+            # Do not fail local backup if remote sync fails, but raise or log warning
 
     return backup_path
 
@@ -147,6 +168,12 @@ def main() -> None:
     parser.add_argument("--container", type=str, default="aiproject-db-1", help="Database docker container name")
     parser.add_argument("--user", type=str, default="aiproject", help="PostgreSQL user")
     parser.add_argument("--db", type=str, default="aiproject", help="PostgreSQL database name")
+    parser.add_argument(
+        "--remote-sync",
+        type=str,
+        default=None,
+        help="Command template for off-host syncing (e.g. 'aws s3 cp {file} s3://my-bucket/backups/')"
+    )
 
     args = parser.parse_args()
     try:
@@ -156,6 +183,7 @@ def main() -> None:
             db_container=args.container,
             db_user=args.user,
             db_name=args.db,
+            remote_sync_cmd=args.remote_sync,
         )
         logger.info("Backup complete: %s", backup_file)
     except Exception as exc:

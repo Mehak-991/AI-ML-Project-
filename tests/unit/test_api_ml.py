@@ -246,10 +246,25 @@ def test_missing_artifact_returns_safe_500(api_client, classification_dataset, s
     assert str(settings.MODEL_DIR) not in response.text
 
 
-def test_database_not_configured_returns_503(client: TestClient) -> None:
-    response = client.get(f"{API}/datasets")
+def test_database_not_configured_returns_503(client: TestClient, settings) -> None:
+    from app.core import security
+
+    token = security.create_access_token({"sub": str(uuid.uuid4())}, settings)
+    response = client.get(f"{API}/datasets", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 503
     assert error_code(response) == "database_not_configured"
+
+
+def test_dataset_and_model_endpoints_require_authentication(client: TestClient) -> None:
+    """Findings 1.3 & 1.4 verification: dataset and model read endpoints return 401 without bearer token."""
+    random_id = uuid.uuid4()
+    # Datasets (Finding 1.3)
+    assert client.get(f"{API}/datasets").status_code == 401
+    assert client.get(f"{API}/datasets/{random_id}").status_code == 401
+    assert client.get(f"{API}/datasets/{random_id}/summary").status_code == 401
+    # Models (Finding 1.4)
+    assert client.get(f"{API}/models").status_code == 401
+    assert client.get(f"{API}/models/{random_id}").status_code == 401
 
 
 def test_openapi_documents_ml_endpoints(client: TestClient) -> None:

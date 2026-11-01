@@ -398,7 +398,14 @@ def test_ollama_provider_needs_no_openai_package(make_settings, monkeypatch) -> 
 
 @pytest.fixture
 def ollama_app(make_settings):
+    import uuid
+    from app.api.deps import get_current_user
+    from app.database.models.user import User
+
     app = create_app(make_settings(LLM_PROVIDER="ollama"))
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=uuid.uuid4(), email="ollama@example.com", role="admin", is_active=True
+    )
     app.state.ai.token_counter = TokenCounter(
         MODEL, loader=lambda m: EstimatedEncoding(FakeEncoding())
     )
@@ -457,7 +464,14 @@ def test_chat_endpoint_when_ollama_is_down(ollama_app) -> None:
 
 def test_real_container_wiring_hits_configured_ollama_url(make_settings) -> None:
     """No dependency override: the app's own container builds the Ollama client."""
+    import uuid
+    from app.api.deps import get_current_user
+    from app.database.models.user import User
+
     app = create_app(make_settings(LLM_PROVIDER="ollama", OLLAMA_BASE_URL="http://127.0.0.1:9"))
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=uuid.uuid4(), email="ollama@example.com", role="admin", is_active=True
+    )
     with TestClient(app) as client:
         status = client.get("/api/v1/ai/status").json()["llm"]
         response = client.post(

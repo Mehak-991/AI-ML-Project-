@@ -46,6 +46,10 @@ npm run dev
 
 Check the setup with `.\.venv312\Scripts\python.exe scripts\check_config.py --db`.
 
+**`502 Bad Gateway` on `/api/...` at port 3000** means the Vite proxy found nothing on port 8000. The
+frontend doesn't start the API: it needs its own running terminal, as above. Check with
+`curl http://127.0.0.1:8000/api/v1/health`.
+
 ## Required in production
 
 Startup fails without these.

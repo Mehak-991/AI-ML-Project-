@@ -194,7 +194,11 @@ export function parseApiError(error: unknown): ErrorDetails {
       return {
         status,
         code: 'SERVICE_UNAVAILABLE',
-        message: 'The backend service is temporarily unavailable. Please retry shortly.',
+        // The Vite dev proxy answers 502 when no API is listening, which only looks like an outage.
+        message:
+          import.meta.env.DEV && status === 502
+            ? 'The API server is not running. Start it with: python -m uvicorn app.main:app --port 8000'
+            : 'The backend service is temporarily unavailable. Please retry shortly.',
       };
     }
     if (status === 504) {

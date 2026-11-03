@@ -103,6 +103,7 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
                   <input
                     type="text"
                     required
+                    autoComplete="name"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="e.g. Alex Turing"
@@ -119,6 +120,7 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
                 <input
                   type="email"
                   required
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="engineer@company.com"
@@ -134,6 +136,7 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
                 <input
                   type="password"
                   required
+                  autoComplete={isRegisterMode ? 'new-password' : 'current-password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••••••"

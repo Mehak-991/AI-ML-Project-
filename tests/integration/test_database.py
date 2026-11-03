@@ -81,6 +81,29 @@ def pg_isolated_engine() -> Iterator:
 
 
 @requires_db
+def test_simultaneous_first_registrations_create_one_admin(pg_isolated_engine) -> None:
+    """Without the advisory lock, both requests can see an empty table and both become admin."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy import func, select
+
+    from app.database.models.user import User
+    from app.schemas.auth import UserRegisterRequest
+    from app.services import auth_service
+
+    def register(index: int) -> str:
+        with Session(bind=pg_isolated_engine, expire_on_commit=False) as session:
+            request = UserRegisterRequest(email=f"u{index}@example.com", password="Password123")
+            return auth_service.register_user(session, request).role
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        roles = list(pool.map(register, range(6)))
+    assert sorted(roles) == ["admin", "viewer", "viewer", "viewer", "viewer", "viewer"]
+    with Session(bind=pg_isolated_engine) as session:
+        assert session.scalar(select(func.count()).select_from(User)) == 6
+
+
+@requires_db
 def test_api_workflow_against_postgres(pg_isolated_engine, make_settings) -> None:
     app = create_app(make_settings(APP_ENV="testing"))
 

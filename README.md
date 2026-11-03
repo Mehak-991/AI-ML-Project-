@@ -281,7 +281,8 @@ Interactive docs: **http://127.0.0.1:8000/docs** (Swagger), `/redoc`, and the sc
 | `GET /metrics` | Prometheus metrics; not routed through Nginx | optional `METRICS_TOKEN` |
 
 **Access rules.** The first registered account becomes admin; later self-registrations are viewers,
-and an admin grants other roles. "Owner" means the caller created the object, or is an admin. Objects
+and asking for another role returns 403. Admins create users with any role, or change roles, under
+User Administration. "Owner" means the caller created the object, or is an admin. Objects
 that predate ownership tracking (no owner) stay available to every signed-in user. Viewers can't
 upload or train, so they see only what has no owner.
 

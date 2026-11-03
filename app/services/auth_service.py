@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import NoReturn
 
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.core import security
@@ -28,12 +28,20 @@ from app.schemas.auth import (
 
 logger = logging.getLogger(__name__)
 
+# Arbitrary fixed key for the advisory lock that serializes first-account registration.
+BOOTSTRAP_LOCK_KEY = 804_120_001
+
 
 def register_user(
     session: Session, request: UserRegisterRequest, requested_by: User | None = None
 ) -> User:
     user_repo = UserRepository(session)
     is_bootstrap = user_repo.count() == 0
+    if is_bootstrap and session.get_bind().dialect.name == "postgresql":
+        # Two simultaneous first registrations must not both become admin. The lock lasts
+        # until this transaction commits, so the second one then sees the first user.
+        session.execute(select(func.pg_advisory_xact_lock(BOOTSTRAP_LOCK_KEY)))
+        is_bootstrap = user_repo.count() == 0
     # Self-registration yields 'viewer'; elevated roles must be granted by an admin.
     if request.role != "viewer" and not is_bootstrap:
         if requested_by is None or requested_by.role != "admin":

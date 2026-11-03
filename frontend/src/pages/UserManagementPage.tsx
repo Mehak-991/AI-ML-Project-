@@ -11,6 +11,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
+  UserPlus,
 } from 'lucide-react';
 import type { User, UserRole } from '../types/auth';
 import { authApi, parseApiError } from '../services/api';
@@ -31,6 +32,13 @@ export const UserManagementPage: React.FC = () => {
 
   // Action states
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  // New user form
+  const [newEmail, setNewEmail] = useState('');
+  const [newFullName, setNewFullName] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState<UserRole>('viewer');
+  const [creating, setCreating] = useState(false);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -93,6 +101,32 @@ export const UserManagementPage: React.FC = () => {
       setError(parsed.message);
     } finally {
       setUpdatingId(null);
+    }
+  };
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreating(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      // Not AuthContext.register: that signs in as the new account, ending this admin's session.
+      const created = await authApi.register({
+        email: newEmail.trim(),
+        password: newPassword,
+        full_name: newFullName.trim(),
+        role: newRole,
+      });
+      setSuccessMsg(`Created ${created.email} with role ${created.role}.`);
+      setNewEmail('');
+      setNewFullName('');
+      setNewPassword('');
+      setNewRole('viewer');
+      await fetchUsers();
+    } catch (err) {
+      setError(parseApiError(err).message);
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -164,6 +198,90 @@ export const UserManagementPage: React.FC = () => {
           <p>{successMsg}</p>
         </div>
       )}
+
+      {/* Create User */}
+      <form
+        onSubmit={handleCreateUser}
+        className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3"
+      >
+        <div className="flex items-center gap-2">
+          <UserPlus className="w-4 h-4 text-indigo-600" />
+          <h2 className="text-sm font-bold text-slate-900">Create User</h2>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div>
+            <label htmlFor="new-user-name" className="block text-xs font-semibold text-slate-700 mb-1">
+              Full Name
+            </label>
+            <input
+              id="new-user-name"
+              type="text"
+              required
+              autoComplete="off"
+              value={newFullName}
+              onChange={(e) => setNewFullName(e.target.value)}
+              className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+            />
+          </div>
+          <div>
+            <label htmlFor="new-user-email" className="block text-xs font-semibold text-slate-700 mb-1">
+              Email
+            </label>
+            <input
+              id="new-user-email"
+              type="email"
+              required
+              autoComplete="off"
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+            />
+          </div>
+          <div>
+            <label htmlFor="new-user-password" className="block text-xs font-semibold text-slate-700 mb-1">
+              Initial Password
+            </label>
+            <input
+              id="new-user-password"
+              type="password"
+              required
+              minLength={8}
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+            />
+          </div>
+          <div>
+            <label htmlFor="new-user-role" className="block text-xs font-semibold text-slate-700 mb-1">
+              Role
+            </label>
+            <select
+              id="new-user-role"
+              value={newRole}
+              onChange={(e) => setNewRole(e.target.value as UserRole)}
+              className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            >
+              <option value="viewer">Viewer</option>
+              <option value="ml_engineer">ML Engineer</option>
+              <option value="admin">Administrator</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[11px] text-slate-500">
+            Passwords need at least 8 characters with uppercase, lowercase and a number.
+          </p>
+          <button
+            type="submit"
+            disabled={creating}
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition-colors disabled:opacity-50 shrink-0"
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            {creating ? 'Creating...' : 'Create User'}
+          </button>
+        </div>
+      </form>
 
       {/* Filters & Search Toolbar */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">

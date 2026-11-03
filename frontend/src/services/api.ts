@@ -15,6 +15,9 @@ export const apiClient = axios.create({
   },
 });
 
+/** Fired when the session can no longer be renewed, so the UI can return to signed-out. */
+export const AUTH_EXPIRED_EVENT = 'aiml:auth-expired';
+
 const TOKEN_KEY = 'aiml_access_token';
 const REFRESH_KEY = 'aiml_refresh_token';
 
@@ -79,11 +82,13 @@ apiClient.interceptors.response.use(
       if (!currentRefresh) {
         tokenStorage.clear();
         isRefreshing = false;
+        processQueue(error, null);
+        window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
         return Promise.reject(error);
       }
 
       try {
-        const refreshRes = await axios.post('/api/v1/auth/refresh', {
+        const refreshRes = await axios.post(`${apiClient.defaults.baseURL}/auth/refresh`, {
           refresh_token: currentRefresh,
         });
         const { access_token, refresh_token: newRefresh } = refreshRes.data;
@@ -96,7 +101,12 @@ apiClient.interceptors.response.use(
         return apiClient(originalRequest);
       } catch (refreshErr) {
         processQueue(refreshErr, null);
-        tokenStorage.clear();
+        // Only a rejected token ends the session; an outage must not sign the user out.
+        const status = axios.isAxiosError(refreshErr) ? refreshErr.response?.status : undefined;
+        if (status === 401 || status === 403) {
+          tokenStorage.clear();
+          window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+        }
         return Promise.reject(refreshErr);
       } finally {
         isRefreshing = false;
@@ -180,11 +190,25 @@ export function parseApiError(error: unknown): ErrorDetails {
         message: 'Internal server error while processing dataset. Check server logs.',
       };
     }
+    if (status === 502 || status === 503) {
+      return {
+        status,
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'The backend service is temporarily unavailable. Please retry shortly.',
+      };
+    }
+    if (status === 504) {
+      return {
+        status,
+        code: 'GATEWAY_TIMEOUT',
+        message: 'The request took too long to complete. Long-running work is better submitted as a background job.',
+      };
+    }
 
     if (axiosErr.message === 'Network Error') {
       return {
         code: 'NETWORK_ERROR',
-        message: 'Unable to connect to the backend server. Verify the server is running on port 8000.',
+        message: 'Unable to connect to the backend server. Check that it is running and reachable.',
       };
     }
 

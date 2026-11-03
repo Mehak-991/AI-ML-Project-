@@ -9,6 +9,7 @@ compose*.yaml
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # Environments and caches
 .venv

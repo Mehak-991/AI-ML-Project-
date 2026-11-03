@@ -11,12 +11,14 @@ COPY . .
 RUN npm run build
 
 # -------------------------------------------------------------- Runtime stage --
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.30-alpine AS runtime
 
 # Remove default nginx configs
 RUN rm -rf /etc/nginx/conf.d/* /usr/share/nginx/html/*
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+# .inc is not matched by the conf.d/*.conf include; nginx.conf includes it explicitly.
+COPY security-headers.inc /etc/nginx/conf.d/security-headers.inc
 COPY --from=builder /build/dist /usr/share/nginx/html
 
 EXPOSE 80

@@ -9,6 +9,7 @@ Provides:
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -153,6 +154,17 @@ def _uses_probabilities(model: Any, pipeline: Any) -> bool:
     return model.problem_type == "classification" and hasattr(pipeline, "predict_proba")
 
 
+@dataclass
+class _LocalContext:
+    prediction: Any
+    probabilities: dict[str, float] | None
+    class_index: int | None  # None: explain the raw model output (regression)
+    explained_class: str | None
+    codec: _FeatureCodec
+    record_matrix: np.ndarray
+    background_matrix: np.ndarray
+
+
 def _prepare_local(
     session: Session,
     settings: Settings,
@@ -161,7 +173,7 @@ def _prepare_local(
     record: dict[str, Any],
     sample_size: int,
     target_class: str | None,
-) -> tuple[Any, dict[str, float] | None, int | None, str | None, _FeatureCodec, pd.DataFrame]:
+) -> _LocalContext:
     """Shared by SHAP and LIME: validate the record, predict it and set up the codec."""
     validated = validate_records([record], model.feature_schema, allow_missing=True, max_records=1)
     preds, probs = predict(pipeline, validated, model.problem_type)
@@ -175,7 +187,15 @@ def _prepare_local(
     if _uses_probabilities(model, pipeline):
         class_index, explained_class = _class_index(pipeline, preds[0], target_class)
     codec = _FeatureCodec(_feature_specs(model), [background_df, validated])
-    return preds[0], probs[0] if probs else None, class_index, explained_class, codec, validated
+    return _LocalContext(
+        prediction=preds[0],
+        probabilities=probs[0] if probs else None,
+        class_index=class_index,
+        explained_class=explained_class,
+        codec=codec,
+        record_matrix=codec.encode(validated),
+        background_matrix=codec.encode(background_df),
+    )
 
 
 def _estimator_importances(pipeline: Any, feature_names: list[str]) -> list[float]:
@@ -334,9 +354,10 @@ def compute_local_shap_explanation(
 ) -> LocalShapExplanationResponse:
     start_time = time.perf_counter()
     model, pipeline = _load_model_and_pipeline(session, settings, model_id)
-    prediction, probabilities, class_index, explained_class, codec, validated = _prepare_local(
+    ctx = _prepare_local(
         session, settings, model, pipeline, record, background_samples_count, target_class
     )
+    codec, class_index = ctx.codec, ctx.class_index
 
     import shap
 
@@ -346,13 +367,8 @@ def compute_local_shap_explanation(
             return pipeline.predict_proba(frame)[:, class_index]
         return pipeline.predict(frame)
 
-    background_df = _get_background_data(
-        session, settings, model, sample_size=background_samples_count
-    )
-    explainer = shap.KernelExplainer(predict_fn, codec.encode(background_df))
-    shap_vals = explainer.shap_values(
-        codec.encode(validated), nsamples=_shap_samples(len(codec.names))
-    )
+    explainer = shap.KernelExplainer(predict_fn, ctx.background_matrix)
+    shap_vals = explainer.shap_values(ctx.record_matrix, nsamples=_shap_samples(len(codec.names)))
     values = np.asarray(shap_vals, dtype=float).reshape(-1)
     base_val = float(np.ravel(explainer.expected_value)[0])
 
@@ -376,9 +392,9 @@ def compute_local_shap_explanation(
     duration = time.perf_counter() - start_time
     return LocalShapExplanationResponse(
         model_id=model.id,
-        prediction=prediction,
-        probabilities=probabilities,
-        explained_class=explained_class,
+        prediction=ctx.prediction,
+        probabilities=ctx.probabilities,
+        explained_class=ctx.explained_class,
         base_value=round(base_val, 4),
         feature_contributions=contributions,
         computation_time_seconds=round(duration, 4),
@@ -395,16 +411,16 @@ def compute_local_lime_explanation(
 ) -> LocalLimeExplanationResponse:
     start_time = time.perf_counter()
     model, pipeline = _load_model_and_pipeline(session, settings, model_id)
-    prediction, probabilities, class_index, explained_class, codec, validated = _prepare_local(
+    ctx = _prepare_local(
         session, settings, model, pipeline, record, LIME_BACKGROUND_ROWS, target_class
     )
-    background_df = _get_background_data(session, settings, model, sample_size=LIME_BACKGROUND_ROWS)
+    codec, class_index = ctx.codec, ctx.class_index
 
     from lime.lime_tabular import LimeTabularExplainer
 
     is_classifier = class_index is not None
     explainer = LimeTabularExplainer(
-        training_data=codec.encode(background_df),
+        training_data=ctx.background_matrix,
         feature_names=codec.names,
         categorical_features=codec.categorical_indices,
         categorical_names={
@@ -420,7 +436,7 @@ def compute_local_lime_explanation(
         return pipeline.predict_proba(frame) if is_classifier else pipeline.predict(frame)
 
     exp = explainer.explain_instance(
-        codec.encode(validated)[0],
+        ctx.record_matrix[0],
         lime_predict,
         labels=(class_index,) if is_classifier else (1,),
         num_features=min(num_features, len(codec.names)),
@@ -449,9 +465,9 @@ def compute_local_lime_explanation(
 
     return LocalLimeExplanationResponse(
         model_id=model.id,
-        prediction=prediction,
-        probabilities=probabilities,
-        explained_class=explained_class,
+        prediction=ctx.prediction,
+        probabilities=ctx.probabilities,
+        explained_class=ctx.explained_class,
         intercept=round(float(exp.intercept[label]), 4),
         rule_contributions=rule_contributions,
         score=round(float(score), 4) if score is not None else None,

@@ -244,11 +244,11 @@ export const DeploymentMonitoringPage: React.FC = () => {
     }
   };
 
-  // Run initial probe when selected model changes
+  // A probe is a real, audited prediction, so it only ever runs on request: running it on
+  // selection would add fake rows to the prediction history just by opening this page.
   useEffect(() => {
-    if (selectedModel) {
-      probeInferenceEndpoint();
-    }
+    setEndpointProbeResult(null);
+    setEndpointProbeMessage('');
   }, [selectedModel?.id]);
 
   // Build the 6 strict Deployment Readiness checklist items based on empirical evidence
@@ -304,7 +304,7 @@ export const DeploymentMonitoringPage: React.FC = () => {
             ? 'Not Verified'
             : 'Data Unavailable',
         details: `POST /api/v1/models/${model.id}/predict execution verified.`,
-        evidence: endpointProbeMessage || 'Pending live runtime probe execution...',
+        evidence: endpointProbeMessage || 'Not probed yet. Running the probe sends one real, logged prediction.',
       },
       {
         id: 'loaded_after_restart',

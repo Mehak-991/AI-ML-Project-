@@ -168,8 +168,7 @@ def get_job_metrics(session: Session, user: User) -> JobMetricsResponse:
     counts = dict(session.execute(stmt).all())
     return JobMetricsResponse(
         total_jobs=sum(counts.values()),
-        # retry_pending jobs are waiting to run again, so they count as queued.
-        queued_jobs=counts.get("queued", 0) + counts.get("retry_pending", 0),
+        queued_jobs=counts.get("queued", 0),
         running_jobs=counts.get("running", 0),
         completed_jobs=counts.get("completed", 0),
         failed_jobs=counts.get("failed", 0),

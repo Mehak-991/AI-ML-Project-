@@ -98,7 +98,7 @@ def test_cors_allows_configured_origin(make_settings) -> None:
 
 
 def test_no_cors_headers_by_default_in_production(make_settings) -> None:
-    settings = make_settings(APP_ENV="production", DATABASE_URL="postgresql://u:p@h/db")
+    settings = make_settings(APP_ENV="production", JWT_SECRET_KEY="s" * 48, DATABASE_URL="postgresql://u:p@h/db")
     with TestClient(create_app(settings)) as client:
         response = client.get("/health", headers={"Origin": "http://localhost:3000"})
     assert "access-control-allow-origin" not in response.headers

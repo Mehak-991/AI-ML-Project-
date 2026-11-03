@@ -43,6 +43,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MODEL_DIR=/data/trained_models \
     AI_MODEL_CACHE_DIR=/data/model_cache \
     MPLCONFIGDIR=/tmp/matplotlib \
+    NUMBA_CACHE_DIR=/tmp/numba \
     TIKTOKEN_CACHE_DIR=/data/model_cache/tiktoken \
     FORWARDED_ALLOW_IPS=127.0.0.1
 # FORWARDED_ALLOW_IPS: proxies trusted to set X-Forwarded-For (read by uvicorn). Set it to

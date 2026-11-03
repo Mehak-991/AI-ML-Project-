@@ -46,13 +46,15 @@ services:
       db:
         condition: service_healthy
     env_file:
-      - path: .env
+      - path: ${ENV_FILE:-.env}
         required: false
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aiproject}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-aiproject}
       APP_ENV: production
       DEBUG: "false"
+      DATABASE_ECHO: "false"
       RUN_MIGRATIONS: "true"
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
     command: ["alembic", "upgrade", "head"]
     healthcheck:
       disable: true
@@ -81,20 +83,34 @@ services:
       migration:
         condition: service_completed_successfully
     env_file:
-      - path: .env
+      - path: ${ENV_FILE:-.env}
         required: false
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aiproject}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-aiproject}
       APP_ENV: production
       DEBUG: "false"
+      DATABASE_ECHO: "false"
       LOG_FORMAT: json
       RUN_MIGRATIONS: "false"
-      # Trust X-Forwarded-For only from the bundled nginx (fixed address below).
-      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-${FRONTEND_PROXY_IP:-172.21.0.10}}
+      # Swagger UI and the OpenAPI schema stay off in production unless asked for.
+      DOCS_ENABLED: ${PROD_DOCS_ENABLED:-false}
+      # Trust X-Forwarded-For only from the bundled nginx (fixed address below). Deliberately not
+      # FORWARDED_ALLOW_IPS from .env: the host-development value (127.0.0.1) would make every
+      # client share nginx's address, and with it one login and API rate-limit budget.
+      FORWARDED_ALLOW_IPS: ${FRONTEND_PROXY_IP:-172.21.0.10}
       UPLOAD_DIR: /data/uploads
       MODEL_DIR: /data/trained_models
       AI_MODEL_CACHE_DIR: /data/model_cache
+      # Jobs run in the dedicated worker service, not in the API's memory.
+      JOB_INLINE_DISPATCH: "false"
+      # On the volume shared with the worker, so /metrics can see its heartbeat.
+      WORKER_HEARTBEAT_FILE: /data/model_cache/.worker_heartbeat
+      # A container's 127.0.0.1 is itself; Ollama runs on the Docker host.
+      OLLAMA_BASE_URL: ${DOCKER_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stop_grace_period: 30s
     mem_limit: 2g
     volumes:
       - uploads:/data/uploads
@@ -123,18 +139,23 @@ services:
       migration:
         condition: service_completed_successfully
     env_file:
-      - path: .env
+      - path: ${ENV_FILE:-.env}
         required: false
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aiproject}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-aiproject}
       APP_ENV: production
       DEBUG: "false"
+      DATABASE_ECHO: "false"
       LOG_FORMAT: json
       RUN_MIGRATIONS: "false"
       UPLOAD_DIR: /data/uploads
       MODEL_DIR: /data/trained_models
       AI_MODEL_CACHE_DIR: /data/model_cache
+      WORKER_HEARTBEAT_FILE: /data/model_cache/.worker_heartbeat
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
     command: ["python", "scripts/run_worker.py"]
+    # Time for in-flight jobs to finish; anything still running is recovered by the reaper.
+    stop_grace_period: 60s
     healthcheck:
       test: ["CMD", "python", "scripts/check_worker_health.py", "--max-age-seconds", "30"]
       interval: 15s
@@ -145,7 +166,7 @@ services:
       - uploads:/data/uploads
       - models:/data/trained_models
       - model_cache:/data/model_cache
-    # Root filesystem is read-only; the heartbeat file lives on the /tmp tmpfs.
+    # Root filesystem is read-only; runtime writes go to the volumes above or /tmp.
     read_only: true
     tmpfs:
       - /tmp:size=256m,mode=1777,noexec,nosuid
@@ -163,9 +184,22 @@ services:
     image: aiproject-frontend:${APP_VERSION:-0.4.0}
     restart: unless-stopped
     depends_on:
-      - app
+      app:
+        condition: service_healthy
     ports:
       - "${FRONTEND_PORT:-80}:80"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=64m,mode=1777,noexec,nosuid
+      - /run:size=8m,mode=1777,noexec,nosuid
+      - /tmp:size=16m,mode=1777,noexec,nosuid
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
     security_opt:
       - "no-new-privileges:true"
     mem_limit: 512m

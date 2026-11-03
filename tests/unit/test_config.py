@@ -59,13 +59,16 @@ def test_blank_secret_values_become_none(make_settings: SettingsFactory) -> None
 
 def test_cors_defaults_per_environment(make_settings: SettingsFactory) -> None:
     assert make_settings().cors_origins == ["http://localhost:3000", "http://127.0.0.1:3000"]
-    prod = make_settings(APP_ENV="production", DATABASE_URL="postgresql://u:p@h/db")
+    prod = make_settings(
+        APP_ENV="production", DATABASE_URL="postgresql://u:p@h/db", JWT_SECRET_KEY="s" * 48
+    )
     assert prod.cors_origins == []
 
 
 def test_valid_production_settings(make_settings: SettingsFactory) -> None:
     settings = make_settings(
         APP_ENV="production",
+        JWT_SECRET_KEY="s" * 48,
         DATABASE_URL="postgresql://u:p@h/db",
         CORS_ORIGINS="https://app.example",
     )

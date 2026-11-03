@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { Suspense, lazy, useState } from 'react';
 import {
   Database,
   BrainCircuit,
@@ -15,17 +15,40 @@ import {
   LogOut,
   ShieldAlert,
 } from 'lucide-react';
-import { DatasetManagementPage } from './pages/DatasetManagementPage';
-import { ModelManagementPage } from './pages/ModelManagementPage';
-import { PredictionManagementPage } from './pages/PredictionManagementPage';
-import { DeploymentMonitoringPage } from './pages/DeploymentMonitoringPage';
-import { UserManagementPage } from './pages/UserManagementPage';
-import { DataDriftMonitoringPage } from './pages/DataDriftMonitoringPage';
-import { ExperimentTrackingPage } from './pages/ExperimentTrackingPage';
-import { ExplainabilityStudioPage } from './pages/ExplainabilityStudioPage';
-import { JobManagementPage } from './pages/JobManagementPage';
 import { AuthModal } from './components/AuthModal';
 import { useAuth } from './context/AuthContext';
+
+// compose.yaml turns the API docs off by default, so production builds opt in to the links.
+const SHOW_API_DOCS = import.meta.env.DEV || import.meta.env.VITE_SHOW_API_DOCS === 'true';
+
+// Each page loads on first visit, so the charting code is not part of the initial download.
+const DatasetManagementPage = lazy(() =>
+  import('./pages/DatasetManagementPage').then((m) => ({ default: m.DatasetManagementPage }))
+);
+const ModelManagementPage = lazy(() =>
+  import('./pages/ModelManagementPage').then((m) => ({ default: m.ModelManagementPage }))
+);
+const PredictionManagementPage = lazy(() =>
+  import('./pages/PredictionManagementPage').then((m) => ({ default: m.PredictionManagementPage }))
+);
+const DeploymentMonitoringPage = lazy(() =>
+  import('./pages/DeploymentMonitoringPage').then((m) => ({ default: m.DeploymentMonitoringPage }))
+);
+const UserManagementPage = lazy(() =>
+  import('./pages/UserManagementPage').then((m) => ({ default: m.UserManagementPage }))
+);
+const DataDriftMonitoringPage = lazy(() =>
+  import('./pages/DataDriftMonitoringPage').then((m) => ({ default: m.DataDriftMonitoringPage }))
+);
+const ExperimentTrackingPage = lazy(() =>
+  import('./pages/ExperimentTrackingPage').then((m) => ({ default: m.ExperimentTrackingPage }))
+);
+const ExplainabilityStudioPage = lazy(() =>
+  import('./pages/ExplainabilityStudioPage').then((m) => ({ default: m.ExplainabilityStudioPage }))
+);
+const JobManagementPage = lazy(() =>
+  import('./pages/JobManagementPage').then((m) => ({ default: m.JobManagementPage }))
+);
 
 type NavTab =
   | 'models'
@@ -40,7 +63,7 @@ type NavTab =
   | 'settings';
 
 export function App() {
-  const { user, logout } = useAuth();
+  const { user, loading, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<NavTab>('models');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -199,17 +222,19 @@ export function App() {
                 <span className="font-semibold text-slate-200">FastAPI ML Engine</span>
               </div>
               <p className="text-[11px] text-slate-400">
-                Port 8000 • Ingestion & Scikit-learn Ready
+                Ingestion & Scikit-learn Ready
               </p>
-              <a
-                href="/docs"
-                target="_blank"
-                rel="noreferrer"
-                className="mt-2.5 flex items-center justify-between text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold"
-              >
-                <span>Swagger Specs</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
+              {SHOW_API_DOCS && (
+                <a
+                  href="/docs"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2.5 flex items-center justify-between text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold"
+                >
+                  <span>Swagger Specs</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
             </div>
           )}
         </div>
@@ -273,15 +298,17 @@ export function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            <a
-              href="/docs"
-              target="_blank"
-              rel="noreferrer"
-              className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
-            >
-              <span>API Specs</span>
-              <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-            </a>
+            {SHOW_API_DOCS && (
+              <a
+                href="/docs"
+                target="_blank"
+                rel="noreferrer"
+                className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                <span>API Specs</span>
+                <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+              </a>
+            )}
 
             {user ? (
               <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 py-1 px-2.5 rounded-xl">
@@ -348,6 +375,24 @@ export function App() {
 
         {/* Dynamic Main Workspace View */}
         <main className="flex-1 p-6 md:p-8 max-w-7xl w-full mx-auto">
+          {!loading && !user ? (
+            <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-md mx-auto my-12 shadow-sm">
+              <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 mx-auto mb-4">
+                <LogIn className="w-8 h-8" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">Sign in to continue</h3>
+              <p className="text-xs text-slate-500 mt-2">
+                Datasets, models and monitoring data are only available to signed-in users.
+              </p>
+              <button
+                onClick={() => setAuthModalOpen(true)}
+                className="mt-5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer"
+              >
+                Sign In
+              </button>
+            </div>
+          ) : (
+          <Suspense fallback={<div className="p-12 text-center text-xs text-slate-500">Loading...</div>}>
           {activeTab === 'models' && <ModelManagementPage />}
 
           {activeTab === 'inference' && <PredictionManagementPage />}
@@ -416,6 +461,8 @@ export function App() {
                 Go to Deployment & Monitoring
               </button>
             </div>
+          )}
+          </Suspense>
           )}
         </main>
 

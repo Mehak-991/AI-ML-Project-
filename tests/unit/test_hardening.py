@@ -3,6 +3,7 @@ database failure mapping, model versioning and compatibility handling."""
 
 import json
 import logging
+import uuid
 from unittest.mock import MagicMock
 
 import joblib
@@ -11,7 +12,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError, OperationalError
 
+from app.api.deps import get_current_user
 from app.core.middleware import RateLimitMiddleware, TokenBucketLimiter
+from app.database.models.user import User
 from app.database.session import get_db
 from app.main import create_app
 from app.ml.synthetic import make_classification_frame
@@ -146,6 +149,9 @@ def test_uploads_get_the_larger_upload_limit(make_settings, session_factory) -> 
     """A ~10 KB CSV passes even though plain JSON bodies are capped at ~1 KB."""
     app = create_app(make_settings(MAX_REQUEST_BODY_MB=0.001, MAX_UPLOAD_SIZE_MB=1))
     app.dependency_overrides[get_db] = lambda: session_factory()
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=uuid.uuid4(), email="mle@x.com", hashed_password="x", role="ml_engineer", is_active=True
+    )
     with TestClient(app) as client:
         response = client.post(
             f"{API}/datasets/validate",
@@ -691,8 +697,11 @@ def test_auth_rate_limit_enforced(make_settings) -> None:
     assert statuses[2] == 429
 
 
-def test_weak_jwt_secret_flagged_in_production(make_settings) -> None:
+def test_weak_jwt_secret_refused_in_production(make_settings) -> None:
     base = {"APP_ENV": "production", "DATABASE_URL": "postgresql+psycopg://u:p@h/d"}
-    assert make_settings(**base).jwt_secret_is_weak
-    assert make_settings(**base, JWT_SECRET_KEY="short").jwt_secret_is_weak
+    for secret in ({}, {"JWT_SECRET_KEY": "short"}, {"JWT_SECRET_KEY": "   "}):
+        with pytest.raises(ValueError, match="JWT_SECRET_KEY"):
+            make_settings(**base, **secret)
     assert not make_settings(**base, JWT_SECRET_KEY="x" * 48).jwt_secret_is_weak
+    # Local development may still start with the default, and it stays flagged.
+    assert make_settings(APP_ENV="development").jwt_secret_is_weak

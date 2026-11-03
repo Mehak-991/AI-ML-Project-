@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import type { User, LoginCredentials, RegisterCredentials } from '../types/auth';
-import { authApi, tokenStorage, parseApiError } from '../services/api';
+import { AUTH_EXPIRED_EVENT, authApi, tokenStorage, parseApiError } from '../services/api';
 
 interface AuthContextType {
   user: User | null;
@@ -31,8 +31,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const profile = await authApi.getMe();
       setUser(profile);
-    } catch {
-      tokenStorage.clear();
+    } catch (err) {
+      // Keep the tokens through an outage so a reload recovers the session.
+      const parsed = parseApiError(err);
+      if (parsed.status === 401 || parsed.status === 403) {
+        tokenStorage.clear();
+      } else {
+        setError(parsed.message);
+      }
       setUser(null);
     } finally {
       setLoading(false);
@@ -42,6 +48,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     fetchCurrentUser();
   }, [fetchCurrentUser]);
+
+  useEffect(() => {
+    const onExpired = () => setUser(null);
+    window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
+  }, []);
 
   const login = async (creds: LoginCredentials) => {
     setError(null);

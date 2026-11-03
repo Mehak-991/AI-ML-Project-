@@ -19,6 +19,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-only-disposable
+          POSTGRES_DB: aiproject_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d aiproject_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -51,9 +66,13 @@ jobs:
         run: |
           pytest tests/unit/ -v --tb=short
 
-      - name: Test Alembic Migrations & Schema Compatibility
+      # Real PostgreSQL: enforces what the SQLite test double cannot (column lengths, row locks).
+      - name: Run PostgreSQL Integration Tests (migrations, schema, job recovery)
+        env:
+          APP_ENV: testing
+          TEST_DATABASE_URL: postgresql+psycopg://ci:ci-only-disposable@127.0.0.1:5432/aiproject_ci
         run: |
-          pytest tests/integration/test_migrations.py -v --tb=short
+          pytest tests/integration/ -v --tb=short
 
   frontend-build:
     name: Frontend Typecheck, Audit & Build (Node 22)
@@ -69,7 +88,7 @@ jobs:
         with:
           node-version: 22
           cache: "npm"
-          cache-dependency-path: frontend/package.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install Frontend Dependencies
         working-directory: frontend
@@ -94,6 +113,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Validate Compose Configuration
+        env:
+          POSTGRES_PASSWORD: ci-only-disposable
+          JWT_SECRET_KEY: ci-only-disposable-secret-at-least-32-bytes
+        run: |
+          docker compose -f compose.yaml config --quiet
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

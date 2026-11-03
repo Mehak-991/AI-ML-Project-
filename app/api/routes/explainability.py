@@ -37,6 +37,7 @@ def get_explainability_summary(
     settings: SettingsDep,
     user: CurrentUserDep,
 ) -> ExplainabilitySummaryResponse:
+    authorization.ensure_model_access(user, model_service.get_model(db, model_id))
     return explainability_service.get_explainability_summary(db, settings, model_id)
 
 
@@ -80,6 +81,7 @@ def explain_with_shap(
         record=request.record,
         num_features=request.num_features,
         background_samples_count=request.background_samples,
+        target_class=request.target_class,
     )
 
 
@@ -103,4 +105,5 @@ def explain_with_lime(
         model_id=model_id,
         record=request.record,
         num_features=request.num_features,
+        target_class=request.target_class,
     )

@@ -254,7 +254,16 @@ class RateLimitMiddleware:
             ("POST", f"{api_prefix}/models/train"),
             ("POST", f"{api_prefix}/datasets"),
             ("POST", f"{api_prefix}/datasets/validate"),
+            ("POST", f"{api_prefix}/jobs"),
         }
+        # Other endpoints that run heavy ML work in-process; they share the training budget.
+        self.training_patterns = re.compile(
+            rf"^{re.escape(api_prefix)}/("
+            r"experiments/[^/]+/(run|rerun)"
+            r"|models/[^/]+/explainability/(shap|lime)"
+            r"|drift/models/[^/]+/analyze-(quality|drift|performance)"
+            r")/?$"
+        )
 
     def rule_for(self, method: str, path: str) -> RateLimitRule | None:
         if method == "OPTIONS" or path in self.exempt:
@@ -262,6 +271,8 @@ class RateLimitMiddleware:
         if path.startswith(self.ai_prefixes):
             return self.ai
         if (method, path.rstrip("/")) in self.training_routes:
+            return self.training
+        if method == "POST" and self.training_patterns.match(path):
             return self.training
         if self.auth is not None and (method, path.rstrip("/")) in self.auth_routes:
             return self.auth

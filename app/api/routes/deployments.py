@@ -5,11 +5,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.deps import DbSession, SettingsDep, require_role
+from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
+from app.core.exceptions import NotFoundError
 from app.repositories.deployments import DeploymentRepository
 from app.schemas.common import ErrorResponse
 from app.schemas.deployments import DeploymentList, DeploymentRead, DeployRequest
-from app.services import deployment_service
+from app.services import authorization, deployment_service, model_service
 
 router = APIRouter(tags=["deployments"])
 
@@ -53,9 +54,11 @@ def undeploy_model(model_id: uuid.UUID, db: DbSession) -> DeploymentRead:
 @router.get(
     "/deployments",
     response_model=DeploymentList,
-    summary="List all model deployments with pagination",
+    summary="List model deployments the caller may see, with pagination",
+    responses=UNAUTHORIZED,
 )
 def list_deployments(
+    user: CurrentUserDep,
     db: DbSession,
     model_id: uuid.UUID | None = None,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -63,12 +66,14 @@ def list_deployments(
 ) -> DeploymentList:
     repo = DeploymentRepository(db)
     if model_id is not None:
+        authorization.ensure_model_access(user, model_service.get_model(db, model_id))
         items = repo.list_for_model(model_id)
         total = len(items)
         items = items[offset : offset + limit]
     else:
-        items = repo.list(offset=offset, limit=limit)
-        total = repo.count()
+        owner_id = authorization.owner_scope(user)
+        items = repo.list(offset=offset, limit=limit, owner_id=owner_id)
+        total = repo.count(owner_id=owner_id)
 
     return DeploymentList(
         items=[DeploymentRead.model_validate(d) for d in items],
@@ -82,12 +87,13 @@ def list_deployments(
     "/deployments/{deployment_id}",
     response_model=DeploymentRead,
     summary="Get deployment details by ID",
-    responses=NOT_FOUND,
+    responses=NOT_FOUND | UNAUTHORIZED,
 )
-def get_deployment(deployment_id: uuid.UUID, db: DbSession) -> DeploymentRead:
+def get_deployment(
+    deployment_id: uuid.UUID, user: CurrentUserDep, db: DbSession
+) -> DeploymentRead:
     dep = DeploymentRepository(db).get(deployment_id)
     if not dep:
-        from app.core.exceptions import NotFoundError
-
         raise NotFoundError(f"Deployment {deployment_id} not found.")
+    authorization.ensure_model_access(user, dep.model)
     return DeploymentRead.model_validate(dep)

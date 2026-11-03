@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
 from app.database.models.user import User
@@ -15,7 +15,7 @@ from app.schemas.experiment import (
     ExperimentRead,
     ExperimentRunRead,
 )
-from app.services import experiment_service
+from app.services import authorization, dataset_service, experiment_service
 
 router = APIRouter(prefix="/experiments", tags=["experiments"])
 
@@ -37,6 +37,7 @@ def create_experiment(
     db: DbSession,
     user: MLEngineerRole,
 ) -> ExperimentRead:
+    authorization.ensure_dataset_access(user, dataset_service.get_dataset(db, request.dataset_id))
     exp = experiment_service.create_experiment(
         session=db,
         dataset_id=request.dataset_id,
@@ -65,13 +66,17 @@ def create_experiment(
 )
 def list_experiments(
     db: DbSession,
-    _user: CurrentUserDep,
+    user: CurrentUserDep,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     status: str | None = Query(default=None),
 ) -> ExperimentList:
     items, total = experiment_service.list_experiments(
-        session=db, offset=offset, limit=limit, status=status
+        session=db,
+        offset=offset,
+        limit=limit,
+        status=status,
+        owner_id=authorization.owner_scope(user),
     )
     return ExperimentList(
         items=[ExperimentRead.model_validate(i) for i in items],
@@ -87,10 +92,14 @@ def list_experiments(
     summary="Compare multiple ML experiments",
 )
 def compare_experiments(
+    db: DbSession,
+    user: CurrentUserDep,
     experiment_ids: list[uuid.UUID] = Query(...),
-    db: DbSession = None,
-    _user: CurrentUserDep = None,
 ) -> ExperimentComparisonResponse:
+    for experiment_id in experiment_ids:
+        authorization.ensure_experiment_access(
+            user, experiment_service.get_experiment(db, experiment_id)
+        )
     res = experiment_service.compare_experiments(db, experiment_ids)
     return ExperimentComparisonResponse.model_validate(res)
 
@@ -104,9 +113,10 @@ def compare_experiments(
 def get_experiment(
     experiment_id: uuid.UUID,
     db: DbSession,
-    _user: CurrentUserDep,
+    user: CurrentUserDep,
 ) -> ExperimentRead:
     exp = experiment_service.get_experiment(db, experiment_id)
+    authorization.ensure_experiment_access(user, exp)
     return ExperimentRead.model_validate(exp)
 
 
@@ -120,8 +130,11 @@ def run_experiment(
     experiment_id: uuid.UUID,
     db: DbSession,
     settings: SettingsDep,
-    _user: MLEngineerRole,
+    user: MLEngineerRole,
 ) -> ExperimentRunRead:
+    authorization.ensure_experiment_access(
+        user, experiment_service.get_experiment(db, experiment_id)
+    )
     run = experiment_service.execute_pipeline_run(db, settings, experiment_id)
     return ExperimentRunRead.model_validate(run)
 
@@ -135,8 +148,11 @@ def run_experiment(
 def cancel_experiment(
     experiment_id: uuid.UUID,
     db: DbSession,
-    _user: MLEngineerRole,
+    user: MLEngineerRole,
 ) -> ExperimentRead:
+    authorization.ensure_experiment_access(
+        user, experiment_service.get_experiment(db, experiment_id)
+    )
     exp = experiment_service.cancel_experiment(db, experiment_id)
     return ExperimentRead.model_validate(exp)
 
@@ -151,7 +167,10 @@ def rerun_experiment(
     experiment_id: uuid.UUID,
     db: DbSession,
     settings: SettingsDep,
-    _user: MLEngineerRole,
+    user: MLEngineerRole,
 ) -> ExperimentRunRead:
+    authorization.ensure_experiment_access(
+        user, experiment_service.get_experiment(db, experiment_id)
+    )
     run = experiment_service.execute_pipeline_run(db, settings, experiment_id)
     return ExperimentRunRead.model_validate(run)

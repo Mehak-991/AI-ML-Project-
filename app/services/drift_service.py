@@ -20,14 +20,15 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from scipy import stats  # scipy is a transitive dep of scikit-learn
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, PermissionDeniedError
 from app.database.models.deployment import PredictionLog
 from app.database.models.drift import DriftAlert, DriftReport
 from app.database.models.ml_model import MLModel
+from app.database.models.user import User
 from app.repositories.ml_models import MLModelRepository
 from app.schemas.drift import (
     AnalyzeDriftRequest,
@@ -39,6 +40,7 @@ from app.schemas.drift import (
     DriftStatus,
     ModelDriftSummary,
 )
+from app.services import authorization
 from app.services.dataset_service import load_dataset_frame, get_dataset
 
 logger = logging.getLogger(__name__)
@@ -792,8 +794,14 @@ def list_alerts(
     resolved: bool | None = None,
     offset: int = 0,
     limit: int = 50,
+    owner_id: uuid.UUID | None = None,
 ) -> DriftAlertList:
     query = select(DriftAlert)
+    if owner_id is not None:
+        visible = select(MLModel.id).where(
+            or_(MLModel.owner_id == owner_id, MLModel.owner_id.is_(None))
+        )
+        query = query.where(DriftAlert.model_id.in_(visible))
     if model_id is not None:
         query = query.where(DriftAlert.model_id == model_id)
     if severity:
@@ -814,9 +822,14 @@ def list_alerts(
     )
 
 
-def get_drift_overview(session: Session) -> DriftOverviewResponse:
-    """Aggregated drift dashboard summary across all models."""
-    models = session.scalars(select(MLModel)).all()
+def get_drift_overview(
+    session: Session, owner_id: uuid.UUID | None = None
+) -> DriftOverviewResponse:
+    """Aggregated drift dashboard summary; *owner_id* limits it to that user's visible models."""
+    stmt = select(MLModel)
+    if owner_id is not None:
+        stmt = stmt.where(or_(MLModel.owner_id == owner_id, MLModel.owner_id.is_(None)))
+    models = session.scalars(stmt).all()
     summaries: list[ModelDriftSummary] = []
 
     total_active = 0
@@ -893,10 +906,14 @@ def get_drift_overview(session: Session) -> DriftOverviewResponse:
     )
 
 
-def resolve_alert(session: Session, alert_id: uuid.UUID) -> DriftAlert:
+def resolve_alert(session: Session, alert_id: uuid.UUID, user: User | None = None) -> DriftAlert:
     alert = session.get(DriftAlert, alert_id)
     if not alert:
         raise NotFoundError(f"Drift alert {alert_id} not found.")
+    if user is not None and not authorization.can_access_model(user, alert.model):
+        raise PermissionDeniedError(
+            "Access forbidden: you do not have permission to resolve this alert."
+        )
     alert.resolved = True
     session.commit()
     session.refresh(alert)

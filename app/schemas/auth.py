@@ -20,20 +20,20 @@ class UserLoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     email: EmailStr
-    password: str
+    password: str = Field(max_length=1024)
 
 
 class ChangePasswordRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    current_password: str
+    current_password: str = Field(max_length=1024)
     new_password: str = Field(min_length=8, max_length=128)
 
 
 class RefreshTokenRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    refresh_token: str
+    refresh_token: str = Field(max_length=1024)
 
 
 class TokenResponse(BaseModel):

@@ -120,6 +120,11 @@ def attach_ground_truth(
     log_entry = log_repo.get(prediction_id)
     if not log_entry:
         raise NotFoundError(f"Prediction log {prediction_id} not found.")
+    if len(ground_truth) != log_entry.record_count:
+        # Labels are paired with predictions by position; a mismatch would score the wrong rows.
+        raise DataValidationError(
+            f"Expected {log_entry.record_count} ground-truth labels, got {len(ground_truth)}."
+        )
 
     log_entry.ground_truth = ground_truth
     log_entry.is_evaluated = True
@@ -186,7 +191,7 @@ def get_model_monitoring(session: Session, model_id: uuid.UUID) -> ModelMonitori
 
     evaluated_count = len(evaluated_logs)
     prod_accuracy: float | None = None
-    if evaluated_count > 0:
+    if evaluated_count > 0 and model.problem_type == "classification":
         # Calculate real production accuracy if ground truth was recorded
         matches = 0
         total_samples = 0

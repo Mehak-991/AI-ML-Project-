@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from app.api.deps import CurrentUserDep, DbSession
 from app.schemas.common import ErrorResponse
 from app.schemas.deployments import ModelMonitoringResponse, MonitoringOverviewResponse
-from app.services import deployment_service
+from app.services import authorization, deployment_service, model_service
 
 router = APIRouter(prefix="/monitoring", tags=["monitoring"])
 
@@ -29,5 +29,8 @@ def get_monitoring_overview(_user: CurrentUserDep, db: DbSession) -> MonitoringO
     summary="Get model-level prediction telemetry and production evaluation",
     responses=NOT_FOUND | UNAUTHORIZED,
 )
-def get_model_monitoring(model_id: uuid.UUID, _user: CurrentUserDep, db: DbSession) -> ModelMonitoringResponse:
+def get_model_monitoring(
+    model_id: uuid.UUID, user: CurrentUserDep, db: DbSession
+) -> ModelMonitoringResponse:
+    authorization.ensure_model_access(user, model_service.get_model(db, model_id))
     return deployment_service.get_model_monitoring(db, model_id)

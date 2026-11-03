@@ -2,9 +2,9 @@
 
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ExperimentStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 SearchStrategy = Literal["none", "grid", "random"]
@@ -29,8 +29,24 @@ class ExperimentBase(BaseModel):
     random_state: int = Field(default=42)
 
 
+# Upper bound on hyperparameter candidates: each one is fitted cv_folds times, in-process.
+MAX_HYPERPARAMETER_CANDIDATES = 100
+
+
 class ExperimentCreate(ExperimentBase):
-    pass
+    @model_validator(mode="after")
+    def _check_splits_and_search(self) -> Self:
+        if self.test_size + self.validation_size >= 1.0:
+            raise ValueError("test_size + validation_size must be below 1.0")
+        candidates = 1
+        for values in self.hyperparameter_config.values():
+            candidates *= len(values) if isinstance(values, list) else 1
+        if candidates > MAX_HYPERPARAMETER_CANDIDATES:
+            raise ValueError(
+                f"hyperparameter_config defines {candidates} candidates; "
+                f"the limit is {MAX_HYPERPARAMETER_CANDIDATES}"
+            )
+        return self
 
 
 class ExperimentRunRead(BaseModel):

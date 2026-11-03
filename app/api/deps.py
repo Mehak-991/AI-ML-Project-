@@ -43,6 +43,7 @@ def get_token_counter(ai: AIServicesDep) -> TokenCounter:
 import logging
 import uuid
 
+import jwt
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -101,7 +102,7 @@ def get_current_user_optional(
         if not user or not user.is_active:
             return None
         return user
-    except Exception:
+    except (jwt.PyJWTError, ValueError):
         return None
 
 
@@ -118,35 +119,8 @@ def get_current_user(
         )
     try:
         payload = security.decode_access_token(auth.credentials, settings)
-        user_id_str = payload.get("sub")
-        if not user_id_str:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        user_id = uuid.UUID(user_id_str)
-        if db is None:
-            raise DatabaseNotConfiguredError()
-        user = UserRepository(db).get(user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User account is deactivated.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        return user
-    except HTTPException:
-        raise
-    except DatabaseNotConfiguredError:
-        raise
-    except Exception as exc:
+        user_id = uuid.UUID(payload["sub"])
+    except (jwt.PyJWTError, ValueError) as exc:
         # Parser details stay server-side; never log the token itself.
         auth_logger.warning(
             "Access token rejected: %s", type(exc).__name__, extra={"error_type": type(exc).__name__}
@@ -156,6 +130,24 @@ def get_current_user(
             detail="Could not validate credentials.",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+    # Outside the try: a database outage must surface as 503, not as a rejected token
+    # (a 401 makes clients throw away a perfectly valid session).
+    if db is None:
+        raise DatabaseNotConfiguredError()
+    user = UserRepository(db).get(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is deactivated.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
 
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]

@@ -48,6 +48,7 @@ def create_dataset(
     source: BinaryIO,
     filename: str | None,
     name: str | None = None,
+    owner_id: uuid.UUID | None = None,
 ) -> tuple[Dataset, ValidationReport]:
     """Store an upload, reject structurally invalid data, and record it in the DB."""
     stored = store_upload(
@@ -70,6 +71,7 @@ def create_dataset(
             n_rows=len(frame),
             n_columns=frame.shape[1],
             columns=column_schema(frame),
+            owner_id=owner_id,
         )
         DatasetRepository(session).add(dataset)
         session.commit()

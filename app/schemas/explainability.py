@@ -34,6 +34,7 @@ class LocalShapExplanationResponse(BaseModel):
     model_id: uuid.UUID
     prediction: Any
     probabilities: dict[str, float] | None = None
+    explained_class: str | None = None  # Classification: the class the contributions refer to
     base_value: float  # Expected model value
     feature_contributions: list[FeatureContributionItem]
     computation_time_seconds: float
@@ -53,6 +54,7 @@ class LocalLimeExplanationResponse(BaseModel):
     model_id: uuid.UUID
     prediction: Any
     probabilities: dict[str, float] | None = None
+    explained_class: str | None = None  # Classification: the class the weights refer to
     intercept: float | None = None
     rule_contributions: list[LimeRuleContributionItem]
     score: float | None = None  # Local surrogate R2 or fidelity score

@@ -17,12 +17,16 @@ import gzip
 import hashlib
 import json
 import logging
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("restore")
+
+SAFE_DB_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 
 
 def verify_checksum(backup_path: Path, checksum_path: Path | None = None) -> bool:
@@ -62,6 +66,10 @@ def restore_backup(
     if not backup_path.exists():
         raise FileNotFoundError(f"Backup file not found: {backup_path}")
 
+    # The name is interpolated into CREATE DATABASE, which cannot take bind parameters.
+    if not SAFE_DB_NAME.match(target_db):
+        raise ValueError(f"Invalid target database name: {target_db!r}")
+
     # Step 1: Checksum verification
     if not verify_checksum(backup_path):
         raise ValueError("Backup file integrity check failed. Restore aborted.")
@@ -92,22 +100,34 @@ def restore_backup(
         logger.info("Target database '%s' already exists or notice: %s", target_db, res.stderr.strip())
 
     # Step 4: Decompress and pipe to psql
+    # ON_ERROR_STOP: without it psql skips failed statements and still exits 0.
     restore_cmd = [
         "docker", "exec", "-i", db_container,
-        "psql", "-U", db_user, "-d", target_db
+        "psql", "-U", db_user, "-d", target_db, "-v", "ON_ERROR_STOP=1"
     ]
 
     logger.info("Piping decompressed SQL data to psql inside container...")
-    proc = subprocess.Popen(restore_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-    with gzip.open(backup_path, "rb") as gz_in:
-        while chunk := gz_in.read(65536):
+    # stderr goes to a file and stdout is discarded: an unread pipe would fill up and
+    # deadlock against the stdin writes below on any non-trivial dump.
+    with tempfile.TemporaryFile() as stderr_file:
+        proc = subprocess.Popen(
+            restore_cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=stderr_file
+        )
+        try:
+            with gzip.open(backup_path, "rb") as gz_in:
+                while chunk := gz_in.read(65536):
+                    if proc.stdin is not None:
+                        proc.stdin.write(chunk)
+        except BrokenPipeError:
+            pass  # psql stopped on an error; its exit code and stderr are reported below
+        finally:
             if proc.stdin is not None:
-                proc.stdin.write(chunk)
-
-    stdout, stderr = proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"psql restore failed with code {proc.returncode}: {stderr.decode('utf-8', errors='replace')}")
+                proc.stdin.close()
+        returncode = proc.wait()
+        if returncode != 0:
+            stderr_file.seek(0)
+            detail = stderr_file.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"psql restore failed with code {returncode}: {detail}")
 
     logger.info("Database restore to '%s' completed successfully!", target_db)
 

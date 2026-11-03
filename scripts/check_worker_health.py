@@ -9,6 +9,7 @@ Exit codes:
 """
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -47,7 +48,7 @@ def main() -> None:
     parser.add_argument(
         "--heartbeat-file",
         type=Path,
-        default=Path(DEFAULT_HEARTBEAT_FILE),
+        default=Path(os.getenv("WORKER_HEARTBEAT_FILE", DEFAULT_HEARTBEAT_FILE)),
         help="Path to the worker heartbeat file",
     )
     parser.add_argument(

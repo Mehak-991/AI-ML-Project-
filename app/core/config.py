@@ -53,13 +53,23 @@ class Settings(BaseSettings):
     JOB_STALE_TIMEOUT_BY_TYPE: dict[str, int] = Field(default_factory=dict)
     JOB_HEARTBEAT_INTERVAL_SECONDS: int = Field(default=30, ge=1)
     JOB_REAPER_INTERVAL_SECONDS: int = Field(default=60, ge=10)
+    # true: the API also runs submitted jobs in its own thread pool (single-process dev setups).
+    # false: only scripts/run_worker.py executes jobs (compose.yaml; keeps ML load out of the API).
+    JOB_INLINE_DISPATCH: bool = True
+    # Written by the worker, read by its healthcheck and /metrics. Must be on storage shared
+    # by both when they run in separate containers.
+    WORKER_HEARTBEAT_FILE: str = "/tmp/worker_heartbeat"
+
+    # When set, GET /metrics requires "Authorization: Bearer <token>".
+    METRICS_TOKEN: SecretStr | None = None
 
     # JWT Authentication & Authorization
     JWT_SECRET_KEY: SecretStr = Field(
         default=SecretStr(DEFAULT_JWT_SECRET),
         description="Secret key for signing JWT tokens.",
     )
-    JWT_ALGORITHM: str = Field(default="HS256")
+    # HMAC only: tokens are signed and verified with the one shared secret above.
+    JWT_ALGORITHM: Literal["HS256", "HS384", "HS512"] = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, ge=1)
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7, ge=1)
 
@@ -168,6 +178,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "DATABASE_URL",
+        "METRICS_TOKEN",
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
         "OPENAI_ORGANIZATION",
@@ -179,6 +190,14 @@ class Settings(BaseSettings):
     def _blank_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("JWT_SECRET_KEY", mode="before")
+    @classmethod
+    def _blank_jwt_secret_to_default(cls, value: object) -> object:
+        # A blank value means "not set". Production then refuses to start (_validate_production).
+        if isinstance(value, str) and not value.strip():
+            return DEFAULT_JWT_SECRET
         return value
 
     @field_validator("DATABASE_URL")
@@ -215,6 +234,14 @@ class Settings(BaseSettings):
             problems.append("DATABASE_URL must be a PostgreSQL URL when APP_ENV=production")
         if self.DEBUG:
             problems.append("DEBUG must be false when APP_ENV=production")
+        if self.DATABASE_ECHO:
+            # Echo logs SQL parameters, which include password hashes and user data.
+            problems.append("DATABASE_ECHO must be false when APP_ENV=production")
+        if self.jwt_secret_is_weak:
+            problems.append(
+                "JWT_SECRET_KEY must be set to a private value of at least 32 bytes when "
+                "APP_ENV=production (generate one with: openssl rand -hex 32)"
+            )
         if self.CORS_ORIGINS and "*" in self.CORS_ORIGINS:
             problems.append("CORS_ORIGINS must not contain '*' when APP_ENV=production")
         if problems:

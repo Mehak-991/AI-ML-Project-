@@ -42,7 +42,7 @@ def submit_job(
         experiment_id=request.experiment_id,
         max_retries=request.max_retries,
     )
-    job_service.dispatch_job(job.id, settings)
+    job_service.dispatch_if_inline(job.id, settings)
     return JobRead.model_validate(job)
 
 

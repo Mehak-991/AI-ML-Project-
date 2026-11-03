@@ -51,7 +51,7 @@ def train(
     artifact = persistence.save_artifact(result, settings.MODEL_DIR)
 
     record = MLModel(
-        name=request.name or f"{dataset.name}-{request.target_column}-{result.algorithm}",
+        name=(request.name or f"{dataset.name}-{request.target_column}-{result.algorithm}")[:255],
         dataset_id=dataset.id,
         problem_type=result.problem_type,
         algorithm=result.algorithm,

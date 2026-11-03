@@ -1,6 +1,9 @@
-from datetime import datetime, timedelta, timezone
+import logging
 import uuid
+from datetime import datetime, timedelta, timezone
+from typing import NoReturn
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.core import security
@@ -22,6 +25,8 @@ from app.schemas.auth import (
     UserRegisterRequest,
     UserUpdateRequest,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def register_user(
@@ -66,7 +71,8 @@ def authenticate_user(
 ) -> tuple[User, TokenResponse]:
     user_repo = UserRepository(session)
     user = user_repo.get_by_email(request.email)
-    if not user or not security.verify_password(request.password, user.hashed_password):
+    stored_hash = user.hashed_password if user else None
+    if not security.verify_password_or_dummy(request.password, stored_hash) or user is None:
         raise AuthenticationError("Invalid email or password.")
 
     if not user.is_active:
@@ -105,8 +111,10 @@ def refresh_access_token(
     token_repo = RefreshTokenRepository(session)
     record = token_repo.get_by_hash(token_hash)
 
-    if not record or record.revoked:
+    if not record:
         raise AuthenticationError("Invalid or revoked refresh token.")
+    if record.revoked:
+        _revoke_after_reuse(session, token_repo, record.user_id)
 
     expires_at = datetime.fromisoformat(record.expires_at)
     if datetime.now(timezone.utc) > expires_at:
@@ -116,8 +124,17 @@ def refresh_access_token(
     if not user or not user.is_active:
         raise AuthenticationError("User is inactive or not found.")
 
-    # Token rotation: revoke used refresh token and issue new pair
-    record.revoked = True
+    # Token rotation: revoke used refresh token and issue new pair. The conditional UPDATE
+    # lets exactly one of several concurrent requests with the same token win.
+    claimed = session.execute(
+        update(RefreshToken)
+        .where(RefreshToken.id == record.id, RefreshToken.revoked.is_(False))
+        .values(revoked=True)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        session.rollback()
+        _revoke_after_reuse(session, token_repo, record.user_id)
 
     new_access_token = security.create_access_token(
         {"sub": str(user.id), "email": user.email, "role": user.role}, settings
@@ -142,6 +159,16 @@ def refresh_access_token(
         user=UserRead.model_validate(user),
     )
 
+
+
+def _revoke_after_reuse(
+    session: Session, token_repo: RefreshTokenRepository, user_id: uuid.UUID
+) -> NoReturn:
+    """A rotated token came back: it was stolen or replayed, so end every session of the user."""
+    token_repo.revoke_all_for_user(user_id)
+    session.commit()
+    logger.warning("Refresh token reuse detected; sessions revoked", extra={"user_id": str(user_id)})
+    raise AuthenticationError("Invalid or revoked refresh token.")
 
 
 def revoke_refresh_token(session: Session, refresh_token: str) -> None:

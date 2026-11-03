@@ -3,14 +3,11 @@
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import numpy as np
-import pandas as pd
-from sklearn.compose import ColumnTransformer
+import sklearn
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import (
     accuracy_score,
@@ -21,20 +18,25 @@ from sklearn.metrics import (
     recall_score,
     root_mean_squared_error,
 )
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, train_test_split
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.exceptions import DataValidationError, NotFoundError
-from app.database.models.dataset import Dataset
+from app.core.exceptions import ConflictError, DataValidationError, NotFoundError
 from app.database.models.experiment import Experiment, ExperimentRun
 from app.database.models.ml_model import MLModel
-from app.ml.persistence import save_artifact
-from app.ml.preprocessing import FeatureSpec
-from app.ml.training import TrainingResult
+from app.ml.persistence import delete_artifact, save_artifact
+from app.ml.preprocessing import (
+    build_preprocessor,
+    coerce_features,
+    drop_duplicate_rows,
+    select_features,
+    split_dataset,
+)
+from app.ml.training import MIN_TRAINING_ROWS, TrainingResult, _prepare_target
+from app.ml.utils import to_python
 from app.services.dataset_service import get_dataset, load_dataset_frame
 
 logger = logging.getLogger(__name__)
@@ -97,8 +99,13 @@ def list_experiments(
     offset: int = 0,
     limit: int = 20,
     status: str | None = None,
+    owner_id: uuid.UUID | None = None,
 ) -> tuple[list[Experiment], int]:
     stmt = select(Experiment).order_by(desc(Experiment.created_at))
+    if owner_id is not None:
+        stmt = stmt.where(
+            or_(Experiment.created_by_id == owner_id, Experiment.created_by_id.is_(None))
+        )
     if status:
         stmt = stmt.where(Experiment.status == status)
 
@@ -107,12 +114,53 @@ def list_experiments(
     return list(items), total
 
 
+def _classification_metrics(y_true: Any, y_pred: Any) -> dict[str, float]:
+    return {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "precision_macro": float(precision_score(y_true, y_pred, average="macro", zero_division=0)),
+        "recall_macro": float(recall_score(y_true, y_pred, average="macro", zero_division=0)),
+        "f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
+    }
+
+
+def _regression_metrics(y_true: Any, y_pred: Any) -> dict[str, float]:
+    return {
+        "mae": float(mean_absolute_error(y_true, y_pred)),
+        "rmse": float(root_mean_squared_error(y_true, y_pred)),
+        "r2": float(r2_score(y_true, y_pred)),
+    }
+
+
+def _abandon_stale_runs(session: Session, experiment: Experiment, settings: Settings) -> None:
+    """Refuse a concurrent run, but let a run orphaned by a crashed process be replaced."""
+    if experiment.status != "running":
+        return
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=settings.JOB_STALE_TIMEOUT_MINUTES)
+    active = [run for run in experiment.runs if run.status == "running"]
+    # SQLite returns naive datetimes; PostgreSQL returns aware ones.
+    started = [
+        (run.started_at.replace(tzinfo=timezone.utc) if run.started_at.tzinfo is None
+         else run.started_at)
+        for run in active
+        if run.started_at is not None
+    ]
+    if any(value > cutoff for value in started):
+        raise ConflictError("This experiment is already running.")
+    for run in active:
+        run.status = "failed"
+        run.error_message = "Abandoned: the process running it stopped."
+        run.completed_at = datetime.now(timezone.utc)
+
+
 def execute_pipeline_run(
     session: Session,
     settings: Settings,
     experiment_id: uuid.UUID,
 ) -> ExperimentRun:
-    experiment = get_experiment(session, experiment_id)
+    # The row lock makes "check not running, then mark running" atomic across processes.
+    experiment = session.get(Experiment, experiment_id, with_for_update=True)
+    if not experiment:
+        raise NotFoundError(f"Experiment {experiment_id} not found")
     dataset = get_dataset(session, experiment.dataset_id)
 
     # Verify dataset reproducibility fingerprint
@@ -120,6 +168,7 @@ def execute_pipeline_run(
         raise DataValidationError(
             f"Dataset fingerprint mismatch: original={experiment.dataset_fingerprint}, current={dataset.sha256}"
         )
+    _abandon_stale_runs(session, experiment, settings)
 
     # Create run entry
     run_count = len(experiment.runs)
@@ -131,89 +180,78 @@ def execute_pipeline_run(
     )
     session.add(run)
     experiment.status = "running"
+    experiment.completed_at = None
     if not experiment.started_at:
         experiment.started_at = run.started_at
     session.commit()
     session.refresh(run)
+    run_id, exp_id = run.id, experiment.id
 
     start_time = time.perf_counter()
+    saved_art = None
 
     try:
-        # 1. Dataset Loading
+        # 1. Dataset loading. Same feature selection, de-duplication and type coercion as
+        # model_service.train, so experiment models accept the same prediction input.
         df = load_dataset_frame(settings, dataset)
-        if experiment.target_column not in df.columns:
-            raise DataValidationError(f"Target column '{experiment.target_column}' missing from dataset")
+        target = experiment.target_column
+        if target not in df.columns:
+            raise DataValidationError(f"Target column '{target}' missing from dataset")
+        df = df.dropna(subset=[target])
 
-        # 2. Feature Selection
+        # 2. Feature selection
+        include = None
         if experiment.selected_features:
-            features = [f for f in experiment.selected_features if f in df.columns and f != experiment.target_column]
-        else:
-            features = [c for c in df.columns if c != experiment.target_column]
-
-        if not features:
+            include = [f for f in experiment.selected_features if f in df.columns and f != target]
+            if not include:
+                raise DataValidationError("No valid features selected for training")
+        feature_specs, _ = select_features(df, target, include=include)
+        if not feature_specs:
             raise DataValidationError("No valid features selected for training")
 
-        # 3. Clean Missing Target Rows
-        df = df.dropna(subset=[experiment.target_column])
-        X = df[features]
-        y = df[experiment.target_column]
+        # 3. De-duplicate before splitting so copies cannot land in both train and test
+        data, _ = drop_duplicate_rows(df[[f.name for f in feature_specs] + [target]])
+        if len(data) < MIN_TRAINING_ROWS:
+            raise DataValidationError(
+                f"At least {MIN_TRAINING_ROWS} usable rows are required; {len(data)} remain."
+            )
+        X = coerce_features(data, feature_specs)
+        y = _prepare_target(data[target], experiment.problem_type)
 
         # 4. Train / Val / Test Split (Prevent Data Leakage)
-        X_temp, X_test, y_temp, y_test = train_test_split(
-            X, y, test_size=experiment.test_size, random_state=experiment.random_state
+        splits = split_dataset(
+            X,
+            y,
+            test_size=experiment.test_size,
+            validation_size=experiment.validation_size,
+            random_state=experiment.random_state,
+            stratify=experiment.problem_type == "classification",
         )
 
-        val_ratio = experiment.validation_size / (1.0 - experiment.test_size)
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_temp, y_temp, test_size=val_ratio, random_state=experiment.random_state
-        )
-
-        # 5. Preprocessing Pipelines
-        numeric_cols = [c for c in features if pd.api.types.is_numeric_dtype(X[c])]
-        categorical_cols = [c for c in features if c not in numeric_cols]
-
-        num_transformer = Pipeline(
-            steps=[
-                ("imputer", SimpleImputer(strategy="median")),
-                ("scaler", StandardScaler()),
-            ]
-        )
-        cat_transformer = Pipeline(
-            steps=[
-                ("imputer", SimpleImputer(strategy="most_frequent")),
-                ("encoder", OneHotEncoder(handle_unknown="ignore")),
-            ]
-        )
-
-        preprocessor = ColumnTransformer(
-            transformers=[
-                ("num", num_transformer, numeric_cols),
-                ("cat", cat_transformer, categorical_cols),
-            ]
-        )
-
-        # 6. Estimator Setup
+        # 5. Estimator Setup
         if experiment.problem_type == "classification":
             base_estimator = (
-                LogisticRegression(max_iter=500, random_state=experiment.random_state)
+                LogisticRegression(max_iter=2000, random_state=experiment.random_state)
                 if experiment.algorithm == "linear"
                 else RandomForestClassifier(random_state=experiment.random_state)
             )
+            evaluate = _classification_metrics
         else:
             base_estimator = (
                 Ridge(random_state=experiment.random_state)
                 if experiment.algorithm == "linear"
                 else RandomForestRegressor(random_state=experiment.random_state)
             )
+            evaluate = _regression_metrics
 
         full_pipeline = Pipeline(
             steps=[
-                ("preprocessor", preprocessor),
+                ("preprocessor", build_preprocessor(feature_specs)),
                 ("estimator", base_estimator),
             ]
         )
 
-        # 7. Hyperparameter Optimization (Grid / Random Search)
+        # 6. Hyperparameter Optimization (Grid / Random Search)
         best_params: dict[str, Any] = {}
         cv_results: dict[str, Any] = {}
 
@@ -240,59 +278,41 @@ def execute_pipeline_run(
                     n_jobs=1,
                 )
 
-            search.fit(X_train, y_train)
+            search.fit(splits.X_train, splits.y_train)
             full_pipeline = search.best_estimator_
             best_params = {
                 k.replace("estimator__", ""): v for k, v in search.best_params_.items()
             }
             cv_results = {"best_score": float(search.best_score_)}
         else:
-            full_pipeline.fit(X_train, y_train)
+            full_pipeline.fit(splits.X_train, splits.y_train)
 
-        # 8. Evaluation on Validation & Test Sets
-        val_preds = full_pipeline.predict(X_val)
-        test_preds = full_pipeline.predict(X_test)
+        # 7. Evaluation on Validation & Test Sets
+        val_metrics = (
+            evaluate(splits.y_val, full_pipeline.predict(splits.X_val)) if len(splits.y_val) else {}
+        )
+        test_metrics = evaluate(splits.y_test, full_pipeline.predict(splits.X_test))
 
-        if experiment.problem_type == "classification":
-            val_metrics = {
-                "accuracy": float(accuracy_score(y_val, val_preds)),
-                "precision_macro": float(precision_score(y_val, val_preds, average="macro", zero_division=0)),
-                "recall_macro": float(recall_score(y_val, val_preds, average="macro", zero_division=0)),
-                "f1_macro": float(f1_score(y_val, val_preds, average="macro", zero_division=0)),
-            }
-            test_metrics = {
-                "accuracy": float(accuracy_score(y_test, test_preds)),
-                "precision_macro": float(precision_score(y_test, test_preds, average="macro", zero_division=0)),
-                "recall_macro": float(recall_score(y_test, test_preds, average="macro", zero_division=0)),
-                "f1_macro": float(f1_score(y_test, test_preds, average="macro", zero_division=0)),
-            }
-        else:
-            val_metrics = {
-                "mae": float(mean_absolute_error(y_val, val_preds)),
-                "rmse": float(root_mean_squared_error(y_val, val_preds)),
-                "r2": float(r2_score(y_val, val_preds)),
-            }
-            test_metrics = {
-                "mae": float(mean_absolute_error(y_test, test_preds)),
-                "rmse": float(root_mean_squared_error(y_test, test_preds)),
-                "r2": float(r2_score(y_test, test_preds)),
-            }
+        # A cancel that arrived during training wins: register nothing.
+        session.refresh(experiment)
+        if experiment.status == "cancelled":
+            session.refresh(run)
+            return run
 
-        # 9. Register in MLModel Registry
+        # 8. Register in MLModel Registry
         duration = time.perf_counter() - start_time
-        feature_specs = [
-            FeatureSpec(name=col, kind="numeric" if col in numeric_cols else "categorical")
-            for col in features
-        ]
-        import sklearn
-
+        class_labels = (
+            [to_python(label) for label in full_pipeline.classes_]
+            if experiment.problem_type == "classification"
+            else None
+        )
         training_result = TrainingResult(
             pipeline=full_pipeline,
             problem_type=experiment.problem_type,
             algorithm=experiment.algorithm,
-            target_column=experiment.target_column,
+            target_column=target,
             features=feature_specs,
-            class_labels=list(full_pipeline.classes_) if hasattr(full_pipeline, "classes_") else None,
+            class_labels=class_labels,
             metrics={"validation": val_metrics, "test": test_metrics},
             metadata={
                 "trained_at": datetime.now(timezone.utc).isoformat(),
@@ -300,6 +320,7 @@ def execute_pipeline_run(
                 "experiment_id": str(experiment.id),
                 "run_id": str(run.id),
                 "best_hyperparameters": best_params,
+                "class_labels": class_labels,
             },
         )
         saved_art = save_artifact(training_result, settings.MODEL_DIR)
@@ -318,7 +339,7 @@ def execute_pipeline_run(
             dataset_id=experiment.dataset_id,
             problem_type=experiment.problem_type,
             algorithm=experiment.algorithm,
-            target_column=experiment.target_column,
+            target_column=target,
             feature_schema=[s.to_dict() for s in feature_specs],
             metrics={"validation": val_metrics, "test": test_metrics},
             training_metadata=training_result.metadata,
@@ -349,9 +370,15 @@ def execute_pipeline_run(
         return run
 
     except Exception as exc:
+        # A failed flush leaves the transaction unusable; recording the failure needs a clean one.
+        session.rollback()
+        if saved_art is not None:
+            delete_artifact(settings.MODEL_DIR, saved_art.filename)
         duration = time.perf_counter() - start_time
+        run = session.get(ExperimentRun, run_id, populate_existing=True)
+        experiment = session.get(Experiment, exp_id, populate_existing=True)
         run.status = "failed"
-        run.error_message = str(exc)
+        run.error_message = str(exc)[:2000]
         run.completed_at = datetime.now(timezone.utc)
         run.execution_duration_seconds = round(duration, 4)
 

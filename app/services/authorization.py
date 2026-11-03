@@ -1,18 +1,19 @@
-"""Object-level authorization for models and prediction audit logs.
+"""Object-level authorization for models, datasets, experiments and prediction audit logs.
 
 Policy (mirrors job ownership in job_service):
-- admin: every model and prediction log.
-- other roles: models they own; prediction logs they requested or that were made
-  against a model they own.
-- Models with no owner (created before ownership tracking) remain usable by every
-  authenticated user so existing deployments keep working; an admin can assign an
-  owner to restrict them.
+- admin: everything.
+- other roles: models, datasets and experiments they own; prediction logs they requested
+  or that were made against a model they own.
+- Objects with no owner (created before ownership tracking) remain usable by every
+  authenticated user so existing data keeps working.
 """
 
 import uuid
 
 from app.core.exceptions import PermissionDeniedError
+from app.database.models.dataset import Dataset
 from app.database.models.deployment import PredictionLog
+from app.database.models.experiment import Experiment
 from app.database.models.ml_model import MLModel
 from app.database.models.user import User
 
@@ -28,6 +29,27 @@ def can_access_model(user: User, model: MLModel) -> bool:
 def ensure_model_access(user: User, model: MLModel) -> None:
     if not can_access_model(user, model):
         raise PermissionDeniedError("Access forbidden: you do not have permission to use this model.")
+
+
+def owner_scope(user: User) -> uuid.UUID | None:
+    """User id to scope owned-object queries by, or None for unrestricted (admin)."""
+    return None if is_admin(user) else user.id
+
+
+def ensure_dataset_access(user: User, dataset: Dataset) -> None:
+    if not (is_admin(user) or dataset.owner_id is None or dataset.owner_id == user.id):
+        raise PermissionDeniedError(
+            "Access forbidden: you do not have permission to use this dataset."
+        )
+
+
+def ensure_experiment_access(user: User, experiment: Experiment) -> None:
+    if not (
+        is_admin(user) or experiment.created_by_id is None or experiment.created_by_id == user.id
+    ):
+        raise PermissionDeniedError(
+            "Access forbidden: you do not have permission to use this experiment."
+        )
 
 
 def prediction_log_scope(user: User) -> uuid.UUID | None:

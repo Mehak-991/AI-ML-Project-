@@ -15,7 +15,15 @@ from sqlalchemy import case, desc, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
-from app.core.exceptions import DataValidationError, NotFoundError, PermissionDeniedError
+from pydantic import ValidationError
+
+from app.core.exceptions import (
+    AppError,
+    DataValidationError,
+    NotFoundError,
+    PermissionDeniedError,
+)
+from app.database.models.dataset import Dataset
 from app.database.models.experiment import Experiment
 from app.database.models.job import Job
 from app.database.models.ml_model import MLModel
@@ -33,6 +41,9 @@ executor = ThreadPoolExecutor(max_workers=WORKER_THREADS, thread_name_prefix="ml
 # A job in one of these states may be picked up for execution.
 CLAIMABLE_STATUSES = ("queued", "retry_pending")
 
+# jobs.current_stage is VARCHAR(128); PostgreSQL rejects longer values outright.
+MAX_STAGE_LENGTH = 128
+
 
 def worker_identity() -> str:
     """Identity of this process; computed per call so forked workers differ."""
@@ -48,6 +59,17 @@ def _as_aware(value: datetime | None) -> datetime | None:
     if value is not None and value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
+
+
+def _stage(text: str) -> str:
+    return text[:MAX_STAGE_LENGTH]
+
+
+def _is_permanent_failure(exc: Exception) -> bool:
+    """Client errors (bad input, missing entity, no permission) fail the same way on retry."""
+    if isinstance(exc, ValidationError):
+        return True
+    return isinstance(exc, AppError) and exc.status_code < 500
 
 
 def _is_postgres(session: Session) -> bool:
@@ -70,8 +92,18 @@ def create_job(
         if not model:
             raise NotFoundError(f"Model {model_id} not found.")
         authorization.ensure_model_access(user, model)
-    if experiment_id and not session.get(Experiment, experiment_id):
-        raise NotFoundError(f"Experiment {experiment_id} not found.")
+    if experiment_id:
+        experiment = session.get(Experiment, experiment_id)
+        if not experiment:
+            raise NotFoundError(f"Experiment {experiment_id} not found.")
+        authorization.ensure_experiment_access(user, experiment)
+    if job_type == "model_training":
+        dataset_id = _training_dataset_id(input_config)
+        if dataset_id is not None:
+            dataset = session.get(Dataset, dataset_id)
+            if not dataset:
+                raise NotFoundError(f"Dataset {dataset_id} not found.")
+            authorization.ensure_dataset_access(user, dataset)
 
     job = Job(
         job_type=job_type,
@@ -88,6 +120,13 @@ def create_job(
     session.commit()
     session.refresh(job)
     return job
+
+
+def _training_dataset_id(input_config: dict[str, Any]) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(input_config["dataset_id"]))
+    except (KeyError, ValueError):
+        return None  # execution reports the invalid config as a permanent job failure
 
 
 def get_job(session: Session, job_id: uuid.UUID, user: User) -> Job:
@@ -129,7 +168,8 @@ def get_job_metrics(session: Session, user: User) -> JobMetricsResponse:
     counts = dict(session.execute(stmt).all())
     return JobMetricsResponse(
         total_jobs=sum(counts.values()),
-        queued_jobs=counts.get("queued", 0),
+        # retry_pending jobs are waiting to run again, so they count as queued.
+        queued_jobs=counts.get("queued", 0) + counts.get("retry_pending", 0),
         running_jobs=counts.get("running", 0),
         completed_jobs=counts.get("completed", 0),
         failed_jobs=counts.get("failed", 0),
@@ -162,11 +202,15 @@ def retry_job(
     job.current_stage = "Re-queued for execution"
     job.error_message = None
     job.error_category = None
+    job.result = None
+    job.started_at = None
+    job.completed_at = None
+    job.execution_duration_seconds = None
     job.retry_count += 1
     session.commit()
     session.refresh(job)
 
-    dispatch_job(job.id, settings)
+    dispatch_if_inline(job.id, settings)
     return job
 
 
@@ -320,6 +364,9 @@ def _run_claimed_job(session: Session, settings: Settings, job: Job, worker_id: 
             session.commit()
 
             run = experiment_service.execute_pipeline_run(session, settings, job.experiment_id)
+            if run.status == "failed":
+                # The run row keeps the details; the job must not report success.
+                raise DataValidationError(f"Experiment run failed: {run.error_message}")
             job.result = {
                 "experiment_id": str(job.experiment_id),
                 "run_id": str(run.id),
@@ -406,11 +453,8 @@ def _run_claimed_job(session: Session, settings: Settings, job: Job, worker_id: 
             }
 
         else:
-            job.current_stage = "Processing general background task"
-            job.progress_percentage = 70
-            session.commit()
-            time.sleep(0.5)
-            job.result = {"status": "success", "processed_at": datetime.now(timezone.utc).isoformat()}
+            required = "experiment_id" if job.job_type == "experiment_execution" else "model_id"
+            raise DataValidationError(f"Job type '{job.job_type}' requires {required}.")
 
         # Mark completed, unless the job was cancelled or recovered meanwhile
         duration = time.perf_counter() - start_time
@@ -461,13 +505,12 @@ def _run_claimed_job(session: Session, settings: Settings, job: Job, worker_id: 
             return
 
         # Validation and missing entity errors are permanent; do not retry them blindly
-        is_permanent_error = isinstance(exc, (DataValidationError, NotFoundError))
-        if not is_permanent_error and job.retry_count < job.max_retries:
+        if not _is_permanent_failure(exc) and job.retry_count < job.max_retries:
             job.status = "retry_pending"
-            job.current_stage = f"Failure: {exc}. Scheduled for retry."
+            job.current_stage = _stage(f"Scheduled for retry after failure: {exc}")
         else:
             job.status = "failed"
-            job.current_stage = f"Execution failed: {exc}"
+            job.current_stage = _stage(f"Execution failed: {exc}")
 
         job.error_category = type(exc).__name__
         job.error_message = str(exc)[:1000]
@@ -480,6 +523,12 @@ def _run_claimed_job(session: Session, settings: Settings, job: Job, worker_id: 
 def dispatch_job(job_id: uuid.UUID, settings: Settings) -> Future:
     """Submit worker task to isolated threadpool executor."""
     return executor.submit(_execute_worker_task, job_id, settings)
+
+
+def dispatch_if_inline(job_id: uuid.UUID, settings: Settings) -> None:
+    """Run the job in this process unless a standalone worker owns execution."""
+    if settings.JOB_INLINE_DISPATCH:
+        dispatch_job(job_id, settings)
 
 
 def claim_next_queued_job(session: Session, worker_id: str | None = None) -> Job | None:

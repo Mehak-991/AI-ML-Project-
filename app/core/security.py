@@ -15,6 +15,19 @@ from app.core.exceptions import DataValidationError
 pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 
 
+# Verified when the email is unknown, so login takes the same time either way and the
+# response time does not reveal which accounts exist.
+_DUMMY_PASSWORD_HASH = pwd_context.hash(uuid.uuid4().hex)
+
+
+def verify_password_or_dummy(plain_password: str, hashed_password: str | None) -> bool:
+    """verify_password that spends the same work when there is no stored hash."""
+    if hashed_password is None:
+        pwd_context.verify(plain_password, _DUMMY_PASSWORD_HASH)
+        return False
+    return verify_password(plain_password, hashed_password)
+
+
 def hash_password(password: str) -> str:
     """Hash a plaintext password securely."""
     return pwd_context.hash(password)
@@ -57,7 +70,15 @@ def create_access_token(
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     """Decode and verify a signed JWT access token."""
     secret = settings.JWT_SECRET_KEY.get_secret_value()
-    return jwt.decode(token, secret, algorithms=[settings.JWT_ALGORITHM])
+    payload = jwt.decode(
+        token,
+        secret,
+        algorithms=[settings.JWT_ALGORITHM],
+        options={"require": ["exp", "sub"]},
+    )
+    if payload.get("type") != "access":
+        raise jwt.InvalidTokenError("Not an access token.")
+    return payload
 
 
 def generate_refresh_token() -> tuple[str, str]:

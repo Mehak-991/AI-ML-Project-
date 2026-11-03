@@ -13,6 +13,26 @@ from app.repositories.base import BaseRepository
 class DeploymentRepository(BaseRepository[Deployment]):
     model = Deployment
 
+    @staticmethod
+    def _scoped(stmt: Select, owner_id: uuid.UUID | None) -> Select:
+        """Limit to deployments of the user's models and unowned legacy models."""
+        if owner_id is None:
+            return stmt
+        visible = select(MLModel.id).where(
+            or_(MLModel.owner_id == owner_id, MLModel.owner_id.is_(None))
+        )
+        return stmt.where(Deployment.model_id.in_(visible))
+
+    def list(  # type: ignore[override]
+        self, *, offset: int = 0, limit: int = 50, owner_id: uuid.UUID | None = None
+    ) -> Sequence[Deployment]:
+        stmt = select(Deployment).order_by(Deployment.created_at.desc()).offset(offset).limit(limit)
+        return self.session.scalars(self._scoped(stmt, owner_id)).all()
+
+    def count(self, *, owner_id: uuid.UUID | None = None) -> int:  # type: ignore[override]
+        stmt = self._scoped(select(func.count()).select_from(Deployment), owner_id)
+        return self.session.scalar(stmt) or 0
+
     def list_for_model(self, model_id: uuid.UUID) -> Sequence[Deployment]:
         stmt = (
             select(Deployment)

@@ -9,7 +9,7 @@ from app.database.models.user import User
 from app.repositories.ml_models import MLModelRepository
 from app.schemas.common import ErrorResponse
 from app.schemas.models import ModelList, ModelRead, PredictRequest, PredictResponse, TrainRequest
-from app.services import authorization, deployment_service, model_service
+from app.services import authorization, dataset_service, deployment_service, model_service
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -33,6 +33,7 @@ def train_model(
     settings: SettingsDep,
     user: Annotated[User, Depends(require_role("admin", "ml_engineer"))],
 ) -> ModelRead:
+    authorization.ensure_dataset_access(user, dataset_service.get_dataset(db, request.dataset_id))
     # Synchronous: runs in FastAPI's threadpool. Fine for small datasets; see README limits.
     return ModelRead.model_validate(model_service.train(db, settings, request, owner_id=user.id))
 

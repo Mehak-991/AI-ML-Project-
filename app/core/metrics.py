@@ -5,7 +5,8 @@ worker status, request counters, and inference latency without adding
 heavy third-party dependencies.
 """
 
-from typing import Any
+from pathlib import Path
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -34,7 +35,7 @@ def format_prometheus_metric(
     return "\n".join(lines) + "\n"
 
 
-def collect_prometheus_metrics(session: Session) -> str:
+def collect_prometheus_metrics(session: Session, heartbeat_file: str | None = None) -> str:
     """Collect current platform metrics and format into Prometheus text representation."""
     metrics_output = []
 
@@ -114,9 +115,11 @@ def collect_prometheus_metrics(session: Session) -> str:
     )
 
     # 4. Worker Heartbeat Metric
-    from scripts.check_worker_health import check_worker_health, DEFAULT_HEARTBEAT_FILE
-    from pathlib import Path
-    worker_healthy, _ = check_worker_health(Path(DEFAULT_HEARTBEAT_FILE), max_age_seconds=30.0)
+    from scripts.check_worker_health import DEFAULT_HEARTBEAT_FILE, check_worker_health
+
+    worker_healthy, _ = check_worker_health(
+        Path(heartbeat_file or DEFAULT_HEARTBEAT_FILE), max_age_seconds=30.0
+    )
     metrics_output.append(
         format_prometheus_metric(
             "aiml_worker_health_status",

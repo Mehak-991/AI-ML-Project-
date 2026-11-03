@@ -9,11 +9,12 @@ or rows are left behind (PostgreSQL supports transactional DDL).
 """
 
 import os
+import uuid
 from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -60,12 +61,31 @@ def test_schema_uses_postgres_types(pg_connection) -> None:
     assert type(columns["id"]["type"]).__name__ == "UUID"
 
 
+@pytest.fixture
+def pg_isolated_engine() -> Iterator:
+    """An engine confined to a throwaway schema. Like production, every session gets its own
+    connection and really commits; sharing one connection between requests is not thread-safe
+    (FastAPI closes a request's session after the response, racing the next request)."""
+    schema = f"it_{uuid.uuid4().hex}"
+    url = TEST_DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+    admin = create_engine(url)
+    with admin.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    engine = create_engine(url, connect_args={"options": f"-csearch_path={schema}"})
+    Base.metadata.create_all(engine)
+    yield engine
+    engine.dispose()
+    with admin.begin() as connection:
+        connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+    admin.dispose()
+
+
 @requires_db
-def test_api_workflow_against_postgres(pg_connection, make_settings) -> None:
+def test_api_workflow_against_postgres(pg_isolated_engine, make_settings) -> None:
     app = create_app(make_settings(APP_ENV="testing"))
 
     def _get_db() -> Iterator[Session]:
-        with Session(bind=pg_connection, join_transaction_mode="create_savepoint") as session:
+        with Session(bind=pg_isolated_engine, expire_on_commit=False) as session:
             yield session
 
     app.dependency_overrides[get_db] = _get_db

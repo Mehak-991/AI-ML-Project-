@@ -17,14 +17,18 @@ ARG INSTALL_LLM=false
 ARG INSTALL_NLP=false
 
 ENV PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=5
 
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /build
-COPY requirements.txt requirements-llm.txt requirements-nlp.txt ./
-RUN pip install -r requirements.txt \
+COPY requirements.txt requirements.lock requirements-llm.txt requirements-nlp.txt ./
+# requirements.lock pins the core install so rebuilds get the same versions (scikit-learn above
+# all: MODEL_COMPATIBILITY_CHECK=strict refuses artifacts from another minor version).
+RUN pip install -c requirements.lock -r requirements.txt \
     && if [ "$INSTALL_LLM" = "true" ]; then pip install -r requirements-llm.txt; fi \
     && if [ "$INSTALL_NLP" = "true" ]; then \
          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu \

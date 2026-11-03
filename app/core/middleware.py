@@ -235,6 +235,7 @@ class RateLimitMiddleware:
         ai_per_minute: int,
         training_per_minute: int,
         auth_per_minute: int | None = None,
+        analysis_per_minute: int | None = None,
         limiter: TokenBucketLimiter | None = None,
     ) -> None:
         self.app = app
@@ -244,6 +245,8 @@ class RateLimitMiddleware:
         self.training = RateLimitRule("training", training_per_minute)
         # Credential endpoints get their own small budget (brute-force protection).
         self.auth = RateLimitRule("auth", auth_per_minute) if auth_per_minute else None
+        # Seconds of CPU per call but clicked interactively, so a larger budget than training.
+        self.analysis = RateLimitRule("analysis", analysis_per_minute or default_per_minute)
         self.auth_routes = {
             ("POST", f"{api_prefix}/auth/{p}")
             for p in ("login", "register", "refresh", "change-password")
@@ -254,12 +257,13 @@ class RateLimitMiddleware:
             ("POST", f"{api_prefix}/models/train"),
             ("POST", f"{api_prefix}/datasets"),
             ("POST", f"{api_prefix}/datasets/validate"),
-            ("POST", f"{api_prefix}/jobs"),
         }
-        # Other endpoints that run heavy ML work in-process; they share the training budget.
         self.training_patterns = re.compile(
+            rf"^{re.escape(api_prefix)}/experiments/[^/]+/(run|rerun)/?$"
+        )
+        self.analysis_patterns = re.compile(
             rf"^{re.escape(api_prefix)}/("
-            r"experiments/[^/]+/(run|rerun)"
+            r"jobs"
             r"|models/[^/]+/explainability/(shap|lime)"
             r"|drift/models/[^/]+/analyze-(quality|drift|performance)"
             r")/?$"
@@ -274,6 +278,8 @@ class RateLimitMiddleware:
             return self.training
         if method == "POST" and self.training_patterns.match(path):
             return self.training
+        if method == "POST" and self.analysis_patterns.match(path):
+            return self.analysis
         if self.auth is not None and (method, path.rstrip("/")) in self.auth_routes:
             return self.auth
         return self.default

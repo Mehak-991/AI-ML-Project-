@@ -8,6 +8,14 @@
 
 name: aiproject
 
+# One definition: app, worker and migration share an image tag, so differing build args would
+# overwrite each other (e.g. drop the LLM packages from the API's image).
+x-backend-build: &backend-build
+  context: .
+  args:
+    INSTALL_LLM: ${INSTALL_LLM:-false}
+    INSTALL_NLP: ${INSTALL_NLP:-false}
+
 services:
   db:
     image: postgres:18-alpine
@@ -39,8 +47,7 @@ services:
 
 
   migration:
-    build:
-      context: .
+    build: *backend-build
     image: aiproject-backend:${APP_VERSION:-0.4.0}
     depends_on:
       db:
@@ -70,11 +77,7 @@ services:
     restart: "no"
 
   app:
-    build:
-      context: .
-      args:
-        INSTALL_LLM: ${INSTALL_LLM:-false}
-        INSTALL_NLP: ${INSTALL_NLP:-false}
+    build: *backend-build
     image: aiproject-backend:${APP_VERSION:-0.4.0}
     restart: unless-stopped
     depends_on:
@@ -129,8 +132,7 @@ services:
       - frontend
 
   worker:
-    build:
-      context: .
+    build: *backend-build
     image: aiproject-backend:${APP_VERSION:-0.4.0}
     restart: unless-stopped
     depends_on:

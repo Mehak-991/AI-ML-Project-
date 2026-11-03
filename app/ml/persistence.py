@@ -81,9 +81,8 @@ def load_artifact(model_dir: Path, filename: str, expected_sha256: str) -> dict[
         raise ModelArtifactError("Invalid artifact reference.") from None
     if not path.is_file():
         raise ModelArtifactError("The model artifact file is missing.")
-    if file_sha256(path) != expected_sha256:
-        raise ModelArtifactError("The model artifact failed its integrity check.")
-    return _load_verified(str(path), expected_sha256)
+    stat = path.stat()
+    return _load_verified(str(path), expected_sha256, stat.st_mtime_ns, stat.st_size)
 
 
 def check_sklearn_compatibility(trained_with: str | None, policy: str = "strict") -> None:
@@ -109,8 +108,15 @@ def check_sklearn_compatibility(trained_with: str | None, policy: str = "strict"
 
 
 @lru_cache(maxsize=8)
-def _load_verified(path: str, sha256: str) -> dict[str, Any]:
-    """Cached by (path, hash): a changed file has a new hash and is reloaded."""
+def _load_verified(path: str, sha256: str, mtime_ns: int, size: int) -> dict[str, Any]:
+    """Hash-check and unpickle, cached until the file's timestamp or size changes.
+
+    Hashing here rather than per request matters: re-reading a 25 MB random forest cost more
+    than the inference itself. Nothing is ever unpickled without passing the hash check,
+    and the cache key means any rewrite of the file is checked again.
+    """
+    if file_sha256(Path(path)) != sha256:
+        raise ModelArtifactError("The model artifact failed its integrity check.")
     try:
         payload = joblib.load(path)
     except Exception as exc:  # unpickling can fail with almost any exception type

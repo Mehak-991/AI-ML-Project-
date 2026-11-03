@@ -314,6 +314,26 @@ def test_database_outage_during_auth_is_503_not_401(make_settings) -> None:
     assert response.status_code == 503
 
 
+def test_auth_lookup_releases_its_database_connection(session_factory, make_settings) -> None:
+    """The auth session is separate from the route's; it must not pin a second connection."""
+    from app.api.deps import get_current_user
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    settings = make_settings(APP_ENV="testing", JWT_SECRET_KEY="k" * 48)
+    with session_factory() as session:
+        user = User(email="c@x.com", hashed_password="x", full_name="n", role="viewer", is_active=True)
+        session.add(user)
+        session.commit()
+        user_id = user.id
+    token = security.create_access_token({"sub": str(user_id)}, settings)
+    with session_factory() as session:
+        found = get_current_user(
+            HTTPAuthorizationCredentials(scheme="Bearer", credentials=token), session, settings
+        )
+        assert not session.in_transaction()
+        assert found.full_name == "n"  # still readable without a new query
+
+
 def test_tokens_without_expiry_or_subject_are_rejected(make_settings) -> None:
     import jwt
 
@@ -383,24 +403,25 @@ def test_metrics_read_the_configured_heartbeat_file(make_settings, session_facto
     assert "aiml_worker_health_status 1" in body
 
 
-def test_expensive_ml_routes_use_the_training_rate_budget() -> None:
+def test_expensive_ml_routes_have_their_own_rate_budgets() -> None:
     limiter = RateLimitMiddleware(
         MagicMock(),
         api_prefix=API,
         default_per_minute=300,
         ai_per_minute=30,
         training_per_minute=10,
+        analysis_per_minute=60,
     )
     model = uuid.uuid4()
+    for path in (f"{API}/experiments/{model}/run", f"{API}/experiments/{model}/rerun"):
+        assert limiter.rule_for("POST", path).name == "training", path
     for path in (
         f"{API}/jobs",
-        f"{API}/experiments/{model}/run",
-        f"{API}/experiments/{model}/rerun",
         f"{API}/models/{model}/explainability/shap",
         f"{API}/models/{model}/explainability/lime",
         f"{API}/drift/models/{model}/analyze-drift",
     ):
-        assert limiter.rule_for("POST", path).name == "training", path
+        assert limiter.rule_for("POST", path).name == "analysis", path
     assert limiter.rule_for("GET", f"{API}/jobs").name == "default"
     assert limiter.rule_for("GET", f"{API}/models/{model}/explainability/summary").name == "default"
 
@@ -842,6 +863,37 @@ def test_estimator_importances_sum_one_hot_columns_per_feature() -> None:
     assert sum(scores) == pytest.approx(1.0)
     assert all(score > 0 for score in scores)  # not the uniform fallback either
     assert len(set(round(s, 6) for s in scores)) == 3
+
+
+# --- artifacts ---------------------------------------------------------------------------
+
+
+def test_artifact_is_hashed_once_per_file_version(tmp_path) -> None:
+    """Hashing per request cost 43-111 ms on a 25 MB forest; rewrites must still be caught."""
+    import os
+
+    import joblib
+
+    from app.core.exceptions import ModelArtifactError
+    from app.ml import persistence
+
+    filename = f"{uuid.uuid4().hex}.joblib"
+    path = tmp_path / filename
+    joblib.dump({"format_version": persistence.ARTIFACT_FORMAT_VERSION, "pipeline": "x"}, path)
+    digest = persistence.file_sha256(path)
+    with patch.object(persistence, "file_sha256", wraps=persistence.file_sha256) as hashing:
+        for _ in range(3):
+            assert persistence.load_artifact(tmp_path, filename, digest)["pipeline"] == "x"
+        assert hashing.call_count == 1
+
+    # Same size, new timestamp: tampering is detected and nothing is unpickled.
+    content = bytearray(path.read_bytes())
+    content[-1] ^= 0xFF
+    path.write_bytes(bytes(content))
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+    with pytest.raises(ModelArtifactError):
+        persistence.load_artifact(tmp_path, filename, digest)
 
 
 # --- monitoring --------------------------------------------------------------------------

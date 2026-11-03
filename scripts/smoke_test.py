@@ -1,17 +1,23 @@
 """End-to-end smoke test against a RUNNING server (local, Docker or deployed).
 
-Usage: python scripts/smoke_test.py [http://127.0.0.1:8000] [--with-llm]
+Usage: SMOKE_EMAIL=... SMOKE_PASSWORD=... python scripts/smoke_test.py [base-url] [--with-llm]
 
-Steps: health -> readiness -> AI status -> token count -> (if the DB is up)
+The account must have the admin or ml_engineer role. Without credentials only the public
+health checks run. The base URL can be the API (http://127.0.0.1:8000) or nginx (http://host).
+
+Steps: readiness -> login -> AI status -> token count -> (if the DB is up)
 upload synthetic CSV -> train -> model metadata -> predict -> (if local NLP extras
 are installed) embeddings -> (only with --with-llm, which costs money) one short
-chat completion. Uses only the standard library. Exit code 1 if any step FAILs.
+chat completion. It stores a small dataset and model. Uses only the standard library.
+Exit code 1 if any step FAILs. For a full feature check on a disposable deployment see
+scripts/e2e_check.py.
 """
 
 import argparse
 import csv
 import io
 import json
+import os
 import random
 import sys
 import urllib.error
@@ -20,12 +26,13 @@ import uuid
 from typing import Any
 
 results: list[tuple[str, str, str]] = []
+auth_headers: dict[str, str] = {}
 
 
 def request(
     method: str, url: str, body: Any = None, *, files: dict | None = None, timeout: float = 120
 ) -> tuple[int, Any]:
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", **auth_headers}
     data = None
     if files:
         boundary = uuid.uuid4().hex
@@ -45,7 +52,10 @@ def request(
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
-            return response.status, json.loads(response.read() or b"null")
+            try:
+                return response.status, json.loads(response.read() or b"null")
+            except json.JSONDecodeError:
+                return response.status, None
     except urllib.error.HTTPError as exc:
         try:
             return exc.code, json.loads(exc.read() or b"null")
@@ -78,14 +88,21 @@ def main() -> int:
     base = args.base_url.rstrip("/")
     api = f"{base}/api/v1"
 
-    status, body = request("GET", f"{base}/health")
-    record("liveness", "PASS" if status == 200 else "FAIL", f"HTTP {status}")
-    if status != 200:
-        return 1
-
     status, body = request("GET", f"{api}/health")
     db_state = (body or {}).get("components", {}).get("database")
     record("readiness", "PASS" if status in (200, 503) else "FAIL", f"database={db_state}")
+    if status not in (200, 503):
+        return 1
+
+    email, password = os.getenv("SMOKE_EMAIL"), os.getenv("SMOKE_PASSWORD")
+    if not (email and password):
+        record("authenticated steps", "SKIP", "set SMOKE_EMAIL and SMOKE_PASSWORD")
+        return 0
+    status, body = request("POST", f"{api}/auth/login", {"email": email, "password": password})
+    record("login", "PASS" if status == 200 else "FAIL", f"HTTP {status}")
+    if status != 200:
+        return 1
+    auth_headers["Authorization"] = f"Bearer {body['access_token']}"
 
     status, ai = request("GET", f"{api}/ai/status")
     record("ai status", "PASS" if status == 200 else "FAIL", f"HTTP {status}")

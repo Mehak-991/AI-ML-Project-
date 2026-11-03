@@ -83,6 +83,18 @@ def get_db_optional(request: Request) -> Generator[Session | None, None, None]:
 DbOptionalSession = Annotated[Session | None, Depends(get_db_optional)]
 
 
+def _load_user(db: Session, user_id: uuid.UUID) -> User | None:
+    """Look the user up on the auth session, then give its connection back to the pool.
+
+    This session is separate from the route's. Holding it for the whole request would make
+    every authenticated request occupy two pooled connections. Sessions use
+    expire_on_commit=False, so the returned user stays readable.
+    """
+    user = UserRepository(db).get(user_id)
+    db.commit()
+    return user
+
+
 def get_current_user_optional(
     auth: Annotated[HTTPAuthorizationCredentials | None, Security(security_bearer)],
     db: DbOptionalSession,
@@ -98,7 +110,7 @@ def get_current_user_optional(
         user_id = uuid.UUID(user_id_str)
         if db is None:
             return None
-        user = UserRepository(db).get(user_id)
+        user = _load_user(db, user_id)
         if not user or not user.is_active:
             return None
         return user
@@ -134,7 +146,7 @@ def get_current_user(
     # (a 401 makes clients throw away a perfectly valid session).
     if db is None:
         raise DatabaseNotConfiguredError()
-    user = UserRepository(db).get(user_id)
+    user = _load_user(db, user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

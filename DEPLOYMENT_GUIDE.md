@@ -1,221 +1,215 @@
-# Production Deployment Guide: AI/ML Management Platform (Phase 15)
+# Deployment Guide
 
-This guide documents the containerized production architecture, deployment instructions, volume management, and disaster recovery procedures.
+How to deploy AIProject v0.4.0 with Docker Compose on one host, and how to run it afterwards. For
+variables see [ENVIRONMENT_SETUP.md](ENVIRONMENT_SETUP.md).
 
----
+> **Never run `docker compose down -v`.** It deletes the database, uploaded datasets and trained
+> models. Plain `docker compose down` keeps them.
 
-## 1. Architecture Overview
+## Architecture
 
-The platform uses a modular container architecture orchestrated via Docker Compose:
-
-1. **`db` (PostgreSQL 18)**:
-   - High-performance, ACID-compliant database.
-   - Internal network only (no public ports exposed).
-   - Health checked via `pg_isready`.
-   - Data persisted to the `pgdata` volume.
-
-2. **`migration` (One-off Alembic container)**:
-   - Waits for database health check.
-   - Runs `alembic upgrade head` (Revisions 0001–0007).
-   - Terminates with status 0 upon completion before API/Worker start.
-
-3. **`app` (FastAPI Production ASGI)**:
-   - Multi-stage, non-root user (`app:app` uid 10001).
-   - Uvicorn ASGI server with `--workers 2`, structured JSON logging, and graceful shutdown.
-   - Connects to internal database network and frontend reverse-proxy network.
-   - Persistent volume mounts for artifacts and datasets.
-
-4. **`worker` (Dedicated Background Worker)**:
-   - Standalone process executing `python scripts/run_worker.py`.
-   - Continually claims queued long-running ML tasks (training, drift analysis, SHAP/LIME, batch predictions).
-   - ThreadPool isolation from API web event loops.
-   - Shares the same code base and persistent volume storage as `app`.
-
-5. **`frontend` (React + Nginx)**:
-   - Multi-stage build (Node 22 build -> Nginx 1.27 Alpine runtime).
-   - Serves pre-compressed static SPA assets with 1-year immutable caching.
-   - Reverse proxies `/api/`, `/docs`, `/openapi.json` to the internal `app:8000` service.
-   - SPA fallback `try_files $uri $uri/ /index.html`.
-   - Container health check via `/healthz`.
-
----
-
-## 2. Prerequisites
-
-- Docker 24+ and Docker Compose v2.20+
-- Host system with at least 4 GB RAM and 10 GB disk space
-- Valid environment configuration (`.env`)
-
----
-
-## 3. Environment Setup
-
-1. Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Configure required production variables:
-   ```ini
-   POSTGRES_USER=aiproject
-   POSTGRES_PASSWORD=<strong_random_database_password>
-   POSTGRES_DB=aiproject
-
-   # JWT Auth (Phase 10)
-   JWT_SECRET_KEY=<generate_with_openssl_rand_-hex_32>
-   JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
-   JWT_REFRESH_TOKEN_EXPIRE_DAYS=7
-
-   # Storage & Networking
-   APP_ENV=production
-   DEBUG=false
-   LOG_FORMAT=json
-   FRONTEND_PORT=80
-   ```
-
----
-
-## 4. Startup & Deployment Commands
-
-### Build & Launch Stack:
-```bash
-docker compose up -d --build
+```
+ Browser ──TLS──▶ your TLS terminator ──▶ frontend (Nginx :80)
+                                            ├─ /            React SPA
+                                            └─ /api/  ─────▶ app (FastAPI, 2 uvicorn processes)
+                                                               │        │
+                  backend network (internal, no host access)   ▼        ▼
+                                                              db     volumes: uploads,
+                                                       (PostgreSQL)  trained_models, model_cache
+                                                               ▲        ▲
+                                                             worker ────┘  claims jobs from db
+                  migration: runs `alembic upgrade head` once, then exits
 ```
 
-### Inspect Container Health:
+| Service | Role | Health check | Restart |
+|---|---|---|---|
+| `db` | PostgreSQL 18, volume `pgdata` | `pg_isready` | unless-stopped |
+| `migration` | Applies migrations before `app` and `worker` start | exit code 0 | no |
+| `app` | API; port not published | `GET /health` | unless-stopped |
+| `worker` | Runs background jobs and recovers stalled ones, 3 at a time | heartbeat file age | unless-stopped |
+| `frontend` | SPA and reverse proxy; only published port | `GET /healthz` | unless-stopped |
+
+## Prerequisites
+
+- Docker Engine 24+ and Compose v2.20+
+- 4 GB RAM or more: `app` and `worker` are limited to 2 GB each, `db` to 1 GB
+- A TLS terminator (Caddy, Traefik, a load balancer) and a domain name for real deployments
+
+## First deployment
+
 ```bash
-docker compose ps
-```
-Expected output:
-- `db`: Up (healthy)
-- `migration`: Exited (0)
-- `app`: Up (healthy)
-- `worker`: Up
-- `frontend`: Up (healthy)
+cp .env.production.example .env.production
+chmod 600 .env.production
+# Set POSTGRES_PASSWORD and JWT_SECRET_KEY; openssl rand -hex 32 generates a value.
 
-### Stream Logs:
+docker compose --env-file .env.production config --quiet       # validates; prints nothing if OK
+docker compose --env-file .env.production up -d --build --wait # waits until all are healthy
+docker compose --env-file .env.production ps
+curl -s http://localhost/api/v1/health                         # {"status":"ok",...}
+```
+
+Without `POSTGRES_PASSWORD` or `JWT_SECRET_KEY`, or with a weak JWT secret, the stack refuses to
+start and says why.
+
+**Then immediately create your admin:** the first account registered on an empty database becomes
+admin. Open the site and register, before anyone else can reach it.
+
+### Existing project volumes
+
+The Compose project is named `aiproject`, so volumes are `aiproject_pgdata` and so on. Starting this
+version against existing volumes keeps the data and applies the additive migrations `0012` and
+`0013`. Take a backup first (see below).
+
+## TLS
+
+Nginx serves plain HTTP. Terminate TLS in front of it, for example with Caddy on the same host:
+
+```
+your-domain.example {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Set `FRONTEND_PORT=8080`, and publish only 127.0.0.1 by changing the `ports` entry to
+`"127.0.0.1:${FRONTEND_PORT:-80}:80"`, so nothing bypasses TLS.
+
+**Required behind any terminator:** rate limits and logs use the client IP as seen by Nginx, which
+would now be the terminator's, so all users would share one budget. Tell Nginx to trust it by adding
+this to the `server` block in `frontend/nginx.conf`, with the address your terminator connects from:
+
+```nginx
+set_real_ip_from 172.16.0.0/12;   # the Docker gateway, for a terminator on the same host
+real_ip_header X-Forwarded-For;
+real_ip_recursive on;
+```
+
+Then check that `client_ip` in `docker compose logs app` shows real addresses. This setup depends on
+your terminator, so it has not been tested as part of this project's verification.
+
+## Updating
+
 ```bash
-# All services
-docker compose logs -f
-
-# Backend API
-docker compose logs -f app
-
-# Background Worker
-docker compose logs -f worker
+python scripts/backup_db.py --retention 7                       # backup first
+git pull
+APP_VERSION=0.4.1 docker compose --env-file .env.production up -d --build --wait
+curl -s http://localhost/api/v1/health
 ```
 
----
+Set `APP_VERSION` per release so the previous image stays available for rollback. Migrations run
+automatically through the `migration` service.
 
-## 5. Persistent Volume Mapping
+## Rollback
 
-| Volume Name | Container Path | Purpose |
+```bash
+APP_VERSION=0.4.0 docker compose --env-file .env.production up -d --no-build --wait
+curl -s http://localhost/api/v1/health
+```
+
+Volumes are untouched. Older images run fine against the newer schema when the migrations in between
+are additive, as `0012` and `0013` are. If a release includes a non-additive migration, restore the
+pre-update backup into a new database rather than downgrading in place.
+
+## Health checks
+
+| Check | Command | Meaning |
 |---|---|---|
-| `pgdata` | `/var/lib/postgresql/data` | PostgreSQL database files & WAL logs |
-| `uploads` | `/data/uploads` | Uploaded raw CSV/Excel dataset files |
-| `models` | `/data/trained_models` | Serialized joblib/pickle model pipelines & metadata |
-| `model_cache`| `/data/model_cache` | Cached transformer & tokenization weights |
+| Containers | `docker compose ps` | All healthy; `migration` exited (0) |
+| Readiness | `curl http://localhost/api/v1/health` | 200 when the database answers, else 503 |
+| Nginx | `curl http://localhost/healthz` | Proxy is up |
+| API liveness | `docker compose exec app python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read())"` | Process is up; ignores dependencies |
+| Worker | `docker compose exec worker python scripts/check_worker_health.py` | Heartbeat under 30 s old |
+| Configuration | `docker compose exec app python scripts/check_config.py --db` | Settings, storage, migration revision |
 
----
+`curl http://localhost/health` returns the SPA, not the API: Nginx only proxies `/api/`.
 
----
+## Monitoring
 
-## 6. Observability & Prometheus Metrics
+Logs are JSON, one object per line: `docker compose logs -f app worker`. Quote the `X-Request-ID`
+response header to find a request. Alert on HTTP 5xx, `database_unavailable`, and
+`Stalled-job recovery` messages.
 
-The platform provides standard OpenMetrics / Prometheus exporter endpoint at `/metrics`:
+`GET /metrics` on `app:8000` serves Prometheus metrics. Nginx deliberately doesn't expose it, so run
+Prometheus on the `aiproject_backend` network, and set `METRICS_TOKEN` to require a bearer token:
 
-- **Endpoint**: `GET /metrics`
-- **Output Content-Type**: `text/plain; version=0.0.4; charset=utf-8`
-- **Key Metric Families**:
-  - `aiml_models_total`: Total number of registered machine learning models (gauge)
-  - `aiml_jobs_by_status`: Count of background jobs partitioned by status (`queued`, `running`, `completed`, `failed`, `cancelled`, `retry_pending`) (gauge)
-  - `aiml_predictions_total`: Total prediction requests processed partitioned by outcome status (counter)
-  - `aiml_prediction_records_total`: Total individual records predicted across requests (counter)
-  - `aiml_prediction_duration_ms_avg`: Average prediction duration in milliseconds by status (gauge)
-  - `aiml_worker_health_status`: Dedicated background worker heartbeat liveness status (`1` = healthy, `0` = stale/dead) (gauge)
-
----
-
-## 7. Automated Backup & Safe Restore Procedures
-
-### Automated Backup Creation:
-Executes non-blocking `pg_dump`, gzip compresses output, writes a SHA-256 sidecar file, records JSON metadata, and automatically enforces retention (default: keeps the last 7 daily backups, never deleting the only remaining backup):
-```bash
-python scripts/backup_db.py --retention 7
+```yaml
+scrape_configs:
+  - job_name: aiproject
+    static_configs: [{ targets: ["app:8000"] }]
+    authorization: { credentials_file: /etc/prometheus/metrics_token }
 ```
 
-### Checksum Verification (Pre-Restore Validation):
-Validates SHA-256 integrity against the recorded sidecar without modifying any database:
+| Metric | Meaning |
+|---|---|
+| `aiml_models_total` | Registered models |
+| `aiml_jobs_by_status{status}` | Jobs per state. Watch `failed` and a growing `queued` |
+| `aiml_predictions_total{status}` | Prediction requests |
+| `aiml_prediction_records_total{status}` | Records predicted |
+| `aiml_prediction_duration_ms_avg{status}` | All-time average, so a poor signal of recent changes |
+| `aiml_worker_health_status` | 1 when the worker's heartbeat is fresh. Alert on 0 |
+
+Metrics are computed from the database on each scrape; no HTTP request histograms exist. The bundled
+stack doesn't include Prometheus or Grafana.
+
+## Backup and restore
+
+`scripts/backup_db.py` runs `pg_dump` through `docker exec`, then writes a gzip file, a SHA-256 file
+and metadata. Dumps contain user emails and password hashes: **keep them out of git**, and copy them
+off the host.
+
 ```bash
-python scripts/restore_db.py --backup backups/db_backup_aiproject_<timestamp>.sql.gz --verify-only
+python scripts/backup_db.py --retention 7 --output-dir backups
+python scripts/backup_db.py --remote-sync "aws s3 cp {file} s3://your-bucket/"   # optional off-host copy
+python scripts/restore_db.py --backup backups/<file>.sql.gz --verify-only        # checksum only
 ```
 
-### Isolated Test Restore (Disaster Recovery Drill):
-Restores into a separate isolated test database to verify backup integrity safely:
+Test a restore regularly, into a **separate** database; it stops at the first SQL error:
+
 ```bash
-python scripts/restore_db.py --backup backups/db_backup_aiproject_<timestamp>.sql.gz --target-db aiproject_test_restore --confirm
+python scripts/restore_db.py --backup backups/<file>.sql.gz --target-db aiproject_restore_test --confirm
+docker compose exec db psql -U aiproject -d aiproject_restore_test -c "SELECT count(*) FROM users;"
+docker compose exec db psql -U aiproject -d postgres -c "DROP DATABASE aiproject_restore_test;"
 ```
 
----
+Datasets and model files are not in the database dump. Back up those volumes too:
 
----
-
-## 8. Versioning, Rollback & Deployment Hardening
-
-### Docker Image Versioning:
-All service images are versioned via the `${APP_VERSION}` environment variable (default: `0.4.0`):
 ```bash
-APP_VERSION=0.4.0 docker compose up -d
+docker run --rm -v aiproject_uploads:/from:ro -v "$PWD/backups:/to" alpine tar czf /to/uploads.tar.gz -C /from .
+docker run --rm -v aiproject_models:/from:ro -v "$PWD/backups:/to" alpine tar czf /to/models.tar.gz -C /from .
 ```
 
-### Container Hardening Controls:
-- **Non-Root Execution**: Unprivileged service user `app` (`uid=10001`, `gid=10001`).
-- **Capability Dropping**: `cap_drop: [ALL]` applied to backend API and worker processes.
-- **Privilege Escalation Prevention**: `security_opt: ["no-new-privileges:true"]`.
-- **Read-Only Root Filesystem**: `read_only: true` enabled on `app` and `worker`. Transient write locations are constrained to ephemeral in-memory tmpfs (`/tmp:size=256m,mode=1777,noexec,nosuid`).
-- **Network Segmentation**: Internal `backend` network with strict isolation from host interfaces. Only reverse-proxy frontend exposes public HTTP/HTTPS ports.
+Restoring over the live database replaces its contents. To do that deliberately: stop `app` and
+`worker`, take a fresh backup, restore with `--target-db aiproject --confirm`, then start them again.
 
-### Rollback Runbook:
-To rollback to a previous version without affecting volumes or database records:
-```bash
-# 1. Select target previous image tag or checkout release commit
-APP_VERSION=0.3.0 docker compose up -d app worker frontend
+## Background jobs
 
-# 2. Verify health
-docker compose ps
-curl http://localhost/health
-```
+- `app` queues jobs in PostgreSQL; `worker` claims them with `FOR UPDATE SKIP LOCKED`, so one worker
+  or several never run the same job twice.
+- A job that stops heartbeating (worker crash, OOM) is re-queued after
+  `JOB_STALE_TIMEOUT_MINUTES` (default 15), or marked `failed` once retries run out.
+- Client errors (bad data, missing objects) fail immediately without retries.
+- Cancelling a running job doesn't interrupt the computation: its result is discarded.
+- Scale with `docker compose up -d --scale worker=2`, within available memory. Workers share one
+  heartbeat file, so the health check and metric can't tell a dead worker from a live one then.
 
----
+## Local LLM with Ollama
 
-## 9. Background Worker Fault Tolerance & Stalled-Job Recovery
+Install Ollama on the Docker host and pull the model, then set `LLM_PROVIDER=ollama`. Containers reach
+the host through `host.docker.internal`, which `compose.yaml` configures. On Linux, make Ollama listen
+beyond loopback (`OLLAMA_HOST=0.0.0.0`) and firewall port 11434 from the internet. LLM calls run in
+the request and can be slow on CPU; Nginx allows 300 s.
 
-### Automated Lease & Liveness Tracking:
-Each background job claimed by a worker acquires an atomic lease:
-- `worker_id`: Worker process identity (`host:pid:uuid`).
-- `heartbeat_at`: Live timestamp refreshed continuously during processing.
-- `SELECT FOR UPDATE SKIP LOCKED`: Prevents multiple workers from claiming or executing the same task.
+## Troubleshooting
 
-### Stalled-Job Reaper Lifecycle:
-If an execution host crashes, reboots, or receives an ungraceful termination signal:
-1. **Startup Reaper**: The background worker scans `WHERE status = 'running'` for abandoned tasks upon startup.
-2. **Periodic Sweep**: The worker re-checks for stalled jobs every `JOB_REAPER_INTERVAL_SECONDS` (default: 300s).
-3. **Safe Re-Queuing**: Jobs with `retry_count < max_retries` are reset to `retry_pending` without corrupting results.
-4. **Exhausted Jobs**: Permanently dead tasks exceeding retry quotas are marked `failed` with diagnostic error categories.
-
----
-
-## 10. Performance Benchmarking & Scaling Guidance
-
-### Verified ML Inference Throughput (scikit-learn LogisticRegression):
-- **Single-record Latency**: P50 = 27.8 ms, P95 = 55.4 ms (cached pipeline).
-- **Batch 10 Records**: P50 = 26.7 ms (~374 records/sec).
-- **Batch 50 Records**: P50 = 34.4 ms (~1,455 records/sec).
-- **Batch 100 Records**: P50 = 71.8 ms (~1,393 records/sec).
-- **Batch 500 Records**: P50 = 82.5 ms (~6,059 records/sec).
-
-### Database Query Optimization:
-- **Composite Index**: `ix_prediction_logs_model_id_created_at` on `prediction_logs(model_id, created_at)` eliminates in-memory sorting on paginated audit logs.
-- **Connection Pool Capacity**: Default `pool_size=5`, `max_overflow=10` per worker process. Accommodates up to 100 concurrent web requests across 2 ASGI workers. Introduce PgBouncer when scaling beyond 5 worker nodes.
-
-
+| Symptom | Likely cause and fix |
+|---|---|
+| `required variable JWT_SECRET_KEY is missing` | Pass `--env-file .env.production` on every compose command |
+| Containers exit with `JWT_SECRET_KEY must be set` | Secret is the public default or under 32 bytes |
+| `migration` exits non-zero | `docker compose logs migration`. `authentication_failed` means `POSTGRES_PASSWORD` changed after the volume was created; the database keeps its original password |
+| 502 from `/api/` | `app` is down or starting: `docker compose logs app` |
+| 429 for everyone at once | Clients aren't being told apart; check `client_ip` in the logs, and see TLS above |
+| Jobs stay `queued` | Worker down: `docker compose ps worker`, `docker compose logs worker` |
+| Jobs stay `running` after a crash | Normal until `JOB_STALE_TIMEOUT_MINUTES` passes |
+| `model_incompatible` (409) | Model trained on another scikit-learn minor version: retrain. `requirements.lock` keeps builds stable |
+| LLM returns 502/503 | Ollama not running or the model isn't pulled |
+| `address already in use` on port 80 | Another stack holds it: set `FRONTEND_PORT` |
+| Network overlap error | Change `FRONTEND_SUBNET` and `FRONTEND_PROXY_IP` together |

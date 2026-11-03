@@ -8,12 +8,18 @@ A modular AI/ML platform API built with FastAPI. It provides:
   prediction.
 - **Optional AI services:** Sentence Transformers embeddings, transformer sentiment
   classification, OpenAI chat, token counting, and a LangGraph long-text analysis workflow.
+- **Accounts and access control:** JWT access tokens, rotating refresh tokens, three roles (admin,
+  ml_engineer, viewer) and per-object ownership checks.
+- **MLOps:** background jobs with a dedicated worker, experiments/AutoML, deployments, prediction
+  audit history, drift monitoring, SHAP and LIME explanations, and Prometheus metrics.
+- **Web UI:** a React SPA served by Nginx, which also proxies the API.
 - **Operational hardening:** structured logs, request IDs, body limits, rate limiting, security
   headers, and Docker deployment files.
 
-> **Status.** See [FINAL_AUDIT_REPORT.md](FINAL_AUDIT_REPORT.md) and [Verification status](#verification-status) for what has and hasn't been run.
-> The project is **not** production-ready as-is. In particular it has **no authentication**; see
-> [Security considerations](#security-considerations).
+> **Status.** See [PRODUCTION_READINESS_REPORT.md](PRODUCTION_READINESS_REPORT.md) and
+> [TEST_RESULTS.md](TEST_RESULTS.md) for what has and hasn't been verified, and
+> [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) to deploy. FINAL_AUDIT_REPORT.md and
+> DOCKER_VERIFICATION_REPORT.md are historical and predate the current state.
 
 ---
 
@@ -252,19 +258,32 @@ Interactive docs: **http://127.0.0.1:8000/docs** (Swagger), `/redoc`, and the sc
 | `GET /` | Welcome | — |
 | `GET /health` | Liveness (no dependencies) | — |
 | `GET /api/v1/health` | Readiness incl. DB; 503 if a configured DB is down | — |
-| `POST /api/v1/datasets/validate` | Validate and profile an upload **without storing it** | — |
-| `POST /api/v1/datasets` | Upload and register a CSV/XLSX dataset (201) | DB |
-| `GET /api/v1/datasets`, `GET /api/v1/datasets/{id}` | List / get dataset metadata | DB |
-| `GET /api/v1/datasets/{id}/summary?target_column=` | Validation report and profile | DB |
-| `POST /api/v1/models/train` | Train a baseline model (201); same `name` → next `version` | DB |
-| `GET /api/v1/models[?dataset_id=]`, `GET /api/v1/models/{id}` | Model metadata, schema, metrics, version | DB |
-| `POST /api/v1/models/{id}/predict` | Predict with a saved model | DB |
-| `GET /api/v1/ai/status` | Installed AI extras, provider config (never the key), loaded models | — |
+| `POST /api/v1/datasets/validate` | Validate and profile an upload **without storing it** | admin, ml_engineer |
+| `POST /api/v1/datasets` | Upload and register a CSV/XLSX dataset (201) | admin, ml_engineer |
+| `GET /api/v1/datasets`, `GET /api/v1/datasets/{id}` | List / get dataset metadata | login, owner |
+| `GET /api/v1/datasets/{id}/summary?target_column=` | Validation report and profile | login, owner |
+| `POST /api/v1/models/train` | Train a baseline model (201); same `name` → next `version` | admin, ml_engineer |
+| `GET /api/v1/models[?dataset_id=]`, `GET /api/v1/models/{id}` | Model metadata, schema, metrics, version | login, owner |
+| `POST /api/v1/models/{id}/predict` | Predict with a saved model | login, owner |
+| `GET /api/v1/ai/status` | Installed AI extras, provider config (never the key), loaded models | login |
 | `POST /api/v1/tokens/count` | Token count for `text` or `messages` | (`llm` for exact counts) |
 | `POST /api/v1/embeddings` | Sentence embeddings with an explicit `dimension` | torch + `nlp` |
 | `POST /api/v1/nlp/classify` | Sentiment classification | torch + `nlp` |
 | `POST /api/v1/llm/chat` | LLM chat completion | `llm` + key |
 | `POST /api/v1/nlp/analyze` | Summarise long text + sentiment (LangGraph) | `llm` + `agents` + key |
+| `/api/v1/auth/*` | Register, login, refresh, logout, change password, user admin | see below |
+| `/api/v1/deployments`, `/models/{id}/deploy`, `/undeploy` | Deployment lifecycle | login, owner; deploy needs admin |
+| `/api/v1/predictions/history` | Prediction audit history and ground truth | login, owner |
+| `/api/v1/monitoring/*`, `/api/v1/drift/*` | Monitoring KPIs, data quality, drift, alerts | login, owner; analysis needs admin or ml_engineer |
+| `/api/v1/experiments` | Experiments and AutoML runs | login, owner; writes need admin or ml_engineer |
+| `/api/v1/models/{id}/explainability/*` | SHAP and LIME explanations | login, owner |
+| `/api/v1/jobs` | Background jobs | login, owner; writes need admin or ml_engineer |
+| `GET /metrics` | Prometheus metrics; not routed through Nginx | optional `METRICS_TOKEN` |
+
+**Access rules.** The first registered account becomes admin; later self-registrations are viewers,
+and an admin grants other roles. "Owner" means the caller created the object, or is an admin. Objects
+that predate ownership tracking (no owner) stay available to every signed-in user. Viewers can't
+upload or train, so they see only what has no owner.
 
 **Errors** always look like `{"error": {"code": "...", "message": "...", "details": ...}}`, and
 every response carries an `X-Request-ID` header to quote in bug reports. Common codes:
@@ -286,10 +305,12 @@ the next section):
 
 ```bash
 curl -s localhost:8000/api/v1/health
-curl -s -F "file=@datasets/examples/synthetic_classification.csv" -F "target_column=label" \
-  localhost:8000/api/v1/datasets/validate
-curl -s -X POST localhost:8000/api/v1/tokens/count -H "Content-Type: application/json" \
-  -d '{"text": "How many tokens is this?"}'
+TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/login -H "Content-Type: application/json" \
+  -d '{"email": "<email>", "password": "<password>"}' | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+curl -s -H "Authorization: Bearer $TOKEN" -F "file=@datasets/examples/synthetic_classification.csv" \
+  -F "target_column=label" localhost:8000/api/v1/datasets/validate
+curl -s -X POST localhost:8000/api/v1/tokens/count -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"text": "How many tokens is this?"}'
 ```
 
 ## Training → prediction workflow
@@ -413,8 +434,8 @@ python scripts/check_config.py      # configuration + storage + optional extras
 - **No AI extras.** `tests/integration/test_optional_dependencies.py` starts the app in a process
   where every AI package is blocked.
 
-**PostgreSQL integration tests** need a **disposable** database. They run inside a transaction
-that is rolled back:
+**PostgreSQL integration tests** need a **disposable** database (run `alembic upgrade head` on it
+first). They create and drop their own schemas or roll back their transactions:
 
 ```powershell
 $env:TEST_DATABASE_URL = "postgresql+psycopg://aiproject:<password>@localhost:5432/aiproject_test"; pytest -m integration
@@ -423,18 +444,20 @@ $env:TEST_DATABASE_URL = "postgresql+psycopg://aiproject:<password>@localhost:54
 TEST_DATABASE_URL=postgresql+psycopg://aiproject:<password>@localhost:5432/aiproject_test pytest -m integration
 ```
 
-To smoke-test a running instance end to end: `python scripts/smoke_test.py <base-url>`.
+To smoke-test a running instance: `SMOKE_EMAIL=... SMOKE_PASSWORD=... python scripts/smoke_test.py <base-url>`.
+For the full feature check on a **disposable** deployment:
+`python scripts/e2e_check.py --base-url <url> --confirm-disposable`.
 
 Static type checking (mypy/pyright) is **not configured** in this repository.
 
 ## Docker
 
 ```bash
-cp .env.example .env               # set POSTGRES_PASSWORD; optionally OPENAI_API_KEY
-docker compose up -d --build       # db + app; the app waits for db to be healthy, then migrates
-docker compose ps                  # both should become "healthy"
-python scripts/smoke_test.py http://127.0.0.1:8000
-docker compose logs -f app         # JSON logs
+cp .env.production.example .env.production   # set POSTGRES_PASSWORD and JWT_SECRET_KEY
+docker compose --env-file .env.production up -d --build --wait
+docker compose ps                  # db, app, worker, frontend healthy; migration exited (0)
+curl -s http://localhost/api/v1/health
+docker compose logs -f app worker  # JSON logs
 docker compose down                # keeps volumes; `down -v` DELETES the database and models
 ```
 
@@ -450,13 +473,13 @@ docker compose down                # keeps volumes; `down -v` DELETES the databa
 
 **Compose** ([compose.yaml](compose.yaml)):
 
-- Postgres 17 with a named volume (`pgdata`) and a `pg_isready` health check.
-- The database is on an **internal network with no published port**.
-- The app is published on **127.0.0.1** only, and runs with a read-only root filesystem,
-  `cap_drop: ALL` and `no-new-privileges`.
+- Services: `db` (PostgreSQL 18), `migration` (one-off), `app`, `worker`, `frontend` (Nginx).
+- Only `frontend` publishes a port. The database is on an **internal network**.
+- `app`, `worker` and `frontend` have a read-only root filesystem, and all containers use
+  `cap_drop: ALL` (with the few capabilities db and Nginx need added back) and `no-new-privileges`.
 - Uploads, models and the model cache are named volumes.
 - `DATABASE_URL` is assembled from `POSTGRES_*`, and the stack refuses to start without
-  `POSTGRES_PASSWORD`.
+  `POSTGRES_PASSWORD` and `JWT_SECRET_KEY`.
 
 [compose.dev.yaml](compose.dev.yaml) runs only the database for local development, on
 `127.0.0.1:5433`.
@@ -465,16 +488,17 @@ docker compose down                # keeps volumes; `down -v` DELETES the databa
 
 Local development (above) uses `uvicorn --reload`, text logs and an optional DB. For production:
 
-1. **Secrets.** Provide `POSTGRES_PASSWORD`, `DATABASE_URL` and `OPENAI_API_KEY` through your
-   platform's secret manager, or a `chmod 600` `.env` on the host. Never put them in the image,
-   the compose file or git.
-2. **TLS reverse proxy.** Put Nginx, Caddy, Traefik or a cloud load balancer in front, terminating
-   TLS. Keep the app bound to 127.0.0.1 or a private network. Set `FORWARDED_ALLOW_IPS` to the
-   proxy's address so rate limiting and logs see real client IPs; otherwise every client shares
-   the proxy's rate-limit bucket.
-3. **Authentication.** Add it at the proxy or gateway (OAuth2/OIDC, API keys) **before exposing
-   the API**. The app has none.
-4. **Settings:** `APP_ENV=production`, `LOG_FORMAT=json`, explicit `CORS_ORIGINS`, and consider
+Follow [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md). In short:
+
+1. **Secrets.** Provide `POSTGRES_PASSWORD`, `JWT_SECRET_KEY` and any `OPENAI_API_KEY` through your
+   platform's secret manager, or a `chmod 600` `.env.production` on the host. Never put them in
+   the image, the compose file or git. Production refuses to start with a default or short
+   `JWT_SECRET_KEY`.
+2. **TLS.** The bundled Nginx serves plain HTTP. Put a TLS terminator in front and never expose
+   port 80 directly to the internet.
+3. **First account.** The first account to register becomes admin, so register yours before the
+   service is reachable by anyone else.
+4. **Settings:** `compose.yaml` sets `APP_ENV=production`, `LOG_FORMAT=json` and
    `DOCS_ENABLED=false`. Run `python scripts/check_config.py --db` inside the container.
 5. **Database.** Use managed PostgreSQL or the compose service with backups (`pg_dump`, volume
    snapshots). Migrations run on start; for several replicas, run them once as a separate job
@@ -520,18 +544,22 @@ Back up the database **together with** `UPLOAD_DIR` and `MODEL_DIR`: the rows po
   expensive AI and training endpoints.
 - **Upstream calls:** timeouts on the database and providers, and controlled retries (SDK backoff,
   migration retries).
-- **Containers:** non-root, read-only filesystem, no capabilities, database not published,
-  secrets supplied only at runtime.
+- **Containers:** non-root API and worker, read-only filesystem, minimal capabilities, database not
+  published, secrets supplied only at runtime.
+- **Authentication:** JWT access tokens, rotating refresh tokens stored only as hashes, replay
+  detection that ends all of a user's sessions, PBKDF2 password hashing.
+- **Authorization:** roles plus ownership checks on datasets, models, experiments, deployments,
+  drift data, jobs and prediction history.
 
 **Not implemented. You must address these before exposing the service:**
 
-- **Authentication and authorization.** Anyone who can reach the API can upload data, train
-  models and spend LLM budget.
 - **Global (cross-process) rate limiting, per-user quotas and LLM spend caps.**
 - **Pickle trust.** joblib/pickle artifacts are code. Anyone with write access to `MODEL_DIR` and
   the database can execute code. Protect both.
 - **Malware scanning** of uploads, data retention and deletion, and an audit trail.
 - **TLS.** Must be provided by a reverse proxy.
+- **Tokens in sessionStorage.** The SPA keeps tokens where page scripts can read them. The Nginx CSP
+  limits script sources, but an XSS would still expose the session.
 
 ## Troubleshooting
 
@@ -557,37 +585,18 @@ Back up the database **together with** `UPLOAD_DIR` and `MODEL_DIR`: the rows po
 
 ## Known limitations
 
-- **No authentication or authorization.** See [Security considerations](#security-considerations).
-- **Synchronous heavy work.** Training and AI inference run in the request threadpool, with no
-  job queue. A timed-out local inference keeps computing in the background.
+- **Synchronous heavy work.** `POST /models/train`, experiment runs and AI inference run in the
+  request threadpool; Nginx allows 300 s. Use `POST /jobs` for long work. A timed-out local
+  inference keeps computing in the background, and cancelling a running job doesn't interrupt the
+  computation (its result is discarded).
 - **Per-process state.** Rate limits and caches aren't shared between workers or replicas.
 - **No delete endpoints.** Datasets and models can't be deleted through the API yet, and there's
   no model "promotion" (latest ≠ approved).
 - **No streaming.** LLM responses aren't streamed.
 - **No RAG yet.** LlamaIndex is only a reserved dependency group.
-- **Tabular ML scope.** Datetime and free-text columns are excluded rather than engineered. There's
-  no hyperparameter search.
+- **Tabular ML scope.** Datetime and free-text columns are excluded rather than engineered.
 - **No static type checking** is configured.
 
 ## Verification status
 
-Results of the final verification run on Windows 11, Python 3.12, against this repository:
-
-| Area | Status |
-|---|---|
-| pytest (unit + integration without external services) | ✅ run and passing (see the final report for counts) |
-| Ruff lint + format check | ✅ passing |
-| `pip check` | ✅ no broken requirements |
-| App startup, `/health`, `/api/v1/health`, `/docs` | ✅ verified on a live uvicorn server |
-| Upload → train → predict → versioning over HTTP | ✅ verified live with `scripts/smoke_test.py`, using **SQLite as a stand-in database** |
-| Request IDs, JSON logs, security headers, 413 body limit, 429 rate limit | ✅ verified live |
-| Alembic `0001`/`0002` upgrade, data backfill, `alembic check`, downgrade | ✅ verified on SQLite; PostgreSQL DDL rendered offline and reviewed |
-| Startup without any AI extras or API key | ✅ verified (subprocess test + live) |
-| OpenAI error mapping (401/403/429/quota/400/404/5xx/timeout/network) | ✅ real SDK with an in-memory transport (openai 2.54 and 3.40) |
-| Token counting with real tiktoken | ✅ verified live |
-| Docker Compose files | ✅ validated with `docker compose config` |
-| **Real PostgreSQL** migrations and integration tests | ❌ **not run** (no credentials available); run them with `TEST_DATABASE_URL` |
-| **Docker image build and `docker compose up`** | ❌ **not run** (Docker daemon not running) |
-| **Embeddings / classification with real models** | ❌ **not run** (PyTorch and models not installed); covered by fakes only |
-| **Real OpenAI calls** | ❌ **not run** (no key; tests must not make paid calls) |
-| Static type checking | ➖ not configured |
+See [TEST_RESULTS.md](TEST_RESULTS.md) for what was run, how and with what result.

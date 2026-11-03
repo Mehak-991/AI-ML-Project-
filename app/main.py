@@ -77,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ai_per_minute=settings.RATE_LIMIT_AI_PER_MINUTE,
             training_per_minute=settings.RATE_LIMIT_TRAINING_PER_MINUTE,
             auth_per_minute=settings.RATE_LIMIT_AUTH_PER_MINUTE,
+            analysis_per_minute=settings.RATE_LIMIT_ANALYSIS_PER_MINUTE,
         )
     origins = settings.cors_origins
     if origins:

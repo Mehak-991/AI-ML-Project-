@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     RATE_LIMIT_AI_PER_MINUTE: int = Field(default=30, ge=1)
     RATE_LIMIT_TRAINING_PER_MINUTE: int = Field(default=10, ge=1)
     RATE_LIMIT_AUTH_PER_MINUTE: int = Field(default=20, ge=1)
+    RATE_LIMIT_ANALYSIS_PER_MINUTE: int = Field(default=60, ge=1)  # jobs, SHAP/LIME, drift
 
     # Background jobs: a running job whose heartbeat is older than its timeout is
     # treated as abandoned and re-queued (or failed once retries are exhausted).

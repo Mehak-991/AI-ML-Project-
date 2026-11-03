@@ -1,0 +1,139 @@
+# Environment Setup
+
+How configuration is split between local development and production, and every variable you may need
+to set. Defaults live in [app/core/config.py](app/core/config.py).
+
+## Which file is used where
+
+| Context | File | Template | Notes |
+|---|---|---|---|
+| Local development (uvicorn on the host) | `.env` | [.env.example](.env.example) | Read by the application |
+| Docker Compose production | `.env.production` | [.env.production.example](.env.production.example) | Passed with `--env-file`; `ENV_FILE` tells containers to load it too |
+
+Both are ignored by git and excluded from Docker images. Never commit them.
+
+`compose.yaml` always forces `APP_ENV=production`, `DEBUG=false`, `DATABASE_ECHO=false`,
+`LOG_FORMAT=json`, the database URL, storage paths and proxy trust, so a development `.env` can't
+weaken a Compose deployment.
+
+## Local development (Windows)
+
+Needs Python 3.12, Node.js 22 and PostgreSQL 18.
+
+```powershell
+py -3.12 -m venv .venv312
+.\.venv312\Scripts\python.exe -m pip install -c requirements.lock -r requirements-dev.txt
+Copy-Item .env.example .env        # then set DATABASE_URL
+.\.venv312\Scripts\python.exe -m alembic upgrade head
+.\.venv312\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+```
+
+In a second terminal, only if you want `retry_pending` jobs and stalled-job recovery locally
+(`JOB_INLINE_DISPATCH=true` already runs new jobs inside the API):
+
+```powershell
+$env:WORKER_HEARTBEAT_FILE = "$PWD\logs\worker_heartbeat"
+.\.venv312\Scripts\python.exe scripts\run_worker.py
+```
+
+Frontend, in a third terminal (serves http://localhost:3000 and proxies `/api` to port 8000):
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+Check the setup with `.\.venv312\Scripts\python.exe scripts\check_config.py --db`.
+
+## Required in production
+
+Startup fails without these.
+
+| Variable | Purpose | Generate with |
+|---|---|---|
+| `POSTGRES_PASSWORD` | Database password. Set once: the database keeps its original password if you change this later | `openssl rand -hex 24` |
+| `JWT_SECRET_KEY` | Signs access tokens; at least 32 bytes, and not the public default. Changing it signs everyone out | `openssl rand -hex 32` |
+
+Outside Compose you must also set `DATABASE_URL` (PostgreSQL only) and `APP_ENV=production`.
+
+## Common settings
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `POSTGRES_USER`, `POSTGRES_DB` | `aiproject` | Database identity, Compose only |
+| `APP_VERSION` | `0.4.0` | Image tag; set it per release so rollback has something to return to |
+| `FRONTEND_PORT` | `80` | Host port for Nginx |
+| `FRONTEND_SUBNET`, `FRONTEND_PROXY_IP` | `172.21.0.0/16`, `172.21.0.10` | Change together if the subnet clashes with another network |
+| `CORS_ORIGINS` | none in production | Comma-separated. Leave empty when served through the bundled Nginx |
+| `PROD_DOCS_ENABLED` | `false` | Serve Swagger UI and the schema in Compose |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| `METRICS_TOKEN` | unset | When set, `/metrics` requires this bearer token |
+
+## Limits
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MAX_UPLOAD_SIZE_MB` | `25` | Keep below Nginx's `client_max_body_size` (50 MB) |
+| `MAX_REQUEST_BODY_MB` | `5` | JSON bodies |
+| `MAX_DATASET_ROWS`, `MAX_DATASET_COLUMNS` | `200000`, `500` | Rejected above these |
+| `MAX_PREDICTION_RECORDS` | `1000` | Per prediction request or batch job |
+| `RATE_LIMIT_ENABLED` | `true` | Keep on unless a gateway limits instead |
+| `RATE_LIMIT_DEFAULT_PER_MINUTE` | `300` | Per client IP, per process |
+| `RATE_LIMIT_TRAINING_PER_MINUTE` | `10` | Uploads, training, experiment runs |
+| `RATE_LIMIT_ANALYSIS_PER_MINUTE` | `60` | Job submission, SHAP/LIME, drift analysis |
+| `RATE_LIMIT_AUTH_PER_MINUTE` | `20` | Login, register, refresh, change password |
+| `RATE_LIMIT_AI_PER_MINUTE` | `30` | LLM, NLP, embeddings |
+
+## Background jobs
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `JOB_INLINE_DISPATCH` | `true`; Compose API `false` | Whether the API also runs jobs itself |
+| `JOB_STALE_TIMEOUT_MINUTES` | `15` | A running job without a heartbeat for this long is recovered |
+| `JOB_STALE_TIMEOUT_BY_TYPE` | `{}` | JSON overrides per job type |
+| `JOB_HEARTBEAT_INTERVAL_SECONDS` | `30` | Stale timeouts must be at least 3× this |
+| `JOB_REAPER_INTERVAL_SECONDS` | `60` | How often the worker looks for stalled jobs |
+| `WORKER_HEARTBEAT_FILE` | `/tmp/worker_heartbeat`; Compose uses the shared volume | Read by the healthcheck and `/metrics` |
+
+## Database
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW` | `5`, `10` | Per process. Compose runs 2 API processes plus the worker: keep the total below PostgreSQL's `max_connections` |
+| `DATABASE_CONNECT_TIMEOUT` | `5` | Seconds |
+| `TEST_DATABASE_URL` | unset | Integration tests only. Must point at a **disposable** database |
+
+## LLM (optional)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `LLM_PROVIDER` | `openai` | `ollama` (local, free) or `openai` (hosted, paid) |
+| `OLLAMA_MODEL` | `llama3.2:3b` | Run `ollama pull <model>` first |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Host development |
+| `DOCKER_OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | From containers; must be reachable from them |
+| `OLLAMA_TIMEOUT_SECONDS` | `180` | Stay under Nginx's 300 s |
+| `OPENAI_API_KEY` | unset | Without it, OpenAI endpoints return 503 |
+| `INSTALL_LLM`, `INSTALL_NLP` | `false` | Build arguments for optional packages |
+
+The remaining `AI_*`, `EMBEDDING_*`, `CLASSIFIER_*`, `LLM_*` and `TOKENIZER_*` settings are described
+in [.env.example](.env.example).
+
+## Frontend build
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VITE_API_BASE_URL` | `/api/v1` | Only for an API on a different origin; also set `CORS_ORIGINS` |
+| `VITE_SHOW_API_DOCS` | off in production builds | Shows the API docs links; pair with `PROD_DOCS_ENABLED=true` |
+
+These are compiled in at build time, so they are public. Never put secrets in `VITE_*` variables.
+
+## Validate a configuration
+
+```bash
+python scripts/check_config.py --db                              # local
+docker compose --env-file .env.production exec app python scripts/check_config.py --db
+docker compose --env-file .env.production config --quiet         # compose interpolation
+```
+
+These print no secret values.

@@ -19,19 +19,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column("datasets", sa.Column("owner_id", sa.Uuid(), nullable=True))
-    op.create_index(op.f("ix_datasets_owner_id"), "datasets", ["owner_id"], unique=False)
-    op.create_foreign_key(
-        op.f("fk_datasets_owner_id_users"),
-        "datasets",
-        "users",
-        ["owner_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
+    with op.batch_alter_table("datasets") as batch:
+        batch.add_column(sa.Column("owner_id", sa.Uuid(), nullable=True))
+        batch.create_foreign_key(
+            "fk_datasets_owner_id_users", "users", ["owner_id"], ["id"], ondelete="SET NULL"
+        )
+        batch.create_index("ix_datasets_owner_id", ["owner_id"])
 
 
 def downgrade() -> None:
-    op.drop_constraint(op.f("fk_datasets_owner_id_users"), "datasets", type_="foreignkey")
-    op.drop_index(op.f("ix_datasets_owner_id"), table_name="datasets")
-    op.drop_column("datasets", "owner_id")
+    with op.batch_alter_table("datasets") as batch:
+        batch.drop_index("ix_datasets_owner_id")
+        batch.drop_constraint("fk_datasets_owner_id_users", type_="foreignkey")
+        batch.drop_column("owner_id")

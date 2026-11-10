@@ -35,14 +35,6 @@ pwd_context = CryptContext(
 _DUMMY_PASSWORD_HASH = pwd_context.hash(uuid.uuid4().hex)
 
 
-def verify_password_or_dummy(plain_password: str, hashed_password: str | None) -> bool:
-    """verify_password that spends the same work when there is no stored hash."""
-    if hashed_password is None:
-        pwd_context.verify(plain_password, _DUMMY_PASSWORD_HASH)
-        return False
-    return verify_password(plain_password, hashed_password)
-
-
 def verify_and_rehash(plain_password: str, hashed_password: str | None) -> tuple[bool, str | None]:
     """Check a password; also return a replacement hash when the stored one is outdated.
 

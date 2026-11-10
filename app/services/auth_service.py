@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import NoReturn
 
+from pydantic import EmailStr, TypeAdapter, ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
@@ -31,6 +32,8 @@ logger = logging.getLogger(__name__)
 # Arbitrary fixed key for the advisory lock that serializes first-account registration.
 BOOTSTRAP_LOCK_KEY = 804_120_001
 
+_EMAIL_ADAPTER: TypeAdapter[str] = TypeAdapter(EmailStr)
+
 
 def create_bootstrap_admin(
     session: Session, email: str, password: str, full_name: str = "Administrator"
@@ -41,6 +44,11 @@ def create_bootstrap_admin(
     It never promotes an existing account and never changes an existing password.
     """
     user_repo = UserRepository(session)
+    # Same address rules as the login endpoint: an address it rejects could never sign in.
+    try:
+        email = _EMAIL_ADAPTER.validate_python(email.strip())
+    except ValidationError as exc:
+        raise DataValidationError("The email address is not valid for sign-in.") from exc
     if session.get_bind().dialect.name == "postgresql":
         # Serializes concurrent runs; the lock lasts until this transaction commits.
         session.execute(select(func.pg_advisory_xact_lock(BOOTSTRAP_LOCK_KEY)))

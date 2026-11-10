@@ -134,6 +134,20 @@ def test_bootstrap_rejects_weak_passwords(session_factory) -> None:
         assert session.scalar(select(User)) is None
 
 
+@pytest.mark.parametrize("email", ["admin@example.test", "not-an-email", "a@localhost", ""])
+def test_bootstrap_rejects_addresses_the_login_endpoint_would_reject(
+    secure_client, session_factory, email
+) -> None:
+    """An admin created with such an address could never sign in."""
+    with session_factory() as session:
+        with pytest.raises(DataValidationError, match="email"):
+            auth_service.create_bootstrap_admin(session, email, PASSWORD)
+        assert session.scalar(select(User)) is None
+    if email:
+        login = secure_client.post(f"{API}/auth/login", json={"email": email, "password": PASSWORD})
+        assert login.status_code == 422, "the API itself rejects this address, so the CLI must too"
+
+
 def test_bootstrap_still_allowed_when_only_inactive_admins_exist(session_factory) -> None:
     """Recovery: the last admin was deactivated and nobody can administer the system."""
     with session_factory() as session:

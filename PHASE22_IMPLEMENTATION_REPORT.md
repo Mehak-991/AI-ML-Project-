@@ -2,9 +2,86 @@
 
 AIProject, 2026-11-11. Follows [PHASE22_PRODUCTION_HARDENING_REPORT.md](PHASE22_PRODUCTION_HARDENING_REPORT.md).
 
-**Status: implemented and tested; candidate images built; NOT deployed.** The live stack still runs
+**Status: implemented and tested; release 0.5.1 images built (see section 0); NOT deployed.** The live stack still runs
 the Phase 21 images (`0.5.0-p21`) on database revision 0013. No production file, credential,
 container, volume or database was changed, and no Git history was rewritten.
+
+## 0. Patch release 0.5.1 (current deployment candidate)
+
+**Release `0.5.1` supersedes `0.5.0-p22` as the deployment candidate.** The `0.5.0-p22` frontend image
+(`ca71d9937a67`) still shows the retired "first account becomes Administrator" text and **must not be
+deployed**. The `0.5.0-p22` tags are kept for provenance only. Nothing is deployed; the live stack
+still runs the Phase 21 images. Diagnosis: [REGISTRATION_API_DIAGNOSTIC.md](REGISTRATION_API_DIAGNOSTIC.md).
+
+### What changed (frontend, scripts, tests, docs; no backend code)
+
+| Change | File |
+|---|---|
+| Registration hint now reads: "New accounts have Viewer (read-only) access. An administrator can grant additional permissions." The form, fields and layout are unchanged | `frontend/src/components/AuthModal.tsx` |
+| Dev proxy target comes from `VITE_DEV_API_TARGET` (read from the shell or `frontend/.env.local`), default `http://127.0.0.1:8000`; must be an `http(s)` origin or the dev server refuses to start. `/api`, `/docs` and `/openapi.json` all use it. Pointing it at the Docker stack: `$env:VITE_DEV_API_TARGET = "http://localhost"; npm run dev` | `frontend/vite.config.ts` |
+| The development-only 502 message keeps its original text and now adds the proxy target it tried and how to switch to the Docker stack. The target is injected only for `npm run dev` (empty in production builds) and the whole branch is removed from production bundles | `frontend/src/services/api.ts`, `frontend/src/vite-env.d.ts` |
+| `scripts/check_stack.py`: smoke test through the public origin (see tests) | `scripts/check_stack.py` |
+| Docs: dev proxy, the new variable, the smoke script in the health-check table | `ENVIRONMENT_SETUP.md`, `DEPLOYMENT_GUIDE.md` |
+
+The backend is **not changed and not rebuilt**: `aiproject-backend:0.5.1` is a second tag on the
+verified `863bdd6fdd64`. Consequently `/health` reports `"version": "0.5.0"` (the unchanged package
+version) and `"release": "0.5.1"` (the tag, from `APP_VERSION`).
+
+### Regression tests added
+
+| Test | Guards against |
+|---|---|
+| `tests/unit/test_frontend_consistency.py` (10) | the first-user-admin claim returning (regex over every frontend source file); the accurate hint text; the form still sending the same fields; the proxy target being re-hard-coded, ignoring the variable, or losing validation; dev target injected outside `serve`; the dev 502 branch losing its `DEV` guard; and, when `frontend/dist` exists, any dev diagnostic, proxy address or stale text in the production bundle |
+| `tests/unit/test_check_stack.py` (9) | `scripts/check_stack.py` against simulated stacks: healthy; the web app answering every path (HTML 200 is a FAIL, never "healthy"); dead proxy (502 with the dev-server hint); missing route; a registration route that accepts an invalid body; rate limit (WARN); unreachable origin |
+| `scripts/check_stack.py` (run against a live stack) | `GET /api/v1/health` is JSON 200 with `status: ok`; `GET /api/v1/auth/me` is 401 with the JSON error envelope; `GET /api/v1/auth/register` is 405; `POST /api/v1/auth/register` with a deliberately **invalid** body is 422 (the route accepts POST and nothing can be created; any 2xx is a FAIL); `GET /health` returning the web app's HTML is reported as WARN and never counted as API health |
+
+The static tests were mutation-checked: restoring the stale sentence, re-hard-coding the proxy target
+(three variants), removing the validation, and un-guarding the dev message each make a test fail.
+Two of my first versions of the proxy test let a mutation through or failed on clean code; they were
+corrected before use.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| Frontend `tsc -b` and `npm run build` | pass |
+| `oxlint` | no new findings (existing warnings only) |
+| Production bundle (source build and inside the image) | absent: "API server is not running", "dev proxy could not reach", `VITE_DEV_API_TARGET`, `127.0.0.1:8000`, `python -m uvicorn`, "first account", "becomes the Administrator". Present: "grant additional permissions", "temporarily unavailable" |
+| Dev server, proxy to the Docker stack (throwaway server on :3010) | `/api/v1/health` 200, `/api/v1/auth/me` 401, `/api/v1/auth/register` 405 through the dev proxy |
+| Dev server, default target (:3011) | 502 as before (nothing on 8000) |
+| Dev server, `VITE_DEV_API_TARGET=ftp://nope` (:3012) | refuses to start with a clear error |
+| Dev client receives the configured target | confirmed in the served dev module |
+| `scripts/check_stack.py` on the live stack (port 80) | 4 PASS, 1 WARN (`/health` is the web app's HTML); the user table was unchanged (2 users) afterwards |
+| `scripts/check_stack.py` on the Vite dev server (:3000) | 4 FAIL with the explanatory 502 hint, reproducing the original symptom |
+| Backend unit suite | **613 passed, 1 skipped** (594 before, plus 19 new) |
+| Ruff `E9,F63,F7,F82`, `pip check` | clean |
+| Backend sources since the image's build commit `252dd15` | 0 changes under `app/`, `alembic/`, `requirements*`, `Dockerfile`, `pyproject.toml`; the only change under `scripts/` is the new `check_stack.py` |
+| Preflight and Compose dry run with `APP_VERSION=0.5.1` | passed; both images found; the plan recreates only `app`, `worker`, `frontend` |
+
+The throwaway dev servers I started (:3010 to :3012) were stopped; your own dev server on :3000 was
+left running and untouched.
+
+### Release images and provenance
+
+| Image | ID | Source |
+|---|---|---|
+| `aiproject-frontend:0.5.1` | `d1eb278fe206` | built from commit `18be2d945b9aff763e7076b0818196361a6a9b5e` using `git archive` (line-ending conversion off; the four changed files were byte-compared with the committed blobs) |
+| `aiproject-backend:0.5.1` | `863bdd6fdd64` | **retag only** of `aiproject-backend:0.5.0-p22` (same ID, layers untouched). Built earlier from commit `252dd15`; re-verified: all 132 files under `app/`, `alembic/`, `scripts/` are byte-identical to the committed blobs at `18be2d9` (excluding `check_stack.py`, added after the build) |
+| `aiproject-frontend:0.5.0-p22` | `ca71d9937a67` | kept, **do not deploy** (stale registration text) |
+| `aiproject-backend:0.5.0-p22` | `863bdd6fdd64` | kept (same image as `0.5.1`) |
+| p21 and `pre-p21` rollback images | unchanged | backend `83b37eaeee4a` / `67403b50fc14`, frontend `3fd9ea8bab02` / `97d04518bf28` |
+
+### Deployment of 0.5.1 (supersedes the version numbers in section 6)
+
+`.env` currently contains `APP_VERSION=0.5.0-p22` and `PASSWORD_REHASH_ON_LOGIN=false` (set by you;
+this release did not touch `.env`). **Change `APP_VERSION` to `0.5.1`** before step 5 below; leave the
+rehash switch `false` for the staged rollout. Where section 6 says `0.5.0-p22`, read `0.5.1`.
+Everything else in section 6 is unchanged; add `python scripts\check_stack.py --origin http://localhost`
+to the verification (step 7), and note that on release `0.5.1` `/api/v1/health` reports
+`"release": "0.5.1"`.
+
+Rollback to the previous release works as in section 7 (the pre-deploy backup, the `pre-p21`/p21
+images, and the Argon2id precondition check are unchanged).
 
 ## 1. What changed
 
@@ -101,12 +178,12 @@ Do these in order. Stop at any failed step.
 New-Item -ItemType Directory -Force backups\phase22 | Out-Null
 docker exec aiproject-db-1 sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f /tmp/pre_p22.dump'
 docker cp aiproject-db-1:/tmp/pre_p22.dump backups\phase22\pre_p22.dump
-docker exec aiproject-db-1 rm /tmp/pre_p22.dump
+docker exec aiproject-db-1 sh -c 'rm -f /tmp/pre_p22.dump'
 Get-FileHash backups\phase22\pre_p22.dump -Algorithm SHA256 | Select-Object -ExpandProperty Hash | Out-File backups\phase22\pre_p22.dump.sha256
 ```
    The recipe was run against the live database for this report (read-only); the dump was valid.
-4. **Edit `.env` yourself** (this report did not touch it): add `APP_VERSION=0.5.0-p22` and, for a
-   staged rollout, `PASSWORD_REHASH_ON_LOGIN=false`.
+4. **Edit `.env` yourself** (this report did not touch it): set `APP_VERSION=0.5.1` (it currently says
+   `0.5.0-p22`; see section 0) and keep `PASSWORD_REHASH_ON_LOGIN=false` for the staged rollout.
 5. **Preflight:** `python scripts\preflight.py --check-docker`. Warnings that running containers
    use `latest` are expected until step 6.
 6. **Deploy only the stateless services** (about 20 to 30 seconds of interruption; the database
@@ -114,7 +191,8 @@ Get-FileHash backups\phase22\pre_p22.dump -Algorithm SHA256 | Select-Object -Exp
 ```powershell
 docker compose up -d --no-build --no-deps app worker frontend
 docker compose ps
-curl.exe -s http://localhost/api/v1/health      # "release":"0.5.0-p22"
+curl.exe -s http://localhost/api/v1/health      # "release":"0.5.1"
+python scripts\check_stack.py --origin http://localhost   # expect PASSED (one WARN for /health is normal)
 ```
 7. **Verify:** sign in as your admin; run a prediction; check `docker compose logs app worker --tail 50`
    for errors; confirm the worker is healthy. With the rehash switch off the admin's hash stays

@@ -41,18 +41,38 @@ variables see [ENVIRONMENT_SETUP.md](ENVIRONMENT_SETUP.md).
 cp .env.production.example .env.production
 chmod 600 .env.production
 # Set POSTGRES_PASSWORD and JWT_SECRET_KEY; openssl rand -hex 32 generates a value.
+# APP_VERSION is already set to the release tag (0.5.0-p21); it has no default on purpose.
 
+python scripts/preflight.py --env-file .env.production --check-docker   # refuses an unsafe release
 docker compose --env-file .env.production config --quiet       # validates; prints nothing if OK
 docker compose --env-file .env.production up -d --build --wait # waits until all are healthy
 docker compose --env-file .env.production ps
-curl -s http://localhost/api/v1/health                         # {"status":"ok",...}
+curl -s http://localhost/api/v1/health                         # {"status":"ok","release":"0.5.0-p21",...}
 ```
 
-Without `POSTGRES_PASSWORD` or `JWT_SECRET_KEY`, or with a weak JWT secret, the stack refuses to
-start and says why.
+Without `POSTGRES_PASSWORD`, `JWT_SECRET_KEY` or `APP_VERSION`, or with a weak JWT secret, the stack
+refuses to start and says why. Compose also refuses any command (even `ps`) when `APP_VERSION` is
+unset; that is intentional, so a forgotten tag can never fall back to an old or moving image.
+`scripts/preflight.py` additionally rejects `latest` and the retired `0.4.0`.
 
-**Then immediately create your admin:** the first account registered on an empty database becomes
-admin. Open the site and register, before anyone else can reach it.
+**Then create your admin explicitly.** Registering through the site never makes anyone an admin on
+a fresh database: every public registration is a `viewer`. Create the first administrator from the
+server, once:
+
+```powershell
+# interactive: prompts for the password twice, nothing is echoed
+docker compose --env-file .env.production run --rm --no-deps -it app python scripts/create_admin.py --email you@example.com
+
+# non-interactive: the password comes from the environment, never from the command line
+$env:BOOTSTRAP_ADMIN_PASSWORD = "<your password>"
+docker compose --env-file .env.production run --rm --no-deps -e BOOTSTRAP_ADMIN_PASSWORD app python scripts/create_admin.py --email you@example.com
+Remove-Item Env:BOOTSTRAP_ADMIN_PASSWORD
+```
+
+It is one-time: it refuses when an active administrator already exists, and it never promotes or
+changes an existing account. More admins are made by an existing admin under User Administration.
+(`ALLOW_FIRST_USER_ADMIN=true` restores "first registration is admin" for local development only;
+production refuses to start with it.)
 
 ### Existing project volumes
 
@@ -62,46 +82,41 @@ version against existing volumes keeps the data and applies the additive migrati
 
 ## TLS
 
-Nginx serves plain HTTP. Terminate TLS in front of it, for example with Caddy on the same host:
+The bundled Nginx serves plain HTTP by default, so local development is unchanged. For a real
+deployment choose one of two opt-in setups; both are described, with the exact commands, in
+[TLS_DEPLOYMENT.md](TLS_DEPLOYMENT.md):
 
-```
-your-domain.example {
-    reverse_proxy 127.0.0.1:8080
-}
-```
+- **Nginx terminates TLS** (`compose.tls.yaml`): you supply `fullchain.pem` and `privkey.pem`. Port 80
+  redirects to HTTPS, HSTS is sent, and the API is told the request was HTTPS.
+- **A load balancer or proxy (Caddy, Traefik, cloud LB) terminates TLS in front of Nginx:** list the
+  proxy's address in `frontend/proxy-trust.conf`. Nginx then believes its `X-Forwarded-Proto` and
+  client IP, and ignores them from anyone else.
 
-Set `FRONTEND_PORT=8080`, and publish only 127.0.0.1 by changing the `ports` entry to
-`"127.0.0.1:${FRONTEND_PORT:-80}:80"`, so nothing bypasses TLS.
-
-**Required behind any terminator:** rate limits and logs use the client IP as seen by Nginx, which
-would now be the terminator's, so all users would share one budget. Tell Nginx to trust it by adding
-this to the `server` block in `frontend/nginx.conf`, with the address your terminator connects from:
-
-```nginx
-set_real_ip_from 172.16.0.0/12;   # the Docker gateway, for a terminator on the same host
-real_ip_header X-Forwarded-For;
-real_ip_recursive on;
-```
-
-Then check that `client_ip` in `docker compose logs app` shows real addresses. This setup depends on
-your terminator, so it has not been tested as part of this project's verification.
+No certificate ships with the project and none is created for you. Never expose port 80 of the plain
+HTTP setup directly to the internet.
 
 ## Updating
 
 ```bash
 python scripts/backup_db.py --retention 7                       # backup first
 git pull
-APP_VERSION=0.4.1 docker compose --env-file .env.production up -d --build --wait
-curl -s http://localhost/api/v1/health
+# Edit APP_VERSION in .env.production to the new release tag (e.g. 0.5.0-p22), then:
+python scripts/preflight.py --env-file .env.production --check-docker
+docker compose --env-file .env.production up -d --build --wait
+curl -s http://localhost/api/v1/health                          # "release" shows the live tag
 ```
 
-Set `APP_VERSION` per release so the previous image stays available for rollback. Migrations run
-automatically through the `migration` service.
+Use a new, never-reused `APP_VERSION` per release so the previous image stays available for
+rollback. Migrations run automatically through the `migration` service. Changing the tag recreates
+`app`, `worker` and `frontend` (a short interruption); the database container and all volumes are
+left alone.
 
 ## Rollback
 
 ```bash
-APP_VERSION=0.4.0 docker compose --env-file .env.production up -d --no-build --wait
+# Set APP_VERSION in .env.production back to the previous tag (the pre-p21 images are tagged
+# pre-p21), then:
+docker compose --env-file .env.production up -d --no-build --wait
 curl -s http://localhost/api/v1/health
 ```
 
@@ -128,15 +143,10 @@ Logs are JSON, one object per line: `docker compose logs -f app worker`. Quote t
 response header to find a request. Alert on HTTP 5xx, `database_unavailable`, and
 `Stalled-job recovery` messages.
 
-`GET /metrics` on `app:8000` serves Prometheus metrics. Nginx deliberately doesn't expose it, so run
-Prometheus on the `aiproject_backend` network, and set `METRICS_TOKEN` to require a bearer token:
-
-```yaml
-scrape_configs:
-  - job_name: aiproject
-    static_configs: [{ targets: ["app:8000"] }]
-    authorization: { credentials_file: /etc/prometheus/metrics_token }
-```
+`GET /metrics` on `app:8000` serves Prometheus metrics. Nginx deliberately answers 404 for it on the
+public entry point. `compose.monitoring.yaml` adds an opt-in Prometheus that scrapes it over the
+internal network with a bearer token (`METRICS_TOKEN`); setup and verification are in
+[MONITORING.md](MONITORING.md).
 
 | Metric | Meaning |
 |---|---|

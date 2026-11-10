@@ -81,7 +81,18 @@ def pg_isolated_engine() -> Iterator:
 
 
 @requires_db
-def test_simultaneous_first_registrations_create_one_admin(pg_isolated_engine) -> None:
+@pytest.mark.parametrize(
+    ("allow_first_user_admin", "expected_roles"),
+    [
+        # Development flag on: the advisory lock must still hand out exactly one admin.
+        (True, ["admin", "viewer", "viewer", "viewer", "viewer", "viewer"]),
+        # Shipped default: nobody becomes admin by registering first, however they race.
+        (False, ["viewer"] * 6),
+    ],
+)
+def test_simultaneous_first_registrations_admin_only_with_the_dev_flag(
+    pg_isolated_engine, allow_first_user_admin, expected_roles
+) -> None:
     """Without the advisory lock, both requests can see an empty table and both become admin."""
     from concurrent.futures import ThreadPoolExecutor
 
@@ -94,11 +105,13 @@ def test_simultaneous_first_registrations_create_one_admin(pg_isolated_engine) -
     def register(index: int) -> str:
         with Session(bind=pg_isolated_engine, expire_on_commit=False) as session:
             request = UserRegisterRequest(email=f"u{index}@example.com", password="Password123")
-            return auth_service.register_user(session, request).role
+            return auth_service.register_user(
+                session, request, allow_first_user_admin=allow_first_user_admin
+            ).role
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         roles = list(pool.map(register, range(6)))
-    assert sorted(roles) == ["admin", "viewer", "viewer", "viewer", "viewer", "viewer"]
+    assert sorted(roles) == expected_roles
     with Session(bind=pg_isolated_engine) as session:
         assert session.scalar(select(func.count()).select_from(User)) == 6
 

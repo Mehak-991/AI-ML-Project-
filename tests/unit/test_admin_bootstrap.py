@@ -34,6 +34,16 @@ def secure_client(make_settings, session_factory):
         yield test_client
 
 
+def _factory_stub(session_factory):
+    """Stands in for the cached get_session_factory (the shared fixtures call cache_clear on it)."""
+
+    def _get():
+        return session_factory
+
+    _get.cache_clear = lambda: None
+    return _get
+
+
 def _register(client, email, **fields):
     return client.post(f"{API}/auth/register", json={"email": email, "password": PASSWORD, **fields})
 
@@ -142,7 +152,7 @@ def test_script_reports_refusal_without_leaking_the_password(
     secret = "S3cretBootstrapValue"
     monkeypatch.setenv(create_admin.PASSWORD_ENV, secret)
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@db.invalid/x")
-    monkeypatch.setattr("app.database.session.get_session_factory", lambda: session_factory)
+    monkeypatch.setattr("app.database.session.get_session_factory", _factory_stub(session_factory))
 
     assert create_admin.main(["--email", "root@x.com"]) == 0
     assert create_admin.main(["--email", "other@x.com"]) == 1  # one-time
@@ -158,6 +168,6 @@ def test_script_without_a_password_source_exits_cleanly(monkeypatch, session_fac
     monkeypatch.delenv(create_admin.PASSWORD_ENV, raising=False)
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@db.invalid/x")
     monkeypatch.setattr("sys.stdin", type("NoTTY", (), {"isatty": lambda self: False})())
-    monkeypatch.setattr("app.database.session.get_session_factory", lambda: session_factory)
+    monkeypatch.setattr("app.database.session.get_session_factory", _factory_stub(session_factory))
     assert create_admin.main(["--email", "root@x.com"]) == 1
     assert "No password supplied" in capsys.readouterr().err

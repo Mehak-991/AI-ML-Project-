@@ -19,6 +19,9 @@ RUN rm -rf /etc/nginx/conf.d/* /usr/share/nginx/html/*
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 # .inc is not matched by the conf.d/*.conf include; nginx.conf includes it explicitly.
 COPY security-headers.inc /etc/nginx/conf.d/security-headers.inc
+COPY server-common.inc /etc/nginx/conf.d/server-common.inc
+# http-level maps (trusted TLS proxy, HSTS); picked up by the conf.d/*.conf include.
+COPY proxy-trust.conf /etc/nginx/conf.d/00-proxy-trust.conf
 COPY --from=builder /build/dist /usr/share/nginx/html
 
 EXPOSE 80

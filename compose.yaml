@@ -48,7 +48,7 @@ services:
 
   migration:
     build: *backend-build
-    image: aiproject-backend:${APP_VERSION:-0.4.0}
+    image: aiproject-backend:${APP_VERSION:?Set APP_VERSION to the release tag, e.g. APP_VERSION=0.5.0-p21 (no default on purpose)}
     depends_on:
       db:
         condition: service_healthy
@@ -61,6 +61,7 @@ services:
       DEBUG: "false"
       DATABASE_ECHO: "false"
       RUN_MIGRATIONS: "true"
+      APP_RELEASE: ${APP_VERSION}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
     command: ["alembic", "upgrade", "head"]
     healthcheck:
@@ -78,7 +79,7 @@ services:
 
   app:
     build: *backend-build
-    image: aiproject-backend:${APP_VERSION:-0.4.0}
+    image: aiproject-backend:${APP_VERSION:?Set APP_VERSION to the release tag, e.g. APP_VERSION=0.5.0-p21 (no default on purpose)}
     restart: unless-stopped
     depends_on:
       db:
@@ -95,6 +96,7 @@ services:
       DATABASE_ECHO: "false"
       LOG_FORMAT: json
       RUN_MIGRATIONS: "false"
+      APP_RELEASE: ${APP_VERSION}
       # Swagger UI and the OpenAPI schema stay off in production unless asked for.
       DOCS_ENABLED: ${PROD_DOCS_ENABLED:-false}
       # Trust X-Forwarded-For only from the bundled nginx (fixed address below). Deliberately not
@@ -133,7 +135,7 @@ services:
 
   worker:
     build: *backend-build
-    image: aiproject-backend:${APP_VERSION:-0.4.0}
+    image: aiproject-backend:${APP_VERSION:?Set APP_VERSION to the release tag, e.g. APP_VERSION=0.5.0-p21 (no default on purpose)}
     restart: unless-stopped
     depends_on:
       db:
@@ -150,6 +152,7 @@ services:
       DATABASE_ECHO: "false"
       LOG_FORMAT: json
       RUN_MIGRATIONS: "false"
+      APP_RELEASE: ${APP_VERSION}
       UPLOAD_DIR: /data/uploads
       MODEL_DIR: /data/trained_models
       AI_MODEL_CACHE_DIR: /data/model_cache
@@ -183,7 +186,7 @@ services:
   frontend:
     build:
       context: ./frontend
-    image: aiproject-frontend:${APP_VERSION:-0.4.0}
+    image: aiproject-frontend:${APP_VERSION:?Set APP_VERSION to the release tag, e.g. APP_VERSION=0.5.0-p21 (no default on purpose)}
     restart: unless-stopped
     depends_on:
       app:

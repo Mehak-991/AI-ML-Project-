@@ -7,6 +7,87 @@ AIProject v0.4.0, assessed 2026-11-03.
 The application was built and verified end to end on a disposable Docker stack. **It has not been
 deployed anywhere.** Complete the three blockers below first.
 
+## Phase 21 validation (2026-11-11)
+
+Evidence from this run. Nothing was changed on the live database, the live stack, or `ss_aiml_db`.
+
+### Current baseline
+- Backend unit tests: **519 passed, 1 skipped** (optional `langchain_text_splitters`). Earlier figures (430, 495) are out of date.
+- `ruff --select=E9,F63,F7,F82` clean. `pip check` clean. `tsc --noEmit` and `vite build` pass.
+- `pip-audit -r requirements.txt`: no known vulnerabilities. `npm audit --omit=dev`: 0 vulnerabilities. Trivy was not run (unverified).
+
+### Deployed images are older than the source
+Both running stacks use images built before the latest source. Confirmed differences:
+
+| Symptom on the running image | Cause | Source status |
+|---|---|---|
+| `POST /models/{id}/explainability/lime` returns 500 on a mixed numeric+categorical model | Old image hands strings to LIME's discretizer (`TypeError` in `np.percentile`) | Fixed; regression tests pass |
+| A `batch_prediction` job without `model_id` ends `completed` | Old image lacks the required-field check | Fixed (`job_service.py` raises a validation error) |
+| Live DB `aiproject-db-1` is at revision **0010**; code head is **0013** | Migrations 0011-0013 never applied to the live DB | Rehearsed below, **not applied** |
+
+The 0.5.0-p20test image contains only 10 migration files. **Rebuild the images and upgrade the database together.**
+
+### Migration rehearsal (isolated)
+- Backup of `aiproject-db-1`: `backups/phase21/aiproject_pre0013_20261111_002923.dump` (pg_dump custom format, 42,207 bytes, SHA-256 `b46b6aaa62783313206dc2aced8cc1e1053e94f3b75f485040976b82007244a3`, sidecar `.sha256` verified). The folder is git-ignored.
+- Restored into a throwaway container (`p21-rehearsal-db`, `--network none`, no named volumes). Restore: no errors.
+- `alembic upgrade` 0010 -> 0011 -> 0012 -> 0013 applied step by step with no errors.
+- Row counts and ID checksums for `users`, `datasets`, `jobs` identical before and after.
+- 0013 JSON -> JSONB: the live DB has no `drift_reports` rows, so 3 synthetic rows (nested, unicode, null, exponent, duplicate key) were added to the **rehearsal copy only**. Checksum identical after the cast; default became `'{}'::jsonb`.
+- `ix_jobs_status_created_at` (partial, queued/running/retry_pending), `ix_datasets_owner_id` and `fk_datasets_owner_id_users` exist. `datasets.owner_id` is NULL for existing rows (legacy, visible to all signed-in users).
+- `alembic check`: no drift between models and schema.
+- Downgrade 0013 -> 0010 then upgrade again: works, JSON type restored then JSONB again, seeded rows preserved.
+- All 11 ORM models query cleanly against the migrated schema.
+- Limits of this rehearsal: the live data is tiny (1 user, 1 dataset, 9 jobs), so lock time and timing on large tables are not measured.
+
+### Rollback plan for the live upgrade (not yet executed)
+1. Take a fresh `pg_dump` immediately before upgrading and verify its SHA-256. Tag the current images: `docker tag aiproject-backend:latest aiproject-backend:pre-p21`.
+2. Stop `app` and `worker` first so nothing writes during the upgrade.
+3. Upgrade failed or wrong: `alembic downgrade 0010` (rehearsed, preserves data). Downgrading 0012 drops `datasets.owner_id`, so any ownership assigned after the upgrade is lost.
+4. Downgrade impossible: restore the dump into a **new** database and point `DATABASE_URL` at it. Do not overwrite the live database.
+5. Restart the old image tag.
+
+### Isolation of the p20test stack
+Separate compose project, networks (`aiproject-p20test_*`), named volumes and database from the live stack. Row counts differ (3 users / 42 jobs against 1 user / 9 jobs). Published port 8089 only. All load tests went to `localhost:8089`; nothing touched the live stack.
+
+### RBAC and authorization (observed on p20test)
+- Registration with `role: admin` returns 403. Plain registration yields `viewer`.
+- Viewer: reads succeed, `GET /auth/users` returns 403, prediction on another user's model returns 403.
+- An `ml_engineer` also gets 403 on a model it does not own (object-level authorization).
+- Test shortcut: the throwaway load-test user was set to `ml_engineer` directly in the p20test DB because the API offers no self-promotion.
+
+### ML and worker (real artifacts, p20test)
+- CSV upload, then training of a model (0.6 s, accuracy 0.979 on its train split), then prediction. Single prediction 89 ms; batch of 100 in 76 ms; batch of 1,000 in 121 ms (about 8,300 records/s). Bad or missing features get a clear 422.
+- Uploads: `.exe` rejected (415), empty file rejected (400), filename `../../etc/x.csv` stored as `x.csv`.
+- SHAP and feature importance return 200. LIME returns 500 on the old image (see above); source tests pass.
+- Worker health check reads real heartbeat age (healthy at 0.5 s old; fails when the threshold is exceeded). The heartbeat is written by the main poll loop, so a hung loop shows as unhealthy.
+- Jobs: `batch_prediction` with 50 records completed with real predictions; `explainability` completed; a job with no records failed with a clear message. SIGKILL recovery was not re-run in this phase; it rests on the earlier Phase 20 result and unit tests.
+
+### Load test (p20test only, 20 s per level, bounded, no aborts)
+Mixed GET traffic (`/health`, `/auth/me`, `/models`, `/datasets`):
+
+| Users | req/s | errors | p50 | p95 | p99 |
+|---|---|---|---|---|---|
+| 1 | 66 | 0 | 15 ms | 20 ms | 24 ms |
+| 10 | 131 | 0 | 73 ms | 120 ms | 146 ms |
+| 50 | 117 | 0 | 357 ms | 543 ms | 1,231 ms |
+| 100 | 89 | 0 | 620 ms | 3,323 ms | 5,937 ms |
+
+Same mix plus single prediction and 100-record batch prediction:
+
+| Users | req/s | errors | p50 | p95 | p99 |
+|---|---|---|---|---|---|
+| 1 | 24 | 0 | 18 ms | 114 ms | 129 ms |
+| 10 | 60 | 0 | 136 ms | 346 ms | 456 ms |
+| 50 | 59 | 0 | 711 ms | 1,303 ms | 1,536 ms |
+
+Throughput peaks near 10 users and then flattens. Mid-run, the app container used about 175% CPU and the database about 29% CPU, so the 2-worker API is CPU-bound. At 100 users tail latency degrades (p95 3.3 s) but with zero errors. The tool was a custom asyncio/httpx script (Locust is not installed), run from the same machine as the containers, so numbers include client overhead. Database connections stayed at 20 of 100. Memory stayed near 435 MiB for the app.
+Not measured: prediction-only load at 100 users, queue latency under load, long runs.
+
+### Remaining actions before go-live
+1. Your approval to rebuild images and upgrade the live database (plan above).
+2. Re-run the e2e checks above on the rebuilt images.
+3. The three blockers listed below.
+
 ## Before going live
 
 | # | Blocker | Action |
@@ -33,7 +114,7 @@ user can still see them.
 | Criterion | Status | Evidence |
 |---|---|---|
 | No known unresolved critical or high bugs in the code | Met | BUG_FIX_REPORT.md. History exposure is blocker 1 |
-| Backend tests pass | Met | 495 passed, 1 skipped (optional package) |
+| Backend tests pass | Met | 519 passed, 1 skipped (optional package), re-run 2026-11-11 |
 | Frontend production build | Met | `npm ci`, `tsc`, `vite build` |
 | Ruff | Met | Requested rules and CI's security rules |
 | Python dependency checks | Met | `pip check`, `pip-audit` |

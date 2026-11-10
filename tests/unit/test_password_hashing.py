@@ -97,6 +97,37 @@ def test_login_upgrades_a_legacy_hash_and_the_account_keeps_working(client, sess
     assert _stored_hash(session_factory, "old@x.com") == upgraded, "no rewrite once upgraded"
 
 
+def test_rehash_switch_keeps_legacy_hashes_readable_by_older_releases(make_settings, session_factory) -> None:
+    """Staged rollout: with PASSWORD_REHASH_ON_LOGIN=false the login works but nothing is rewritten."""
+    app = create_app(
+        make_settings(APP_ENV="testing", RATE_LIMIT_ENABLED=False, PASSWORD_REHASH_ON_LOGIN=False)
+    )
+
+    def _get_db():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = _get_db
+    with TestClient(app, raise_server_exceptions=False) as switched_off:
+        switched_off.post(f"{API}/auth/register", json={"email": "old@x.com", "password": PASSWORD})
+        legacy = _force_legacy_hash(session_factory, "old@x.com")
+        response = switched_off.post(f"{API}/auth/login", json={"email": "old@x.com", "password": PASSWORD})
+        assert response.status_code == 200
+        assert _stored_hash(session_factory, "old@x.com") == legacy
+        # New registrations are still Argon2id regardless of the switch.
+        switched_off.post(f"{API}/auth/register", json={"email": "new@x.com", "password": PASSWORD})
+        assert _stored_hash(session_factory, "new@x.com").startswith("$argon2id$")
+
+
+def test_rehash_is_on_by_default() -> None:
+    from app.core.config import Settings
+
+    assert Settings(_env_file=None).PASSWORD_REHASH_ON_LOGIN is True
+
+
 def test_failed_login_leaves_a_legacy_hash_untouched(client, session_factory) -> None:
     client.post(f"{API}/auth/register", json={"email": "old@x.com", "password": PASSWORD})
     legacy = _force_legacy_hash(session_factory, "old@x.com")

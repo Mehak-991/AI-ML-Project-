@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     # operator can see which build is live. Unset outside container deployments.
     APP_RELEASE: str | None = None
 
+    # Upgrade an outdated password hash (PBKDF2/bcrypt) to Argon2id after a successful login.
+    # Turn it off for the first deployment of a release that introduced Argon2id: images from
+    # before it cannot read Argon2id hashes, so an upgraded account could not sign in after a
+    # rollback. New and changed passwords are always Argon2id.
+    PASSWORD_REHASH_ON_LOGIN: bool = True
+
     # Legacy convenience for local development only: the first public registration on an empty
     # database becomes admin. Off by default and refused in production; create the first admin
     # with scripts/create_admin.py instead.

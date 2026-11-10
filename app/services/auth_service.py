@@ -134,7 +134,7 @@ def authenticate_user(
     if not user.is_active:
         raise AuthenticationError("User account is deactivated. Contact an administrator.")
 
-    if upgraded_hash is not None:
+    if upgraded_hash is not None and settings.PASSWORD_REHASH_ON_LOGIN:
         # Legacy PBKDF2/bcrypt hash: store the Argon2id one. Committed with the refresh token
         # below, so a failed login can never change what is stored.
         user.hashed_password = upgraded_hash

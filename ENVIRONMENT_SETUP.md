@@ -73,6 +73,7 @@ Outside Compose you must also set `DATABASE_URL` (PostgreSQL only) and `APP_ENV=
 | `PROD_DOCS_ENABLED` | `false` | Serve Swagger UI and the schema in Compose |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 | `METRICS_TOKEN` | unset | When set, `/metrics` requires this bearer token. Set it before enabling Prometheus ([MONITORING.md](MONITORING.md)); preflight warns while unset |
+| `PASSWORD_REHASH_ON_LOGIN` | `true` | Upgrade old PBKDF2/bcrypt hashes to Argon2id after a successful login. Set `false` for the first rollout of a release with Argon2id so a rollback to an older image cannot lock upgraded accounts out; set it back to `true` once you are committed to the release |
 | `ALLOW_FIRST_USER_ADMIN` | `false` | Local development only: the first public registration becomes admin. **Refused when `APP_ENV=production`.** Production creates its first admin with `scripts/create_admin.py` |
 | `BOOTSTRAP_ADMIN_PASSWORD` | unset | Read only by `scripts/create_admin.py` for a non-interactive bootstrap; never stored by the app. Unset it afterwards |
 | `TLS_CERT_DIR`, `FRONTEND_TLS_PORT` | none, `443` | Only with `compose.tls.yaml`: folder holding `fullchain.pem` and `privkey.pem` ([TLS_DEPLOYMENT.md](TLS_DEPLOYMENT.md)) |

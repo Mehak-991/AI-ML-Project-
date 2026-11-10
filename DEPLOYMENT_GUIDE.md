@@ -134,8 +134,9 @@ pre-update backup into a new database rather than downgrading in place.
 | API liveness | `docker compose exec app python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read())"` | Process is up; ignores dependencies |
 | Worker | `docker compose exec worker python scripts/check_worker_health.py` | Heartbeat under 30 s old |
 | Configuration | `docker compose exec app python scripts/check_config.py --db` | Settings, storage, migration revision |
+| End to end | `python scripts\check_stack.py --origin http://localhost` | Through the public origin: API health is JSON 200, `/auth/me` is 401, registration accepts POST (an invalid body is sent, so no account is created). Fails if a web page answers instead of the API |
 
-`curl http://localhost/health` returns the SPA, not the API: Nginx only proxies `/api/`.
+`curl http://localhost/health` returns the SPA, not the API: Nginx only proxies `/api/`. `scripts/check_stack.py` flags this case and never counts it as API health.
 
 ## Monitoring
 

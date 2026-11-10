@@ -36,7 +36,8 @@ $env:WORKER_HEARTBEAT_FILE = "$PWD\logs\worker_heartbeat"
 .\.venv312\Scripts\python.exe scripts\run_worker.py
 ```
 
-Frontend, in a third terminal (serves http://localhost:3000 and proxies `/api` to port 8000):
+Frontend, in a third terminal (serves http://localhost:3000 and proxies `/api` to `http://127.0.0.1:8000`
+by default, which is the API from the step above):
 
 ```powershell
 cd frontend
@@ -44,11 +45,24 @@ npm ci
 npm run dev
 ```
 
+**Develop against the Docker stack instead** (no extra port is published on the API container): point
+the dev proxy at the stack's nginx origin with `VITE_DEV_API_TARGET`. It must be an `http(s)` origin;
+anything else stops the dev server at startup with a clear error.
+
+```powershell
+cd frontend
+$env:VITE_DEV_API_TARGET = "http://localhost"; npm run dev
+# or keep it in frontend\.env.local (git-ignored):  VITE_DEV_API_TARGET=http://localhost
+```
+
 Check the setup with `.\.venv312\Scripts\python.exe scripts\check_config.py --db`.
 
-**`502 Bad Gateway` on `/api/...` at port 3000** means the Vite proxy found nothing on port 8000. The
-frontend doesn't start the API: it needs its own running terminal, as above. Check with
-`curl http://127.0.0.1:8000/api/v1/health`.
+**`502 Bad Gateway` on `/api/...` at port 3000** means the Vite proxy found nothing at its target. The
+development page then says "The API server is not running" and names the target it tried. The
+frontend doesn't start the API: start it as above, or point the proxy at a running stack with
+`VITE_DEV_API_TARGET`. That message exists only in `npm run dev`; the Docker stack at
+`http://localhost/` never shows it. Check a stack or dev server with
+`python scripts\check_stack.py --origin http://localhost` (or `http://localhost:3000`).
 
 ## Required in production
 
@@ -134,6 +148,7 @@ in [.env.example](.env.example).
 |---|---|---|
 | `VITE_API_BASE_URL` | `/api/v1` | Only for an API on a different origin; also set `CORS_ORIGINS` |
 | `VITE_SHOW_API_DOCS` | off in production builds | Shows the API docs links; pair with `PROD_DOCS_ENABLED=true` |
+| `VITE_DEV_API_TARGET` | `http://127.0.0.1:8000` | **`npm run dev` only:** where the dev server proxies `/api`. Never compiled into a production build (the bundle is checked for it) |
 
 These are compiled in at build time, so they are public. Never put secrets in `VITE_*` variables.
 

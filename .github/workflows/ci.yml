@@ -105,6 +105,27 @@ jobs:
         run: |
           npm run build
 
+  secret-scan:
+    name: Secret scan (gitleaks) and forbidden files
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject tracked database dumps, env files and keys
+        run: python3 scripts/check_tracked_files.py
+
+      # Scans every commit. --redact=100 hides matched values in the log, so a finding is
+      # reported by rule, file and commit but never printed.
+      - name: Scan history for secrets
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" --entrypoint sh ghcr.io/gitleaks/gitleaks:v8.30.0 -c \
+            'git config --global --add safe.directory /repo && gitleaks git /repo --config /repo/.gitleaks.toml --redact=100 --no-banner --exit-code 1'
+
   docker-dry-run-build:
     name: Docker Multi-Stage Build Validation
     runs-on: ubuntu-latest

@@ -62,7 +62,8 @@ def test_vite_proxy_target_is_configurable_with_a_local_default() -> None:
     assert "const DEFAULT_DEV_API_TARGET = 'http://127.0.0.1:8000'" in config
     # The only literal API address allowed in the code is the default constant, exactly once.
     code = re.sub(r"(?m)^\s*//.*$", "", config)  # full-line comments only: "http://" contains "//"
-    literals = re.findall(r"https?://[^\s'\"`)]+", code)
+    # A target is a string literal that is entirely a URL (example URLs inside messages don't count).
+    literals = re.findall(r"""['"`](https?://[^'"`\s]+)['"`]""", code)
     assert literals == ["http://127.0.0.1:8000"], f"hard-coded targets: {literals}"
     # Every proxied path must be built from the resolved (env-aware) target, not a literal.
     assert re.search(r"const apiTarget = resolveDevApiTarget\(env\.VITE_DEV_API_TARGET\)", config)

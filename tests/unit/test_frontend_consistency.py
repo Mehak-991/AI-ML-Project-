@@ -60,12 +60,16 @@ def test_vite_proxy_target_is_configurable_with_a_local_default() -> None:
     assert "VITE_DEV_API_TARGET" in config
     assert "loadEnv(" in config, "must honour frontend/.env.local as well as the shell"
     assert "const DEFAULT_DEV_API_TARGET = 'http://127.0.0.1:8000'" in config
-    # The only literal API address allowed in the config is that one default.
-    literals = re.findall(r"https?://[^\s'\"`)]+", re.sub(r"//.*", "", config))
-    assert set(literals) <= {"http://127.0.0.1:8000"}, f"hard-coded targets: {literals}"
+    # The only literal API address allowed in the code is the default constant, exactly once.
+    code = re.sub(r"(?m)^\s*//.*$", "", config)  # full-line comments only: "http://" contains "//"
+    literals = re.findall(r"https?://[^\s'\"`)]+", code)
+    assert literals == ["http://127.0.0.1:8000"], f"hard-coded targets: {literals}"
+    # Every proxied path must be built from the resolved (env-aware) target, not a literal.
+    assert re.search(r"const apiTarget = resolveDevApiTarget\(env\.VITE_DEV_API_TARGET\)", config)
+    assert re.search(r"const proxied = \{ target: apiTarget,", config)
     proxy_block = config[config.index("proxy:") :]
     assert proxy_block.count("proxied") >= 3, "/api, /docs and /openapi.json must all use the configured target"
-    assert "target: 'http" not in proxy_block, "no literal target inside the proxy block"
+    assert "target:" not in proxy_block, "no per-path target inside the proxy block"
 
 
 def test_vite_proxy_target_is_validated() -> None:

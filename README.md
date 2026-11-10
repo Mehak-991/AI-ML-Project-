@@ -280,8 +280,10 @@ Interactive docs: **http://127.0.0.1:8000/docs** (Swagger), `/redoc`, and the sc
 | `/api/v1/jobs` | Background jobs | login, owner; writes need admin or ml_engineer |
 | `GET /metrics` | Prometheus metrics; not routed through Nginx | optional `METRICS_TOKEN` |
 
-**Access rules.** The first registered account becomes admin; later self-registrations are viewers,
-and asking for another role returns 403. Admins create users with any role, or change roles, under
+**Access rules.** Every public registration is a viewer, and asking for another role returns 403.
+Nobody becomes admin by registering first: the first administrator is created from the server with
+`scripts/create_admin.py` (one-time; see DEPLOYMENT_GUIDE.md). Passwords are stored as Argon2id;
+older PBKDF2/bcrypt hashes keep working and are upgraded at the user's next successful login. Admins create users with any role, or change roles, under
 User Administration. "Owner" means the caller created the object, or is an admin. Objects
 that predate ownership tracking (no owner) stay available to every signed-in user. Viewers can't
 upload or train, so they see only what has no owner.
@@ -495,10 +497,11 @@ Follow [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md). In short:
    platform's secret manager, or a `chmod 600` `.env.production` on the host. Never put them in
    the image, the compose file or git. Production refuses to start with a default or short
    `JWT_SECRET_KEY`.
-2. **TLS.** The bundled Nginx serves plain HTTP. Put a TLS terminator in front and never expose
-   port 80 directly to the internet.
-3. **First account.** The first account to register becomes admin, so register yours before the
-   service is reachable by anyone else.
+2. **TLS.** The bundled Nginx serves plain HTTP by default. Enable HTTPS with `compose.tls.yaml` or
+   put a TLS terminator in front ([TLS_DEPLOYMENT.md](TLS_DEPLOYMENT.md)); never expose port 80
+   directly to the internet.
+3. **First account.** Public registration never creates an admin. Create yours with
+   `scripts/create_admin.py` (DEPLOYMENT_GUIDE.md); it refuses once an admin exists.
 4. **Settings:** `compose.yaml` sets `APP_ENV=production`, `LOG_FORMAT=json` and
    `DOCS_ENABLED=false`. Run `python scripts/check_config.py --db` inside the container.
 5. **Database.** Use managed PostgreSQL or the compose service with backups (`pg_dump`, volume

@@ -66,13 +66,17 @@ Outside Compose you must also set `DATABASE_URL` (PostgreSQL only) and `APP_ENV=
 | Variable | Default | Purpose |
 |---|---|---|
 | `POSTGRES_USER`, `POSTGRES_DB` | `aiproject` | Database identity, Compose only |
-| `APP_VERSION` | `0.4.0` | Image tag; set it per release so rollback has something to return to |
+| `APP_VERSION` | **required, no default** | Release tag of the images (production: `0.5.0-p21`). Compose and `scripts/preflight.py` refuse a missing value, `latest` and the retired `0.4.0`. Also reported as `release` by `/health` |
 | `FRONTEND_PORT` | `80` | Host port for Nginx |
 | `FRONTEND_SUBNET`, `FRONTEND_PROXY_IP` | `172.21.0.0/16`, `172.21.0.10` | Change together if the subnet clashes with another network |
 | `CORS_ORIGINS` | none in production | Comma-separated. Leave empty when served through the bundled Nginx |
 | `PROD_DOCS_ENABLED` | `false` | Serve Swagger UI and the schema in Compose |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
-| `METRICS_TOKEN` | unset | When set, `/metrics` requires this bearer token |
+| `METRICS_TOKEN` | unset | When set, `/metrics` requires this bearer token. Set it before enabling Prometheus ([MONITORING.md](MONITORING.md)); preflight warns while unset |
+| `ALLOW_FIRST_USER_ADMIN` | `false` | Local development only: the first public registration becomes admin. **Refused when `APP_ENV=production`.** Production creates its first admin with `scripts/create_admin.py` |
+| `BOOTSTRAP_ADMIN_PASSWORD` | unset | Read only by `scripts/create_admin.py` for a non-interactive bootstrap; never stored by the app. Unset it afterwards |
+| `TLS_CERT_DIR`, `FRONTEND_TLS_PORT` | none, `443` | Only with `compose.tls.yaml`: folder holding `fullchain.pem` and `privkey.pem` ([TLS_DEPLOYMENT.md](TLS_DEPLOYMENT.md)) |
+| `PROMETHEUS_BIND`, `PROMETHEUS_PORT` | `127.0.0.1`, `9090` | Only with `compose.monitoring.yaml` |
 
 ## Limits
 

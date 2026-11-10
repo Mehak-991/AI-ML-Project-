@@ -195,9 +195,13 @@ export function parseApiError(error: unknown): ErrorDetails {
         status,
         code: 'SERVICE_UNAVAILABLE',
         // The Vite dev proxy answers 502 when no API is listening, which only looks like an outage.
+        // The proxy target is injected by vite.config.ts for `npm run dev` only; production builds
+        // drop this whole branch, so no development address ships in a bundle.
         message:
           import.meta.env.DEV && status === 502
-            ? 'The API server is not running. Start it with: python -m uvicorn app.main:app --port 8000'
+            ? `The API server is not running. Start it with: python -m uvicorn app.main:app --port 8000 ` +
+              `(the dev proxy could not reach ${__DEV_API_PROXY_TARGET__}; to use the Docker stack, ` +
+              `restart with VITE_DEV_API_TARGET=http://localhost)`
             : 'The backend service is temporarily unavailable. Please retry shortly.',
       };
     }

@@ -7,6 +7,44 @@ AIProject v0.4.0, assessed 2026-11-03.
 The application was built and verified end to end on a disposable Docker stack. **It has not been
 deployed anywhere.** Complete the three blockers below first.
 
+## Phase 21 live deployment (2026-11-11) — completed and verified
+
+Deployed to the local Docker stack `aiproject` (this machine only; not an external host).
+
+| Item | Value |
+|---|---|
+| Source | commit `c92bbf8` (app, alembic, frontend, compose, Dockerfile identical to `3fe799a`) |
+| New images | `aiproject-backend:latest` / `:0.5.0-p21` = `83b37eaeee4a`; `aiproject-frontend:latest` / `:0.5.0-p21` = `3fd9ea8bab02` |
+| Previous images (kept) | `aiproject-backend:pre-p21` = `67403b50fc14`; `aiproject-frontend:pre-p21` = `97d04518bf28` |
+| Database | PostgreSQL 18 container `aiproject-db-1`, not recreated; volume `aiproject_pgdata` untouched. Revision **0010 -> 0013** |
+| Backups | `backups/phase21/aiproject_live_pre_deploy_20261111_004538.dump` SHA-256 `37de9ea2c584b11b58a847d87f44f50b2ab7880c5f2d7624cdfd3e183557dcf5`; `backups/phase21/aiproject_live_quiesced_pre_migration_20261111_005344.dump` (taken with app and worker stopped) SHA-256 `00e7e5f455cefe3b72db778d27c2e1a0bbbaac8c012779de2111a79ea16f990f` |
+
+Sequence: backup, tag old images, build, check fixes inside the image (migrations 0011-0013, `_FeatureCodec`, required-`model_id` check present; all absent from the old image), `compose stop app worker`, quiesced dump, migrate, recreate `app`, `worker`, `frontend` with `--no-deps`.
+
+Deviation: migrations were meant to run one at a time, but the migration container's entrypoint (`RUN_MIGRATIONS=true`) ran `upgrade head` first. Alembic applied 0011, 0012, 0013 in order, with no errors. There is no maintenance-mode feature; the frontend stayed up and the API was unavailable while app and worker were stopped.
+
+### Verification
+- Revision 0013; `alembic check` clean; `drift_reports.results` is JSONB with default `'{}'::jsonb`; `ix_jobs_status_created_at`, `ix_datasets_owner_id` and `fk_datasets_owner_id_users` (ON DELETE SET NULL) present; all existing datasets have `owner_id` NULL (legacy, visible to signed-in users); `password_encryption` = scram-sha-256.
+- Original data: row counts identical before and after; ID hashes of users, datasets and jobs identical to the pre-migration values; 31 original prediction logs and the "Student Placement Classifier" model still present. That model loads from its original artifact and serves predictions, SHAP and LIME.
+- Live end-to-end, 39 of 39 checks passed (script run from the scratchpad): admin self-assignment rejected (403), viewer role by default, wrong password 401, bad token 401, viewer cannot list users, upload or train, refresh rotation with replay detection, logout revokes; upload, `.exe` rejected, train, single and 500-record batch prediction, validation errors, SHAP, LIME (two records), feature importance, prediction history; worker jobs (batch, explainability, drift) completed; a job without `model_id` now ends `failed` with a clear message.
+- Services: db, app, worker, frontend healthy, 0 restarts. Worker health check OK. No error logs from the app; the worker's 3 error lines are the jobs described below.
+- Behaviour changes from recreating with the current compose: API docs off (`DOCS_ENABLED=false`); `FORWARDED_ALLOW_IPS=172.21.0.10` (nginx fixed address); `/metrics` is no longer reachable through nginx (404) and works only from inside the stack (200, `aiml_worker_health_status 1`); the frontend container's address moved from `.2` to `.10`.
+
+### Side effects to know about
+- Two original jobs changed state. `e04d9212` had been stuck in `running` since 2026-10-30 and `dacd114c` was `retry_pending`. The new worker recovered and retried them (`retry_count` 1); both ended `failed` (`requires model_id` and `Prediction input failed validation`). Counts of completed (5) and failed (4) are unchanged from the post-restart snapshot.
+- Test data left in the live database: user `p21live_ab8539@example.com` (role `viewer`, was raised to `ml_engineer` by direct SQL for the test and set back), dataset `p21-live-e2e`, model `p21-live-model`, 4 jobs, 5 prediction logs and 1 drift report. Nothing was deleted; removal is up to you.
+- The test used a self-registered account because the existing admin's password was not available.
+
+### Rollback readiness
+- Preferred: restore either dump into a **new** database (`pg_restore` into a fresh DB), point `DATABASE_URL` at it, and start the `pre-p21` images. The original database is never overwritten. Restoring a dump was rehearsed on an isolated container before this deployment.
+- Do not run `alembic downgrade` blindly: 0012's downgrade drops `datasets.owner_id`, and datasets created since now carry an owner.
+- Untested: running the `pre-p21` images against the 0013 schema. It is probably compatible (additive column, JSON to JSONB) but was not tried.
+
+### Remaining risks
+- `.env` has no `APP_VERSION`, and compose defaults the image tag to `0.4.0`. The stack was deployed with `APP_VERSION=latest`; always pass it (or add it to `.env`), or a plain `docker compose up` will look for a different tag.
+- Still open from before: no TLS, database dumps in git history, first registered account becomes admin, rate limits are per process.
+- Load tests were run on the p20test stack before this deployment, with the old image. They were not repeated on the new image.
+
 ## Phase 21 validation (2026-11-11)
 
 Evidence from this run. Nothing was changed on the live database, the live stack, or `ss_aiml_db`.

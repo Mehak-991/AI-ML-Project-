@@ -35,9 +35,17 @@ CONFLICT = {409: {"model": ErrorResponse, "description": "User already exists"}}
     responses=CONFLICT | FORBIDDEN,
 )
 def register(
-    request: UserRegisterRequest, db: DbSession, current_user: CurrentUserOptionalDep
+    request: UserRegisterRequest,
+    db: DbSession,
+    settings: SettingsDep,
+    current_user: CurrentUserOptionalDep,
 ) -> UserRead:
-    user = auth_service.register_user(db, request, requested_by=current_user)
+    user = auth_service.register_user(
+        db,
+        request,
+        requested_by=current_user,
+        allow_first_user_admin=settings.ALLOW_FIRST_USER_ADMIN,
+    )
     return UserRead.model_validate(user)
 
 

@@ -57,6 +57,8 @@ SETTINGS_ENV_VARS = [
     "JOB_INLINE_DISPATCH",
     "WORKER_HEARTBEAT_FILE",
     "METRICS_TOKEN",
+    "APP_RELEASE",
+    "ALLOW_FIRST_USER_ADMIN",
 ]
 
 
@@ -83,6 +85,9 @@ def make_settings(tmp_path: Path) -> Callable[..., Settings]:
     def _make(**overrides: object) -> Settings:
         overrides.setdefault("UPLOAD_DIR", tmp_path / "uploads")
         overrides.setdefault("MODEL_DIR", tmp_path / "models")
+        # Most suites bootstrap their admin by registering first. The shipped default is off
+        # (see tests/unit/test_admin_bootstrap.py), so they opt in explicitly here.
+        overrides.setdefault("ALLOW_FIRST_USER_ADMIN", True)
         return Settings(_env_file=None, **overrides)
 
     return _make

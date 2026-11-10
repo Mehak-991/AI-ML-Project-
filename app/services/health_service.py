@@ -14,6 +14,7 @@ def get_liveness(settings: Settings) -> HealthResponse:
         status="ok",
         name=settings.APP_NAME,
         version=__version__,
+        release=settings.APP_RELEASE,
         environment=settings.APP_ENV,
         timestamp=datetime.now(UTC),
     )
@@ -33,6 +34,7 @@ def get_readiness(settings: Settings) -> ReadinessResponse:
         status=status,
         name=settings.APP_NAME,
         version=__version__,
+        release=settings.APP_RELEASE,
         environment=settings.APP_ENV,
         timestamp=datetime.now(UTC),
         components=components,

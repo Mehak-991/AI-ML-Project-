@@ -11,12 +11,27 @@ from passlib.context import CryptContext
 from app.core.config import Settings
 from app.core.exceptions import DataValidationError
 
-# Use PBKDF2 with SHA-256 (clean, portable, cross-platform without 72-byte truncation issues)
-pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
+# New hashes use Argon2id with the OWASP minimum parameters (19 MiB, 2 passes, 1 lane). PBKDF2 and
+# bcrypt stay in the list only so accounts created before Argon2id still verify; they are marked
+# deprecated, so `verify_and_rehash` upgrades them after the next successful login.
+ARGON2_MEMORY_COST_KIB = 19_456
+ARGON2_TIME_COST = 2
+ARGON2_PARALLELISM = 1
+
+pwd_context = CryptContext(
+    schemes=["argon2", "pbkdf2_sha256", "bcrypt"],
+    default="argon2",
+    deprecated=["pbkdf2_sha256", "bcrypt"],
+    argon2__type="ID",
+    argon2__memory_cost=ARGON2_MEMORY_COST_KIB,
+    argon2__time_cost=ARGON2_TIME_COST,
+    argon2__parallelism=ARGON2_PARALLELISM,
+)
 
 
-# Verified when the email is unknown, so login takes the same time either way and the
-# response time does not reveal which accounts exist.
+# Verified when the email is unknown, so login spends comparable work either way and the
+# response time does not reveal which accounts exist. Accounts still on a legacy hash verify
+# faster until their next login upgrades them.
 _DUMMY_PASSWORD_HASH = pwd_context.hash(uuid.uuid4().hex)
 
 
@@ -26,6 +41,18 @@ def verify_password_or_dummy(plain_password: str, hashed_password: str | None) -
         pwd_context.verify(plain_password, _DUMMY_PASSWORD_HASH)
         return False
     return verify_password(plain_password, hashed_password)
+
+
+def verify_and_rehash(plain_password: str, hashed_password: str | None) -> tuple[bool, str | None]:
+    """Check a password; also return a replacement hash when the stored one is outdated.
+
+    The replacement is only produced after a successful check, so a wrong password never
+    changes what is stored. Unknown accounts (no hash) spend the same work and fail.
+    """
+    if hashed_password is None:
+        pwd_context.verify(plain_password, _DUMMY_PASSWORD_HASH)
+        return False, None
+    return pwd_context.verify_and_update(plain_password, hashed_password)
 
 
 def hash_password(password: str) -> str:

@@ -2,6 +2,8 @@
 # Constraints for the core install; optional AI extras are installed separately.
 # Regenerate after changing requirements.txt, and retrain models after a scikit-learn minor bump.
 alembic==1.20.1
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1

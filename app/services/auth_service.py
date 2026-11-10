@@ -32,11 +32,50 @@ logger = logging.getLogger(__name__)
 BOOTSTRAP_LOCK_KEY = 804_120_001
 
 
+def create_bootstrap_admin(
+    session: Session, email: str, password: str, full_name: str = "Administrator"
+) -> User:
+    """Create the first administrator. One-time: refuses once any active admin exists.
+
+    This is the only supported way to get an admin on a fresh database (scripts/create_admin.py).
+    It never promotes an existing account and never changes an existing password.
+    """
+    user_repo = UserRepository(session)
+    if session.get_bind().dialect.name == "postgresql":
+        # Serializes concurrent runs; the lock lasts until this transaction commits.
+        session.execute(select(func.pg_advisory_xact_lock(BOOTSTRAP_LOCK_KEY)))
+    has_admin = session.scalar(
+        select(func.count()).select_from(User).where(User.role == "admin", User.is_active.is_(True))
+    )
+    if has_admin:
+        raise ConflictError("An active administrator already exists; bootstrap is one-time.")
+    normalized = email.lower().strip()
+    if user_repo.get_by_email(normalized):
+        raise ConflictError(f"A user with email '{normalized}' already exists; it was not changed.")
+    security.validate_password_strength(password)
+    user = User(
+        email=normalized,
+        hashed_password=security.hash_password(password),
+        full_name=full_name.strip() or "Administrator",
+        role="admin",
+        is_active=True,
+    )
+    user_repo.add(user)
+    session.commit()
+    session.refresh(user)
+    return user
+
+
 def register_user(
-    session: Session, request: UserRegisterRequest, requested_by: User | None = None
+    session: Session,
+    request: UserRegisterRequest,
+    requested_by: User | None = None,
+    *,
+    allow_first_user_admin: bool = False,
 ) -> User:
     user_repo = UserRepository(session)
-    is_bootstrap = user_repo.count() == 0
+    # Without the explicit development flag nobody becomes admin by registering first.
+    is_bootstrap = allow_first_user_admin and user_repo.count() == 0
     if is_bootstrap and session.get_bind().dialect.name == "postgresql":
         # Two simultaneous first registrations must not both become admin. The lock lasts
         # until this transaction commits, so the second one then sees the first user.
@@ -80,11 +119,18 @@ def authenticate_user(
     user_repo = UserRepository(session)
     user = user_repo.get_by_email(request.email)
     stored_hash = user.hashed_password if user else None
-    if not security.verify_password_or_dummy(request.password, stored_hash) or user is None:
+    password_ok, upgraded_hash = security.verify_and_rehash(request.password, stored_hash)
+    if not password_ok or user is None:
         raise AuthenticationError("Invalid email or password.")
 
     if not user.is_active:
         raise AuthenticationError("User account is deactivated. Contact an administrator.")
+
+    if upgraded_hash is not None:
+        # Legacy PBKDF2/bcrypt hash: store the Argon2id one. Committed with the refresh token
+        # below, so a failed login can never change what is stored.
+        user.hashed_password = upgraded_hash
+        logger.info("Upgraded password hash for user %s", user.id)
 
     access_token = security.create_access_token(
         {"sub": str(user.id), "email": user.email, "role": user.role}, settings

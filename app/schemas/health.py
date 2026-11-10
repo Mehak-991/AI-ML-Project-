@@ -12,6 +12,7 @@ class HealthResponse(BaseModel):
     status: Literal["ok", "unavailable"]
     name: str
     version: str
+    release: str | None = None
     environment: str
     timestamp: datetime
 

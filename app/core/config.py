@@ -64,6 +64,15 @@ class Settings(BaseSettings):
     # When set, GET /metrics requires "Authorization: Bearer <token>".
     METRICS_TOKEN: SecretStr | None = None
 
+    # Release tag of the running image (compose passes APP_VERSION), reported by /health so an
+    # operator can see which build is live. Unset outside container deployments.
+    APP_RELEASE: str | None = None
+
+    # Legacy convenience for local development only: the first public registration on an empty
+    # database becomes admin. Off by default and refused in production; create the first admin
+    # with scripts/create_admin.py instead.
+    ALLOW_FIRST_USER_ADMIN: bool = False
+
     # JWT Authentication & Authorization
     JWT_SECRET_KEY: SecretStr = Field(
         default=SecretStr(DEFAULT_JWT_SECRET),
@@ -245,6 +254,11 @@ class Settings(BaseSettings):
             )
         if self.CORS_ORIGINS and "*" in self.CORS_ORIGINS:
             problems.append("CORS_ORIGINS must not contain '*' when APP_ENV=production")
+        if self.ALLOW_FIRST_USER_ADMIN:
+            problems.append(
+                "ALLOW_FIRST_USER_ADMIN must be false when APP_ENV=production "
+                "(create the first administrator with scripts/create_admin.py)"
+            )
         if problems:
             raise ValueError("; ".join(problems))
         return self

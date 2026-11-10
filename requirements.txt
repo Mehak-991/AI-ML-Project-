@@ -30,7 +30,8 @@ seaborn>=0.13,<1.0
 
 # Auth, Security & Explainability
 pyjwt>=2.8,<3.0
-passlib[bcrypt]>=1.7,<2.0
+passlib[bcrypt,argon2]>=1.7,<2.0
+argon2-cffi>=23.1,<26.0
 bcrypt>=4.0,<5.0
 pydantic[email]>=2.9,<3.0
 shap>=0.45,<1.0

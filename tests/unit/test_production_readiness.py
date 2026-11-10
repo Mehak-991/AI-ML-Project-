@@ -348,12 +348,13 @@ def test_tokens_without_expiry_or_subject_are_rejected(make_settings) -> None:
 
 
 def test_login_spends_password_work_for_unknown_emails(secure_client) -> None:
-    with patch.object(security, "verify_password_or_dummy", wraps=security.verify_password_or_dummy) as spy:
+    with patch.object(security, "verify_and_rehash", wraps=security.verify_and_rehash) as spy:
         response = secure_client.post(
             f"{API}/auth/login", json={"email": "nobody@x.com", "password": PASSWORD}
         )
     assert response.status_code == 401
     spy.assert_called_once()
+    assert spy.call_args.args[1] is None, "unknown account: no stored hash, dummy work only"
 
 
 def test_oversized_login_password_is_a_validation_error(secure_client) -> None:

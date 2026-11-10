@@ -87,7 +87,9 @@ def make_settings(tmp_path: Path) -> Callable[..., Settings]:
         overrides.setdefault("MODEL_DIR", tmp_path / "models")
         # Most suites bootstrap their admin by registering first. The shipped default is off
         # (see tests/unit/test_admin_bootstrap.py), so they opt in explicitly here.
-        overrides.setdefault("ALLOW_FIRST_USER_ADMIN", True)
+        # Production-mode settings keep the shipped default: the flag is refused there.
+        if overrides.get("APP_ENV") != "production":
+            overrides.setdefault("ALLOW_FIRST_USER_ADMIN", True)
         return Settings(_env_file=None, **overrides)
 
     return _make

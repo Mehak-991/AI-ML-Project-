@@ -38,6 +38,10 @@ logs/*
 *.db
 *.sqlite3
 
+# Node / Frontend artifacts (if any remain)
+node_modules/
+frontend/
+
 # IDE
 .idea/
 .vscode/

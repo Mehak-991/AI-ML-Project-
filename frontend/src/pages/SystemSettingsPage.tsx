@@ -50,7 +50,7 @@ export const SystemSettingsPage: React.FC = () => {
         ['Database max overflow', String(settings.database_max_overflow)],
         ['Metrics token configured', yesNo(settings.metrics_token_configured)],
         ['Rehash passwords on login', yesNo(settings.password_rehash_on_login)],
-        ['Store new users as legacy "viewer"', yesNo(settings.rbac_store_legacy_viewer)],
+        ['Store new users under the pre-RBAC-v2 name (expand window)', yesNo(settings.rbac_store_legacy_viewer)],
         ['LLM provider', settings.llm_provider],
       ]
     : [];

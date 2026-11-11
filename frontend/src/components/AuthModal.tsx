@@ -150,7 +150,7 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
 
             {isRegisterMode && (
               <p className="text-[11px] text-slate-500">
-                New accounts have Viewer (read-only) access. An administrator can grant additional
+                New accounts have User (read-only) access. A superadmin can grant additional
                 permissions.
               </p>
             )}

@@ -41,8 +41,8 @@ def test_no_frontend_text_claims_the_first_account_becomes_administrator() -> No
 
 def test_registration_hint_states_the_actual_policy() -> None:
     text = _flat(AUTH_MODAL.read_text(encoding="utf-8"))
-    assert "New accounts have Viewer (read-only) access." in text
-    assert "An administrator can grant additional permissions." in text
+    assert "New accounts have User (read-only) access." in text
+    assert "A superadmin can grant additional permissions." in text
 
 
 def test_registration_form_still_submits_the_expected_fields() -> None:

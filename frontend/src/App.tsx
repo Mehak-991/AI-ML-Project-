@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { AuthModal } from './components/AuthModal';
 import { useAuth } from './context/AuthContext';
+import type { Permission } from './types/auth';
 
 // compose.yaml turns the API docs off by default, so production builds opt in to the links.
 const SHOW_API_DOCS = import.meta.env.DEV || import.meta.env.VITE_SHOW_API_DOCS === 'true';
@@ -33,6 +34,12 @@ const PredictionManagementPage = lazy(() =>
 );
 const DeploymentMonitoringPage = lazy(() =>
   import('./pages/DeploymentMonitoringPage').then((m) => ({ default: m.DeploymentMonitoringPage }))
+);
+const AuditLogsPage = lazy(() =>
+  import('./pages/AuditLogsPage').then((m) => ({ default: m.AuditLogsPage }))
+);
+const SystemSettingsPage = lazy(() =>
+  import('./pages/SystemSettingsPage').then((m) => ({ default: m.SystemSettingsPage }))
 );
 const UserManagementPage = lazy(() =>
   import('./pages/UserManagementPage').then((m) => ({ default: m.UserManagementPage }))
@@ -60,10 +67,11 @@ type NavTab =
   | 'explainability'
   | 'jobs'
   | 'users'
+  | 'audit'
   | 'settings';
 
 export function App() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, can } = useAuth();
   const [activeTab, setActiveTab] = useState<NavTab>('models');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -75,8 +83,8 @@ export function App() {
     label: string;
     icon: React.ReactNode;
     phase: string;
-    adminOnly?: boolean;
-    requiredRoles?: Array<'admin' | 'ml_engineer' | 'viewer'>;
+    /** Shown only when the server granted this permission; the API enforces it independently. */
+    permission?: Permission;
   }> = [
     {
       id: 'models',
@@ -131,13 +139,21 @@ export function App() {
       label: 'User Administration',
       icon: <Users className="w-4 h-4" />,
       phase: 'Phase 10',
-      adminOnly: true,
+      permission: 'users:read',
+    },
+    {
+      id: 'audit',
+      label: 'Audit Logs',
+      icon: <ShieldAlert className="w-4 h-4" />,
+      phase: 'Security',
+      permission: 'audit:read',
     },
     {
       id: 'settings',
       label: 'System Settings',
       icon: <Settings className="w-4 h-4" />,
       phase: 'System',
+      permission: 'settings:read',
     },
   ];
 
@@ -179,7 +195,7 @@ export function App() {
               </div>
             )}
             {navItems
-              .filter((item) => !item.adminOnly || user?.role === 'admin')
+              .filter((item) => !item.permission || can(item.permission))
               .map((item) => {
                 const isActive = activeTab === item.id;
 
@@ -277,6 +293,7 @@ export function App() {
                 {activeTab === 'deployment' && 'Model Deployment & Monitoring Studio'}
                 {activeTab === 'drift' && 'Data Quality & Drift Monitoring'}
                 {activeTab === 'users' && 'Enterprise User Administration'}
+                {activeTab === 'audit' && 'Audit Logs'}
                 {activeTab === 'settings' && 'System Settings'}
               </h1>
               <p className="text-xs text-slate-500 hidden sm:block">
@@ -292,6 +309,7 @@ export function App() {
                   'Detect feature distribution shifts (PSI/KS), missing value rates, outliers, and performance degradation.'}
                 {activeTab === 'users' &&
                   'Role-Based Access Control, user provisioning, account statuses, and admin security.'}
+                {activeTab === 'audit' && 'Append-only record of role changes and privileged operations.'}
                 {activeTab === 'settings' && 'Runtime configuration and backend server properties.'}
               </p>
             </div>
@@ -407,6 +425,10 @@ export function App() {
 
           {activeTab === 'jobs' && <JobManagementPage />}
 
+          {activeTab === 'audit' && can('audit:read') && <AuditLogsPage />}
+
+          {activeTab === 'settings' && can('settings:read') && <SystemSettingsPage />}
+
           {activeTab === 'datasets' && (
             <div className="bg-slate-950 text-slate-100 p-6 md:p-8 rounded-3xl shadow-lg border border-slate-800">
               <DatasetManagementPage />
@@ -414,7 +436,7 @@ export function App() {
           )}
 
           {activeTab === 'users' && (
-            user?.role === 'admin' ? (
+            can('users:read') ? (
               <UserManagementPage />
             ) : (
               <div className="bg-white border border-rose-200 rounded-2xl p-12 text-center max-w-md mx-auto my-12 shadow-sm">
@@ -423,14 +445,14 @@ export function App() {
                 </div>
                 <h3 className="text-lg font-bold text-slate-900">Access Restricted</h3>
                 <p className="text-xs text-slate-500 mt-2">
-                  User Administration requires Administrator privileges. Please contact an administrator or sign in with an admin account.
+                  User Administration requires superadmin privileges. Please contact a superadmin or sign in with a superadmin account.
                 </p>
                 {!user && (
                   <button
                     onClick={() => setAuthModalOpen(true)}
                     className="mt-5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer"
                   >
-                    Sign In as Administrator
+                    Sign In as Superadmin
                   </button>
                 )}
               </div>
@@ -444,7 +466,9 @@ export function App() {
             activeTab !== 'deployment' &&
             activeTab !== 'drift' &&
             activeTab !== 'explainability' &&
-            activeTab !== 'users' && (
+            activeTab !== 'users' &&
+            activeTab !== 'audit' &&
+            activeTab !== 'settings' && (
             <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-md mx-auto my-12 shadow-sm">
               <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 mx-auto mb-4">
                 <Cpu className="w-8 h-8" />

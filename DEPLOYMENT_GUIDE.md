@@ -56,23 +56,30 @@ unset; that is intentional, so a forgotten tag can never fall back to an old or 
 `scripts/preflight.py` additionally rejects `latest` and the retired `0.4.0`.
 
 **Then create your admin explicitly.** Registering through the site never makes anyone an admin on
-a fresh database: every public registration is a `viewer`. Create the first administrator from the
-server, once:
+a fresh database: every public registration is a read-only `user`. Create the first **superadmin**
+(the only role that manages accounts) from the server, once, after the migrations have run:
 
 ```powershell
 # interactive: prompts for the password twice, nothing is echoed
-docker compose --env-file .env.production run --rm --no-deps -it app python scripts/create_admin.py --email you@example.com
+docker compose --env-file .env.production run --rm --no-deps -it app python scripts/create_superadmin.py --email you@example.com
 
 # non-interactive: the password comes from the environment, never from the command line
-$env:BOOTSTRAP_ADMIN_PASSWORD = "<your password>"
-docker compose --env-file .env.production run --rm --no-deps -e BOOTSTRAP_ADMIN_PASSWORD app python scripts/create_admin.py --email you@example.com
-Remove-Item Env:BOOTSTRAP_ADMIN_PASSWORD
+$env:BOOTSTRAP_SUPERADMIN_PASSWORD = "<your password>"
+docker compose --env-file .env.production run --rm --no-deps -e BOOTSTRAP_SUPERADMIN_PASSWORD app python scripts/create_superadmin.py --email you@example.com
+Remove-Item Env:BOOTSTRAP_SUPERADMIN_PASSWORD
+
+# promote ONE explicitly named existing account instead (asks you to type its email to confirm)
+docker compose --env-file .env.production run --rm --no-deps -it app python scripts/create_superadmin.py --email someone@example.com --promote
 ```
 
-It is one-time: it refuses when an active administrator already exists, and it never promotes or
-changes an existing account. More admins are made by an existing admin under User Administration.
-(`ALLOW_FIRST_USER_ADMIN=true` restores "first registration is admin" for local development only;
-production refuses to start with it.)
+It is one-time: it refuses when an active superadmin exists, it refuses before migration `0014` has
+been applied, and it never changes an existing password. It never picks an account for you:
+`--promote` needs the exact email and a typed confirmation. It is also the recovery path if every
+superadmin is lost. A forgotten superadmin password is reset on the server with
+`scripts/reset_password.py --email ...` (new password from `RESET_PASSWORD` or a hidden prompt; sessions
+are revoked). Both write an audit entry. More superadmins, admins and users are managed by a
+superadmin under User Administration. `create_admin.py` is the pre-RBAC-v2 tool and no longer
+suffices on its own, because an `admin` cannot manage accounts.
 
 ### Existing project volumes
 

@@ -8,8 +8,8 @@ A modular AI/ML platform API built with FastAPI. It provides:
   prediction.
 - **Optional AI services:** Sentence Transformers embeddings, transformer sentiment
   classification, OpenAI chat, token counting, and a LangGraph long-text analysis workflow.
-- **Accounts and access control:** JWT access tokens, rotating refresh tokens, three roles (admin,
-  ml_engineer, viewer) and per-object ownership checks.
+- **Accounts and access control:** JWT access tokens, rotating refresh tokens, three roles (user,
+  admin, superadmin) with a central permission registry, deny-by-default routes, an audit log, and per-object ownership checks.
 - **MLOps:** background jobs with a dedicated worker, experiments/AutoML, deployments, prediction
   audit history, drift monitoring, SHAP and LIME explanations, and Prometheus metrics.
 - **Web UI:** a React SPA served by Nginx, which also proxies the API.
@@ -258,11 +258,11 @@ Interactive docs: **http://127.0.0.1:8000/docs** (Swagger), `/redoc`, and the sc
 | `GET /` | Welcome | — |
 | `GET /health` | Liveness (no dependencies) | — |
 | `GET /api/v1/health` | Readiness incl. DB; 503 if a configured DB is down | — |
-| `POST /api/v1/datasets/validate` | Validate and profile an upload **without storing it** | admin, ml_engineer |
-| `POST /api/v1/datasets` | Upload and register a CSV/XLSX dataset (201) | admin, ml_engineer |
+| `POST /api/v1/datasets/validate` | Validate and profile an upload **without storing it** | admin, superadmin |
+| `POST /api/v1/datasets` | Upload and register a CSV/XLSX dataset (201) | admin, superadmin |
 | `GET /api/v1/datasets`, `GET /api/v1/datasets/{id}` | List / get dataset metadata | login, owner |
 | `GET /api/v1/datasets/{id}/summary?target_column=` | Validation report and profile | login, owner |
-| `POST /api/v1/models/train` | Train a baseline model (201); same `name` → next `version` | admin, ml_engineer |
+| `POST /api/v1/models/train` | Train a baseline model (201); same `name` → next `version` | admin, superadmin |
 | `GET /api/v1/models[?dataset_id=]`, `GET /api/v1/models/{id}` | Model metadata, schema, metrics, version | login, owner |
 | `POST /api/v1/models/{id}/predict` | Predict with a saved model | login, owner |
 | `GET /api/v1/ai/status` | Installed AI extras, provider config (never the key), loaded models | login |
@@ -271,22 +271,38 @@ Interactive docs: **http://127.0.0.1:8000/docs** (Swagger), `/redoc`, and the sc
 | `POST /api/v1/nlp/classify` | Sentiment classification | torch + `nlp` |
 | `POST /api/v1/llm/chat` | LLM chat completion | `llm` + key |
 | `POST /api/v1/nlp/analyze` | Summarise long text + sentiment (LangGraph) | `llm` + `agents` + key |
-| `/api/v1/auth/*` | Register, login, refresh, logout, change password, user admin | see below |
-| `/api/v1/deployments`, `/models/{id}/deploy`, `/undeploy` | Deployment lifecycle | login, owner; deploy needs admin |
+| `/api/v1/auth/*` | Register, login, refresh, logout, change password, own profile; user administration | register/login public; users: superadmin |
+| `GET /api/v1/audit-logs` | Append-only audit trail (role changes, deactivations, deployments, CLI actions) | superadmin |
+| `GET /api/v1/system/settings` | Non-secret runtime settings, read-only | superadmin |
+| `/api/v1/deployments`, `/models/{id}/deploy`, `/undeploy` | Deployment lifecycle | login, owner; deploy needs admin or superadmin |
 | `/api/v1/predictions/history` | Prediction audit history and ground truth | login, owner |
-| `/api/v1/monitoring/*`, `/api/v1/drift/*` | Monitoring KPIs, data quality, drift, alerts | login, owner; analysis needs admin or ml_engineer |
-| `/api/v1/experiments` | Experiments and AutoML runs | login, owner; writes need admin or ml_engineer |
+| `/api/v1/monitoring/*`, `/api/v1/drift/*` | Monitoring KPIs, data quality, drift, alerts | login, owner; analysis needs admin or superadmin |
+| `/api/v1/experiments` | Experiments and AutoML runs | login, owner; writes need admin or superadmin |
 | `/api/v1/models/{id}/explainability/*` | SHAP and LIME explanations | login, owner |
-| `/api/v1/jobs` | Background jobs | login, owner; writes need admin or ml_engineer |
+| `/api/v1/jobs` | Background jobs | login, owner; writes need admin or superadmin |
 | `GET /metrics` | Prometheus metrics; not routed through Nginx | optional `METRICS_TOKEN` |
 
-**Access rules.** Every public registration is a viewer, and asking for another role returns 403.
-Nobody becomes admin by registering first: the first administrator is created from the server with
-`scripts/create_admin.py` (one-time; see DEPLOYMENT_GUIDE.md). Passwords are stored as Argon2id;
-older PBKDF2/bcrypt hashes keep working and are upgraded at the user's next successful login. Admins create users with any role, or change roles, under
-User Administration. "Owner" means the caller created the object, or is an admin. Objects
-that predate ownership tracking (no owner) stay available to every signed-in user. Viewers can't
-upload or train, so they see only what has no owner.
+**Access rules (RBAC v2).** Exactly three roles exist, defined once in `app/core/permissions.py`:
+
+| Role | May |
+|---|---|
+| `user` | Read everything visible to them (datasets, models, experiments, jobs, monitoring, drift, prediction history, reports); run predictions and SHAP/LIME explanations; view and update their own profile and password. Cannot create, change or delete any managed resource |
+| `admin` | Everything a `user` can, plus ML management: upload datasets, train models, experiments and AutoML, jobs, drift analysis, ground truth, LLM helpers, and deploy/undeploy. Cannot manage accounts, roles, audit logs or settings |
+| `superadmin` | Everything, plus user administration (create, change role between `user` and `admin`, deactivate, guarded delete), granting and revoking `superadmin`, the audit log and system settings |
+
+Every route declares its permission, and a route that declares none is refused (403), so forgetting
+to protect a new route fails closed. `GET /api/v1/auth/me` returns the permissions the server
+computed for the caller; the UI uses that list and the API enforces it independently. Every public
+registration creates a `user`, and its payload has no role field at all. A superadmin is never
+created through the API: the first one comes from `scripts/create_superadmin.py` on the server, and
+only an existing superadmin can grant or revoke it afterwards. The last active superadmin can never
+be demoted, deactivated or deleted, and every role change, deactivation, deletion and deployment is
+written to the audit log in the same transaction. Passwords are stored as Argon2id; older
+PBKDF2/bcrypt hashes keep working and are upgraded at the user's next successful login.
+
+Object-level rules still apply: `admin` and `superadmin` see and use every resource; a `user` sees
+resources they own plus those that predate ownership tracking (no owner), so a plain user created
+fresh sees only what has no owner.
 
 **Errors** always look like `{"error": {"code": "...", "message": "...", "details": ...}}`, and
 every response carries an `X-Request-ID` header to quote in bug reports. Common codes:
@@ -500,8 +516,8 @@ Follow [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md). In short:
 2. **TLS.** The bundled Nginx serves plain HTTP by default. Enable HTTPS with `compose.tls.yaml` or
    put a TLS terminator in front ([TLS_DEPLOYMENT.md](TLS_DEPLOYMENT.md)); never expose port 80
    directly to the internet.
-3. **First account.** Public registration never creates an admin. Create yours with
-   `scripts/create_admin.py` (DEPLOYMENT_GUIDE.md); it refuses once an admin exists.
+3. **First account.** Public registration only creates read-only users. Create your superadmin with
+   `scripts/create_superadmin.py` (DEPLOYMENT_GUIDE.md); it refuses once a superadmin exists.
 4. **Settings:** `compose.yaml` sets `APP_ENV=production`, `LOG_FORMAT=json` and
    `DOCS_ENABLED=false`. Run `python scripts/check_config.py --db` inside the container.
 5. **Database.** Use managed PostgreSQL or the compose service with backups (`pg_dump`, volume

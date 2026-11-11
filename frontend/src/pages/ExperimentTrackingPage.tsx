@@ -23,8 +23,8 @@ import type { DatasetRead } from '../types/dataset';
 import { useAuth } from '../context/AuthContext';
 
 export function ExperimentTrackingPage() {
-  const { user } = useAuth();
-  const canManage = user?.role === 'admin' || user?.role === 'ml_engineer';
+  const { can } = useAuth();
+  const canManage = can('ml:operate');
 
   // Experiments & Datasets
   const [experiments, setExperiments] = useState<ExperimentRead[]>([]);

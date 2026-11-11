@@ -28,8 +28,8 @@ import type { ModelRead } from '../types/model';
 import { useAuth } from '../context/AuthContext';
 
 export function DataDriftMonitoringPage() {
-  const { user } = useAuth();
-  const canAnalyze = user?.role === 'admin' || user?.role === 'ml_engineer';
+  const { can } = useAuth();
+  const canAnalyze = can('ml:operate');
 
   // Overview stats & Models
   const [overview, setOverview] = useState<DriftOverviewResponse | null>(null);
@@ -330,7 +330,7 @@ export function DataDriftMonitoringPage() {
               onClick={handleTriggerQualityCheck}
               disabled={isAnalyzing || !canAnalyze || !selectedModelId}
               className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 disabled:opacity-50 transition"
-              title={!canAnalyze ? 'Requires ML Engineer or Admin role' : ''}
+              title={!canAnalyze ? 'Requires the admin or superadmin role' : ''}
             >
               <Database className="w-3.5 h-3.5" />
               Check Data Quality
@@ -340,7 +340,7 @@ export function DataDriftMonitoringPage() {
               onClick={handleTriggerDriftCheck}
               disabled={isAnalyzing || !canAnalyze || !selectedModelId}
               className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 disabled:opacity-50 transition"
-              title={!canAnalyze ? 'Requires ML Engineer or Admin role' : ''}
+              title={!canAnalyze ? 'Requires the admin or superadmin role' : ''}
             >
               <BarChart2 className="w-3.5 h-3.5" />
               Run Drift Analysis (PSI/KS)
@@ -350,7 +350,7 @@ export function DataDriftMonitoringPage() {
               onClick={handleTriggerPerformanceCheck}
               disabled={isAnalyzing || !canAnalyze || !selectedModelId}
               className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 disabled:opacity-50 transition"
-              title={!canAnalyze ? 'Requires ML Engineer or Admin role' : ''}
+              title={!canAnalyze ? 'Requires the admin or superadmin role' : ''}
             >
               <Activity className="w-3.5 h-3.5" />
               Analyze Performance

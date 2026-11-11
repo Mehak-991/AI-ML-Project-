@@ -60,6 +60,9 @@ SETTINGS_ENV_VARS = [
     "APP_RELEASE",
     "RBAC_STORE_LEGACY_VIEWER",
     "PASSWORD_REHASH_ON_LOGIN",
+    # CI exports these for the whole job; tests that depend on the shipped defaults must not see them.
+    "RATE_LIMIT_ENABLED",
+    "DOCS_ENABLED",
 ]
 
 

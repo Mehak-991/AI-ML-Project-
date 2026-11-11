@@ -67,6 +67,15 @@ jobs:
           pytest tests/unit/ -v --tb=short
 
       # Real PostgreSQL: enforces what the SQLite test double cannot (column lengths, row locks).
+      # The job-recovery tests run against the real schema, so build it with the migrations
+      # (which also exercises the whole chain up to head on every build).
+      - name: Migrate the CI database to head
+        env:
+          APP_ENV: testing
+          DATABASE_URL: postgresql+psycopg://ci:ci-only-disposable@127.0.0.1:5432/aiproject_ci
+        run: |
+          alembic upgrade head
+
       - name: Run PostgreSQL Integration Tests (migrations, schema, job recovery)
         env:
           APP_ENV: testing

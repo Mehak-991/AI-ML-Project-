@@ -35,7 +35,7 @@ from app.ml.preprocessing import (
     select_features,
     split_dataset,
 )
-from app.ml.training import MIN_TRAINING_ROWS, TrainingResult, _prepare_target
+from app.ml.training import MIN_TRAINING_ROWS, TrainingResult, _prepare_target, build_estimator
 from app.ml.utils import to_python
 from app.services.dataset_service import get_dataset, load_dataset_frame
 
@@ -229,20 +229,27 @@ def execute_pipeline_run(
         )
 
         # 5. Estimator Setup
-        if experiment.problem_type == "classification":
+        if experiment.algorithm in ("gradient_boosting", "decision_tree"):
+            base_estimator = build_estimator(
+                experiment.problem_type, experiment.algorithm, experiment.random_state
+            )
+        elif experiment.problem_type == "classification":
             base_estimator = (
                 LogisticRegression(max_iter=2000, random_state=experiment.random_state)
                 if experiment.algorithm == "linear"
                 else RandomForestClassifier(random_state=experiment.random_state)
             )
-            evaluate = _classification_metrics
         else:
             base_estimator = (
                 Ridge(random_state=experiment.random_state)
                 if experiment.algorithm == "linear"
                 else RandomForestRegressor(random_state=experiment.random_state)
             )
-            evaluate = _regression_metrics
+        evaluate = (
+            _classification_metrics
+            if experiment.problem_type == "classification"
+            else _regression_metrics
+        )
 
         full_pipeline = Pipeline(
             steps=[

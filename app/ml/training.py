@@ -17,9 +17,14 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 import sklearn
-from sklearn.base import BaseEstimator
+from sklearn.base import BaseEstimator, clone
 from sklearn.dummy import DummyClassifier, DummyRegressor
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import (
+    GradientBoostingClassifier,
+    GradientBoostingRegressor,
+    RandomForestClassifier,
+    RandomForestRegressor,
+)
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import (
     accuracy_score,
@@ -35,7 +40,9 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
+from sklearn.model_selection import KFold, StratifiedKFold, cross_validate
 from sklearn.pipeline import Pipeline
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from app.core.exceptions import TrainingError
 from app.ml.preprocessing import (
@@ -50,7 +57,7 @@ from app.ml.preprocessing import (
 from app.ml.utils import round_or_none, to_python
 
 ProblemType = Literal["classification", "regression"]
-Algorithm = Literal["linear", "random_forest"]
+Algorithm = Literal["linear", "random_forest", "gradient_boosting", "decision_tree"]
 
 MIN_TRAINING_ROWS = 20
 # Integer targets with at most this many distinct values are treated as class labels.
@@ -100,10 +107,60 @@ def build_estimator(problem_type: ProblemType, algorithm: Algorithm, random_stat
     if problem_type == "classification":
         if algorithm == "random_forest":
             return RandomForestClassifier(n_estimators=200, random_state=random_state)
+        if algorithm == "gradient_boosting":
+            return GradientBoostingClassifier(random_state=random_state)
+        if algorithm == "decision_tree":
+            return DecisionTreeClassifier(max_depth=8, random_state=random_state)
         return LogisticRegression(max_iter=2000)
     if algorithm == "random_forest":
         return RandomForestRegressor(n_estimators=200, random_state=random_state)
+    if algorithm == "gradient_boosting":
+        return GradientBoostingRegressor(random_state=random_state)
+    if algorithm == "decision_tree":
+        return DecisionTreeRegressor(max_depth=8, random_state=random_state)
     return Ridge(alpha=1.0)
+
+
+# Cross-validation is repeated model fitting, so it is bounded: it runs on the training+validation
+# rows only (the test split stays untouched) and is skipped for very large training sets.
+CV_FOLDS = 5
+CV_MAX_ROWS = 20_000
+
+
+def cross_validate_model(
+    pipeline: Pipeline,
+    X: pd.DataFrame,
+    y: pd.Series,
+    problem_type: ProblemType,
+    random_state: int,
+) -> dict[str, Any]:
+    if len(y) > CV_MAX_ROWS:
+        return {"status": "skipped", "reason": f"more than {CV_MAX_ROWS} training rows"}
+    if problem_type == "classification":
+        smallest_class = int(y.value_counts().min())
+        folds = min(CV_FOLDS, smallest_class)
+        splitter = StratifiedKFold(n_splits=folds, shuffle=True, random_state=random_state)
+        scoring = {"accuracy": "accuracy", "f1_macro": "f1_macro"}
+    else:
+        folds = min(CV_FOLDS, len(y))
+        splitter = KFold(n_splits=folds, shuffle=True, random_state=random_state)
+        scoring = {"r2": "r2", "rmse": "neg_root_mean_squared_error"}
+    if folds < 2:
+        return {"status": "skipped", "reason": "too few rows per class for cross-validation"}
+    try:
+        scores = cross_validate(clone(pipeline), X, y, cv=splitter, scoring=scoring)
+    except ValueError as exc:
+        return {"status": "skipped", "reason": str(exc)[:200]}
+    summary: dict[str, Any] = {"status": "ok", "folds": folds}
+    for name in scoring:
+        values = scores[f"test_{name}"]
+        if name == "rmse":
+            values = -values
+        summary[name] = {
+            "mean": round_or_none(float(np.mean(values))),
+            "std": round_or_none(float(np.std(values))),
+        }
+    return summary
 
 
 def classification_metrics(model: BaseEstimator, X: pd.DataFrame, y: pd.Series) -> dict[str, Any]:
@@ -246,7 +303,15 @@ def train_model(df: pd.DataFrame, config: TrainingConfig) -> TrainingResult:
         if problem_type == "classification"
         else None
     )
+    cv_X = pd.concat([splits.X_train, splits.X_val])
+    cv_y = pd.concat([splits.y_train, splits.y_val])
+    cross_validation = (
+        cross_validate_model(pipeline, cv_X, cv_y, problem_type, config.random_state)
+        if len(cv_y) >= 2
+        else {"status": "skipped", "reason": "no validation split"}
+    )
     metadata = {
+        "cross_validation": cross_validation,
         "trained_at": datetime.now(UTC).isoformat(),
         "training_seconds": round(time.perf_counter() - started, 3),
         "rows": {

@@ -111,6 +111,7 @@ select = [
     "SIM",      # simplify
     "C4",       # comprehensions
     "RUF",      # ruff-specific
+    "S",        # bandit (security)
 ]
 
 [tool.ruff.lint.isort]

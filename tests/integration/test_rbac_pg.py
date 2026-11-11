@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 from alembic.config import Config
-from sqlalchemy import create_engine, func, inspect, select, text
+from sqlalchemy import create_engine, delete, func, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session, sessionmaker
@@ -33,14 +33,14 @@ PASSWORD = "Str0ngPassw0rd"
 SETTINGS = Settings(_env_file=None, APP_ENV="testing")
 
 
-def _make_superadmins(factory, count: int) -> list[User]:
+def _make_superadmins(factory, count: int, prefix: str = "su") -> list[User]:
     from app.core import security
 
     users = []
     with factory() as session:
         hashed = security.hash_password(PASSWORD)
         for index in range(count):
-            user = User(email=f"su{index}@x.com", hashed_password=hashed, full_name="", role="superadmin", is_active=True)
+            user = User(email=f"{prefix}{index}@x.com", hashed_password=hashed, full_name="", role="superadmin", is_active=True)
             session.add(user)
             users.append(user)
         session.commit()
@@ -50,11 +50,12 @@ def _make_superadmins(factory, count: int) -> list[User]:
     return users
 
 
-def _active_superadmins(factory) -> int:
+def _active_superadmins(factory, prefix: str | None = None) -> int:
     with factory() as session:
-        return session.scalar(
-            select(func.count()).select_from(User).where(User.role == "superadmin", User.is_active.is_(True))
-        )
+        stmt = select(func.count()).select_from(User).where(User.role == "superadmin", User.is_active.is_(True))
+        if prefix:
+            stmt = stmt.where(User.email.like(f"{prefix}%"))
+        return session.scalar(stmt)
 
 
 def _race(jobs: list) -> list:
@@ -83,8 +84,9 @@ def _race(jobs: list) -> list:
 
 @requires_db
 def test_two_superadmins_demoting_each_other_at_once_leave_exactly_one(pg_isolated_engine) -> None:  # noqa: F811
+    """Repeated over many fresh pairs: a single round rarely opens the race window on a fast
+    machine, so one round could pass even without the row lock."""
     factory = sessionmaker(bind=pg_isolated_engine, expire_on_commit=False)
-    a, b = _make_superadmins(factory, 2)
 
     def revoke(actor, target):
         def job():
@@ -93,14 +95,22 @@ def test_two_superadmins_demoting_each_other_at_once_leave_exactly_one(pg_isolat
 
         return job
 
-    outcomes = _race([revoke(a, b), revoke(b, a)])
-    wins = [o for o in outcomes if isinstance(o, User)]
-    refused = [o for o in outcomes if isinstance(o, ConflictError)]
-    assert len(wins) == 1 and len(refused) == 1, outcomes
-    assert "last active superadmin" in refused[0].message
-    assert _active_superadmins(factory) == 1
+    for round_number in range(25):
+        prefix = f"r{round_number}x"
+        # Each round starts from an empty users table. The guard (correctly) counts every active
+        # superadmin, so survivors of earlier rounds would make later rounds legitimately safe.
+        with factory() as session:
+            session.execute(delete(User))
+            session.commit()
+        a, b = _make_superadmins(factory, 2, prefix)
+        outcomes = _race([revoke(a, b), revoke(b, a)])
+        wins = [o for o in outcomes if isinstance(o, User)]
+        refused = [o for o in outcomes if isinstance(o, ConflictError)]
+        assert len(wins) == 1 and len(refused) == 1, (round_number, outcomes)
+        assert "last active superadmin" in refused[0].message
+        assert _active_superadmins(factory, prefix) == 1, f"round {round_number} emptied the superadmin set"
     with factory() as session:
-        assert session.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.action == "superadmin.revoked")) == 1
+        assert session.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.action == "superadmin.revoked")) == 25
 
 
 @requires_db

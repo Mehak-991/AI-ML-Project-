@@ -154,6 +154,16 @@ def run(base_url: str) -> Checker:
         return c
     dataset_id = uploaded.json()["dataset"]["id"]
     c.check("dataset summary", client.get(f"{API}/datasets/{dataset_id}/summary", headers=mle).status_code == 200)
+    preview = client.get(f"{API}/datasets/{dataset_id}/preview", params={"limit": 5}, headers=mle)
+    c.check(
+        "dataset preview is bounded",
+        preview.status_code == 200
+        and preview.json()["shown_rows"] == 5
+        and preview.json()["columns"] == ["age", "income", "plan", "churned"],
+        preview.text[:200],
+    )
+    c.check("dataset preview limit is validated", client.get(f"{API}/datasets/{dataset_id}/preview", params={"limit": 101}, headers=mle).status_code == 422)
+    c.check("other user cannot preview dataset", client.get(f"{API}/datasets/{dataset_id}/preview", headers=other).status_code == 403)
     c.check("other user cannot read dataset", client.get(f"{API}/datasets/{dataset_id}", headers=other).status_code == 403)
 
     print("Training and prediction")
@@ -163,6 +173,21 @@ def run(base_url: str) -> Checker:
         return c
     model_id = trained.json()["id"]
     c.check("list models", client.get(f"{API}/models", headers=mle).json()["total"] >= 1)
+    detail = client.get(f"{API}/models/{model_id}", headers=mle).json()
+    cv = detail.get("training_metadata", {}).get("cross_validation", {})
+    c.check("training reports cross-validation", cv.get("status") == "ok" and cv.get("folds", 0) >= 2, str(cv)[:200])
+    c.check("training reports baseline and test metrics", "f1_macro" in detail["metrics"]["test"] and "baseline_test" in detail["metrics"])
+    for algorithm, estimator in (("gradient_boosting", "GradientBoostingClassifier"), ("decision_tree", "DecisionTreeClassifier")):
+        extra = client.post(
+            f"{API}/models/train",
+            json={**train_body, "algorithm": algorithm, "name": f"{algorithm}-{suffix}"},
+            headers=mle,
+        )
+        c.check(
+            f"train {algorithm}",
+            extra.status_code == 201 and extra.json()["training_metadata"]["estimator"] == estimator,
+            extra.text[:200],
+        )
     predicted = client.post(f"{API}/models/{model_id}/predict", json={"records": [RECORD, RECORD]}, headers=mle)
     c.check("predict", predicted.status_code == 200 and len(predicted.json()["predictions"]) == 2, predicted.text)
     c.check("other user cannot predict", client.post(f"{API}/models/{model_id}/predict", json={"records": [RECORD]}, headers=other).status_code == 403)
@@ -253,6 +278,48 @@ def run(base_url: str) -> Checker:
     c.check("drift reports", client.get(f"{API}/drift/models/{model_id}/reports", headers=mle).json()["total"] >= 3)
     c.check("undeploy model", client.post(f"{API}/models/{model_id}/undeploy", headers=admin).status_code == 200)
     c.check("AI status", client.get(f"{API}/ai/status", headers=mle).status_code == 200)
+
+    print("Session lifecycle and privilege escalation")
+    session = client.post(f"{API}/auth/login", json={"email": other_email, "password": password}).json()
+    mine = {"Authorization": f"Bearer {session['access_token']}"}
+    renamed = client.patch(f"{API}/auth/me", json={"full_name": "E2E Name"}, headers=mine)
+    c.check("user updates own display name", renamed.status_code == 200 and renamed.json()["full_name"] == "E2E Name", renamed.text)
+    for field, value in (("role", "superadmin"), ("is_active", False), ("permissions", ["users:manage"])):
+        attempt = client.patch(f"{API}/auth/me", json={"full_name": "x", field: value}, headers=mine)
+        c.check(f"user cannot set {field} on self", attempt.status_code == 422, attempt.text[:120])
+    c.check("user cannot read others' account endpoint", client.get(f"{API}/auth/users", headers=mine).status_code == 403)
+    c.check("user cannot change a role", client.patch(f"{API}/auth/users/{tokens['user']['id']}", json={"role": "admin"}, headers=mine).status_code == 403)
+    c.check("user cannot grant superadmin", client.post(f"{API}/auth/users/{tokens['user']['id']}/superadmin", headers=mine).status_code == 403)
+    c.check("admin cannot grant superadmin", client.post(f"{API}/auth/users/{tokens['user']['id']}/superadmin", headers=mle).status_code == 403)
+    wrong = client.post(f"{API}/auth/change-password", json={"current_password": "not-the-password", "new_password": password + "x"}, headers=mine)
+    c.check("password change needs the current password", wrong.status_code == 401, wrong.text[:120])
+    weak = client.post(f"{API}/auth/change-password", json={"current_password": password, "new_password": "short"}, headers=mine)
+    c.check("weak new password rejected", weak.status_code in (400, 422), weak.text[:120])
+    new_password = password + "-new1"
+    changed = client.post(f"{API}/auth/change-password", json={"current_password": password, "new_password": new_password}, headers=mine)
+    c.check("password change succeeds", changed.status_code == 200, changed.text[:120])
+    c.check("refresh tokens revoked by password change", client.post(f"{API}/auth/refresh", json={"refresh_token": session["refresh_token"]}).status_code == 401)
+    c.check("old password no longer works", client.post(f"{API}/auth/login", json={"email": other_email, "password": password}).status_code == 401)
+    relogin = client.post(f"{API}/auth/login", json={"email": other_email, "password": new_password})
+    c.check("new password works", relogin.status_code == 200, relogin.text[:120])
+    out = client.post(f"{API}/auth/logout", json={"refresh_token": relogin.json()["refresh_token"]}, headers={"Authorization": f"Bearer {relogin.json()['access_token']}"})
+    c.check("logout succeeds", out.status_code in (200, 204), out.text[:120])
+    c.check("refresh token revoked by logout", client.post(f"{API}/auth/refresh", json={"refresh_token": relogin.json()["refresh_token"]}).status_code == 401)
+
+    print("Role change, deactivation and audit trail")
+    target = client.get(f"{API}/auth/users", params={"search": viewer_email}, headers=admin).json()
+    target_id = next(u["id"] for u in target["items"] if u["email"] == viewer_email)
+    promoted = client.patch(f"{API}/auth/users/{target_id}", json={"role": "admin"}, headers=admin)
+    c.check("superadmin promotes user to admin", promoted.status_code == 200 and promoted.json()["role"] == "admin", promoted.text[:150])
+    c.check("promotion cannot create a superadmin", client.patch(f"{API}/auth/users/{target_id}", json={"role": "superadmin"}, headers=admin).status_code == 422)
+    deactivated = client.patch(f"{API}/auth/users/{target_id}", json={"is_active": False}, headers=admin)
+    c.check("superadmin deactivates an account", deactivated.status_code == 200 and deactivated.json()["is_active"] is False, deactivated.text[:150])
+    c.check("deactivated account cannot log in", client.post(f"{API}/auth/login", json={"email": viewer_email, "password": password}).status_code in (401, 403))
+    audit = client.get(f"{API}/audit-logs", params={"limit": 100}, headers=admin).json()
+    actions = {entry["action"] for entry in audit["items"]}
+    c.check("audit log records role change and deactivation", {"user.role_changed", "user.deactivated"} <= actions, str(sorted(actions))[:200])
+    rendered = str(audit)
+    c.check("audit log contains no password material", "hashed_password" not in rendered and password not in rendered)
     return c
 
 

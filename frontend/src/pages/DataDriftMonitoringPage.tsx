@@ -104,7 +104,7 @@ export function DataDriftMonitoringPage() {
       setActionMessage({ text: 'Data quality check completed successfully.', type: 'success' });
       await fetchModelDetails(selectedModelId);
       await fetchOverviewAndModels();
-    } catch (err: unknown) {
+    } catch {
       setActionMessage({ text: 'Data quality check failed. Ensure recent prediction logs exist.', type: 'error' });
     } finally {
       setIsAnalyzing(false);
@@ -123,7 +123,7 @@ export function DataDriftMonitoringPage() {
       setActionMessage({ text: 'Feature drift analysis completed.', type: 'success' });
       await fetchModelDetails(selectedModelId);
       await fetchOverviewAndModels();
-    } catch (err: unknown) {
+    } catch {
       setActionMessage({ text: 'Feature drift analysis failed. Verify training baseline and prediction logs.', type: 'error' });
     } finally {
       setIsAnalyzing(false);
@@ -139,7 +139,7 @@ export function DataDriftMonitoringPage() {
       setActionMessage({ text: 'Model performance check completed.', type: 'success' });
       await fetchModelDetails(selectedModelId);
       await fetchOverviewAndModels();
-    } catch (err: unknown) {
+    } catch {
       setActionMessage({ text: 'Performance analysis failed. Ground truth labels may be missing.', type: 'error' });
     } finally {
       setIsAnalyzing(false);

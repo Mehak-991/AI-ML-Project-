@@ -1,12 +1,10 @@
 """FastAPI endpoints for Model Explainability (SHAP & LIME)."""
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 
 from app.api.deps import DbSession, MlOperatorDep, PredictAccessDep, ReadAccessDep, SettingsDep
-from app.database.models.user import User
 from app.schemas.common import ErrorResponse
 from app.schemas.explainability import (
     ExplainabilitySummaryResponse,

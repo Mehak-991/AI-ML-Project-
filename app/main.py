@@ -4,11 +4,12 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.ai.container import AIServices
+from app.api.deps import enforce_route_policy
 from app.api.router import COMMON_ERROR_RESPONSES, api_v1_router
 from app.api.routes import root
 from app.core.config import Settings, get_settings
@@ -56,6 +57,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         docs_url="/docs" if settings.DOCS_ENABLED else None,
         redoc_url="/redoc" if settings.DOCS_ENABLED else None,
         openapi_url="/openapi.json" if settings.DOCS_ENABLED else None,
+        # Deny-by-default: a route that declares neither a permission nor public_route is refused.
+        dependencies=[Depends(enforce_route_policy)],
     )
     app.dependency_overrides[get_settings] = lambda: settings
     # Lazy container: no optional package is imported and no model is loaded here.

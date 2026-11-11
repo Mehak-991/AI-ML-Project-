@@ -5,9 +5,8 @@ Write operations (analyze-*, resolve) are restricted to admin and ml_engineer ro
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 
 from app.api.deps import DbSession, MlOperatorDep, ReadAccessDep, SettingsDep
 from app.schemas.common import ErrorResponse

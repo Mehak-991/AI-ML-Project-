@@ -3,39 +3,45 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Query, Request, status
 
-from app.core.permissions import Permission
-from app.api.deps import DbSession, ReadAccessDep, SettingsDep, require_permission
+from app.api.deps import DbSession, DeploymentManagerDep, ReadAccessDep, SettingsDep
 from app.core.exceptions import NotFoundError
 from app.repositories.deployments import DeploymentRepository
 from app.schemas.common import ErrorResponse
 from app.schemas.deployments import DeploymentList, DeploymentRead, DeployRequest
-from app.services import authorization, deployment_service, model_service
+from app.services import audit_service, authorization, deployment_service, model_service
 
 router = APIRouter(tags=["deployments"])
 
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Model or deployment not found"}}
 UNPROCESSABLE = {422: {"model": ErrorResponse, "description": "Invalid input or data"}}
 UNAUTHORIZED = {401: {"model": ErrorResponse, "description": "Authentication required"}}
-FORBIDDEN = {403: {"model": ErrorResponse, "description": "Admin privileges required"}}
+FORBIDDEN = {403: {"model": ErrorResponse, "description": "Deployment management permission required"}}
+
+
+def _audit_context(request: Request) -> audit_service.AuditContext:
+    return audit_service.AuditContext.for_request(request.client.host if request.client else None)
 
 
 @router.post(
     "/models/{model_id}/deploy",
     response_model=DeploymentRead,
     status_code=status.HTTP_200_OK,
-    summary="Deploy a trained model to production serving (Admin only)",
+    summary="Deploy a trained model to production serving (admin or superadmin)",
     responses=NOT_FOUND | UNPROCESSABLE | UNAUTHORIZED | FORBIDDEN,
-    dependencies=[Depends(require_permission(Permission.DEPLOYMENTS_MANAGE))],
 )
 def deploy_model(
     model_id: uuid.UUID,
     request: DeployRequest,
+    http_request: Request,
+    actor: DeploymentManagerDep,
     db: DbSession,
     settings: SettingsDep,
 ) -> DeploymentRead:
-    deployment = deployment_service.deploy_model(db, settings, model_id, request)
+    deployment = deployment_service.deploy_model(
+        db, settings, model_id, request, actor=actor, context=_audit_context(http_request)
+    )
     return DeploymentRead.model_validate(deployment)
 
 
@@ -43,12 +49,15 @@ def deploy_model(
     "/models/{model_id}/undeploy",
     response_model=DeploymentRead,
     status_code=status.HTTP_200_OK,
-    summary="Undeploy an active model from production serving (Admin only)",
+    summary="Undeploy an active model from production serving (admin or superadmin)",
     responses=NOT_FOUND | UNAUTHORIZED | FORBIDDEN,
-    dependencies=[Depends(require_permission(Permission.DEPLOYMENTS_MANAGE))],
 )
-def undeploy_model(model_id: uuid.UUID, db: DbSession) -> DeploymentRead:
-    deployment = deployment_service.undeploy_model(db, model_id)
+def undeploy_model(
+    model_id: uuid.UUID, http_request: Request, actor: DeploymentManagerDep, db: DbSession
+) -> DeploymentRead:
+    deployment = deployment_service.undeploy_model(
+        db, model_id, actor=actor, context=_audit_context(http_request)
+    )
     return DeploymentRead.model_validate(deployment)
 
 

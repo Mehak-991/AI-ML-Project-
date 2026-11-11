@@ -4,10 +4,9 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Query
 
 from app.api.deps import DbSession, MlOperatorDep, ReadAccessDep
-from app.database.models.user import User
 from app.core.exceptions import NotFoundError
 from app.repositories.deployments import PredictionLogRepository
 from app.schemas.common import ErrorResponse

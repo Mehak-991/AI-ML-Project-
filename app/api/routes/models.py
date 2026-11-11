@@ -2,10 +2,9 @@ import time
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Query, status
 
 from app.api.deps import DbSession, MlOperatorDep, PredictAccessDep, ReadAccessDep, SettingsDep
-from app.database.models.user import User
 from app.repositories.ml_models import MLModelRepository
 from app.schemas.common import ErrorResponse
 from app.schemas.models import ModelList, ModelRead, PredictRequest, PredictResponse, TrainRequest

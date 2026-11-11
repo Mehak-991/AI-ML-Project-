@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
 
+from app.api.deps import PublicRoute
 from app.core.config import Settings, get_settings
 from app.schemas.health import ReadinessResponse
 from app.services import health_service
@@ -15,6 +16,7 @@ router = APIRouter(tags=["health"])
     "/health",
     response_model=ReadinessResponse,
     summary="Readiness probe",
+    dependencies=[PublicRoute],
     responses={503: {"model": ReadinessResponse, "description": "A dependency is unavailable"}},
 )
 def readiness(

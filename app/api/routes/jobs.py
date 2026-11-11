@@ -3,10 +3,9 @@
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Query, status
 
 from app.api.deps import DbSession, MlOperatorDep, ReadAccessDep, SettingsDep
-from app.database.models.user import User
 from app.schemas.common import ErrorResponse
 from app.schemas.job import JobCreatePayload, JobListResponse, JobMetricsResponse, JobRead
 from app.services import job_service

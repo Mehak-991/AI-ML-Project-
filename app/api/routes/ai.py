@@ -15,13 +15,14 @@ from app.ai.llm import ChatMessage, ChatService
 from app.ai.tokens import TokenCounter
 from app.api.deps import (
     AIServicesDep,
+    MlOperatorDep,
+    PredictAccessDep,
     ReadAccessDep,
     SettingsDep,
     get_chat_service,
     get_embedding_service,
     get_text_classifier,
     get_token_counter,
-    require_role,
 )
 from app.core.exceptions import DataValidationError
 from app.schemas.ai import (

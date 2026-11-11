@@ -1,12 +1,10 @@
 """API routes for Phase 12 Automated ML Pipelines and Experiment Tracking."""
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Query, status
 
 from app.api.deps import DbSession, MlOperatorDep, ReadAccessDep, SettingsDep
-from app.database.models.user import User
 from app.schemas.common import ErrorResponse
 from app.schemas.experiment import (
     ExperimentComparisonResponse,

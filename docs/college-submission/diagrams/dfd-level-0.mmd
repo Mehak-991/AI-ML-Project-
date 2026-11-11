@@ -1,0 +1,8 @@
+flowchart LR
+    user([User]) -->|credentials, prediction inputs| sys((AIProject<br/>ML platform))
+    admin([Admin]) -->|datasets, training and deployment requests| sys
+    superadmin([Superadmin]) -->|account and role management| sys
+    sys -->|predictions, explanations, metrics| user
+    sys -->|model registry, job status, drift reports| admin
+    sys -->|user list, audit log, settings| superadmin
+    llm([External LLM provider<br/>optional]) <-->|chat requests| sys

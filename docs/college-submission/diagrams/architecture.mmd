@@ -1,0 +1,26 @@
+flowchart LR
+    user([Browser user]) -->|HTTP(S)| nginx
+
+    subgraph edge[Frontend container]
+        nginx[Nginx<br/>static React SPA<br/>security headers<br/>/api reverse proxy]
+    end
+
+    nginx -->|/api/v1/*| api
+
+    subgraph backend[Backend network - internal only]
+        api[FastAPI app<br/>auth, RBAC, REST API<br/>rate limiting, audit log]
+        worker[Worker<br/>PostgreSQL-backed job queue<br/>training, batch prediction]
+        db[(PostgreSQL 18)]
+        models[(Model artifacts<br/>joblib + SHA-256)]
+        uploads[(Uploaded datasets)]
+    end
+
+    api --> db
+    worker --> db
+    api --> models
+    worker --> models
+    api --> uploads
+    worker --> uploads
+
+    migration[[Alembic migration<br/>runs once before app]] --> db
+    prom[(Prometheus<br/>optional, token-protected /metrics)] -.-> api

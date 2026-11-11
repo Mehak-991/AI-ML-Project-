@@ -1,0 +1,208 @@
+erDiagram
+    audit_logs {
+        Uuid id PK
+        DateTime created_at
+        String action
+        Uuid actor_id
+        String actor_email
+        String actor_role
+        Uuid target_id
+        String target_email
+        JSON before
+        JSON after
+        Text detail
+        String request_id
+        String client_ip
+    }
+    datasets {
+        Uuid id PK
+        String name
+        String original_filename
+        String stored_filename UK
+        String file_format
+        BigInteger size_bytes
+        String sha256
+        Integer n_rows
+        Integer n_columns
+        JSON columns
+        Uuid owner_id FK
+        DateTime created_at
+        DateTime updated_at
+    }
+    deployments {
+        Uuid id PK
+        Uuid model_id FK
+        String status
+        Integer version
+        String environment
+        String endpoint_url
+        JSON configuration
+        String deployed_at
+        String undeployed_at
+        Text error_message
+        DateTime created_at
+        DateTime updated_at
+    }
+    drift_alerts {
+        Uuid id PK
+        Uuid model_id FK
+        Uuid drift_report_id FK
+        String alert_type
+        String severity
+        String feature_name
+        String metric_name
+        Float metric_value
+        Float threshold
+        Text message
+        Boolean resolved
+        DateTime created_at
+        DateTime updated_at
+    }
+    drift_reports {
+        Uuid id PK
+        Uuid model_id FK
+        String report_type
+        String overall_status
+        JSON results
+        Integer sample_size
+        Text summary
+        DateTime created_at
+        DateTime updated_at
+    }
+    experiment_runs {
+        Uuid id PK
+        Uuid experiment_id FK
+        Integer run_number
+        String status
+        JSON best_hyperparameters
+        JSON validation_metrics
+        JSON test_metrics
+        JSON cv_results
+        Uuid registered_model_id FK
+        Text error_message
+        DateTime started_at
+        DateTime completed_at
+        Float execution_duration_seconds
+        DateTime created_at
+        DateTime updated_at
+    }
+    experiments {
+        Uuid id PK
+        String name
+        Text description
+        Uuid dataset_id FK
+        String target_column
+        String problem_type
+        String algorithm
+        JSON selected_features
+        JSON hyperparameter_config
+        String search_strategy
+        Integer cv_folds
+        String scoring_metric
+        Float test_size
+        Float validation_size
+        Integer random_state
+        String status
+        String dataset_fingerprint
+        Uuid created_by_id FK
+        DateTime started_at
+        DateTime completed_at
+        Float execution_duration_seconds
+        DateTime created_at
+        DateTime updated_at
+    }
+    jobs {
+        Uuid id PK
+        String job_type
+        String status
+        Uuid created_by_id FK
+        Uuid model_id FK
+        Uuid experiment_id FK
+        JSON input_config
+        Integer progress_percentage
+        String current_stage
+        String worker_id
+        DateTime heartbeat_at
+        DateTime started_at
+        DateTime completed_at
+        Float execution_duration_seconds
+        Integer retry_count
+        Integer max_retries
+        String error_category
+        Text error_message
+        JSON result
+        DateTime created_at
+        DateTime updated_at
+    }
+    ml_models {
+        Uuid id PK
+        String name
+        Integer version
+        Uuid dataset_id FK
+        String problem_type
+        String algorithm
+        String target_column
+        JSON feature_schema
+        JSON metrics
+        JSON training_metadata
+        String artifact_filename UK
+        String artifact_sha256
+        String sklearn_version
+        Uuid owner_id FK
+        DateTime created_at
+        DateTime updated_at
+    }
+    prediction_logs {
+        Uuid id PK
+        Uuid model_id FK
+        Uuid deployment_id FK
+        Integer record_count
+        Float duration_ms
+        String status
+        String problem_type
+        String error_category
+        Text error_message
+        JSON prediction_summary
+        JSON ground_truth
+        Boolean is_evaluated
+        Uuid requested_by_id FK
+        DateTime created_at
+        DateTime updated_at
+    }
+    refresh_tokens {
+        Uuid id PK
+        Uuid user_id FK
+        String token_hash UK
+        String expires_at
+        Boolean revoked
+        DateTime created_at
+        DateTime updated_at
+    }
+    users {
+        Uuid id PK
+        String email UK
+        String hashed_password
+        String full_name
+        String role
+        Boolean is_active
+        DateTime created_at
+        DateTime updated_at
+    }
+    users ||--o{ datasets : "owner_id"
+    ml_models ||--o{ deployments : "model_id"
+    ml_models ||--o{ drift_alerts : "model_id"
+    drift_reports ||--o{ drift_alerts : "drift_report_id"
+    ml_models ||--o{ drift_reports : "model_id"
+    ml_models ||--o{ experiment_runs : "registered_model_id"
+    experiments ||--o{ experiment_runs : "experiment_id"
+    users ||--o{ experiments : "created_by_id"
+    datasets ||--o{ experiments : "dataset_id"
+    users ||--o{ jobs : "created_by_id"
+    ml_models ||--o{ jobs : "model_id"
+    experiments ||--o{ jobs : "experiment_id"
+    users ||--o{ ml_models : "owner_id"
+    datasets ||--o{ ml_models : "dataset_id"
+    ml_models ||--o{ prediction_logs : "model_id"
+    users ||--o{ prediction_logs : "requested_by_id"
+    deployments ||--o{ prediction_logs : "deployment_id"
+    users ||--o{ refresh_tokens : "user_id"

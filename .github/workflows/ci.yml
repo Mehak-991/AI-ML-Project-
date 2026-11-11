@@ -137,6 +137,9 @@ jobs:
 
       - name: Validate Compose Configuration
         env:
+          # compose.yaml deliberately has no APP_VERSION default (a production deploy must name
+          # its release), so validation supplies a CI-only value here and nowhere else.
+          APP_VERSION: 0.6.0-rc1
           POSTGRES_PASSWORD: ci-only-disposable
           JWT_SECRET_KEY: ci-only-disposable-secret-at-least-32-bytes
         run: |

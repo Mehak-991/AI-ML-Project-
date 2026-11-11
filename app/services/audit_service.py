@@ -33,7 +33,7 @@ ACTION_SUPERADMIN_REVOKED = "superadmin.revoked"
 ACTION_DEPLOYED = "deployment.deployed"
 ACTION_UNDEPLOYED = "deployment.undeployed"
 ACTION_CLI_BOOTSTRAP = "cli.superadmin_bootstrap"
-ACTION_CLI_PASSWORD_RESET = "cli.password_reset"
+ACTION_CLI_PASSWORD_RESET = "cli.password_reset"  # noqa: S105 - audit action label, not a password
 ACTION_MIGRATION_ROLE_MAPPED = "migration.role_mapped"
 
 

@@ -31,7 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-PASSWORD_ENV = "BOOTSTRAP_SUPERADMIN_PASSWORD"
+PASSWORD_ENV = "BOOTSTRAP_SUPERADMIN_PASSWORD"  # noqa: S105 - the NAME of an environment variable, not a password
 
 
 def _read_password() -> str | None:

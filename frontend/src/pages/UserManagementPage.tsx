@@ -12,13 +12,19 @@ import {
   CheckCircle2,
   Clock,
   UserPlus,
+  Crown,
+  Trash2,
 } from 'lucide-react';
-import type { User, UserRole } from '../types/auth';
+import type { AssignableRole, User, UserRole } from '../types/auth';
 import { authApi, parseApiError } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 export const UserManagementPage: React.FC = () => {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, can } = useAuth();
+  const canAssignRoles = can('roles:assign');
+  const canGrantSuperadmin = can('superadmin:grant');
+  // Derived from the permissions the server computed, never from the role name.
+  const isSuperadmin = (u: User) => u.permissions.includes('superadmin:grant');
   const [users, setUsers] = useState<User[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -37,7 +43,7 @@ export const UserManagementPage: React.FC = () => {
   const [newEmail, setNewEmail] = useState('');
   const [newFullName, setNewFullName] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [newRole, setNewRole] = useState<UserRole>('viewer');
+  const [newRole, setNewRole] = useState<AssignableRole>('user');
   const [creating, setCreating] = useState(false);
 
   const fetchUsers = async () => {
@@ -68,8 +74,9 @@ export const UserManagementPage: React.FC = () => {
     fetchUsers();
   };
 
-  const handleRoleChange = async (targetUser: User, newRole: UserRole) => {
-    if (targetUser.role === newRole) return;
+  const handleRoleChange = async (targetUser: User, newRole: AssignableRole) => {
+    const currentRole: string = targetUser.role;
+    if (currentRole === newRole) return;
     setUpdatingId(targetUser.id);
     setError(null);
     setSuccessMsg(null);
@@ -104,14 +111,47 @@ export const UserManagementPage: React.FC = () => {
     }
   };
 
+  const runAction = async (targetUser: User, action: () => Promise<void>, success: string) => {
+    setUpdatingId(targetUser.id);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      await action();
+      setSuccessMsg(success);
+      await fetchUsers();
+    } catch (err) {
+      setError(parseApiError(err).message);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleGrantSuperadmin = (u: User) => {
+    if (!window.confirm(`Grant SUPERADMIN to ${u.email}? They will be able to manage every account and role.`)) return;
+    return runAction(u, async () => { await authApi.grantSuperadmin(u.id); }, `${u.email} is now a superadmin.`);
+  };
+
+  const handleRevokeSuperadmin = (u: User) => {
+    if (!window.confirm(`Revoke superadmin from ${u.email}? They become an admin.`)) return;
+    return runAction(u, async () => { await authApi.revokeSuperadmin(u.id); }, `${u.email} is now an admin.`);
+  };
+
+  const handleDeleteUser = (u: User) => {
+    const typed = window.prompt(
+      `Permanently delete ${u.email}? This only works for a deactivated account that owns no resources.\nType the email address to confirm:`
+    );
+    if (!typed) return;
+    return runAction(u, () => authApi.deleteUser(u.id, typed.trim()), `Deleted ${u.email}.`);
+  };
+
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreating(true);
     setError(null);
     setSuccessMsg(null);
     try {
-      // Not AuthContext.register: that signs in as the new account, ending this admin's session.
-      const created = await authApi.register({
+      // Not AuthContext.register: that signs in as the new account and ends this session.
+      const created = await authApi.createUser({
         email: newEmail.trim(),
         password: newPassword,
         full_name: newFullName.trim(),
@@ -121,7 +161,7 @@ export const UserManagementPage: React.FC = () => {
       setNewEmail('');
       setNewFullName('');
       setNewPassword('');
-      setNewRole('viewer');
+      setNewRole('user');
       await fetchUsers();
     } catch (err) {
       setError(parseApiError(err).message);
@@ -132,6 +172,13 @@ export const UserManagementPage: React.FC = () => {
 
   const getRoleBadge = (role: UserRole) => {
     switch (role) {
+      case 'superadmin':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+            <Crown className="w-3 h-3 text-amber-600" />
+            Superadmin
+          </span>
+        );
       case 'admin':
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
@@ -139,17 +186,10 @@ export const UserManagementPage: React.FC = () => {
             Administrator
           </span>
         );
-      case 'ml_engineer':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
-            <Shield className="w-3 h-3 text-blue-600" />
-            ML Engineer
-          </span>
-        );
-      case 'viewer':
+      case 'user':
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-200">
-            Viewer
+            User (read-only)
           </span>
         );
     }
@@ -163,7 +203,7 @@ export const UserManagementPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold text-slate-900 tracking-tight">User Administration</h1>
             <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-purple-50 text-purple-700 border border-purple-200">
-              Admin Only
+              Superadmin Only
             </span>
           </div>
           <p className="text-sm text-slate-500 mt-1">
@@ -259,11 +299,10 @@ export const UserManagementPage: React.FC = () => {
             <select
               id="new-user-role"
               value={newRole}
-              onChange={(e) => setNewRole(e.target.value as UserRole)}
+              onChange={(e) => setNewRole(e.target.value as AssignableRole)}
               className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
             >
-              <option value="viewer">Viewer</option>
-              <option value="ml_engineer">ML Engineer</option>
+              <option value="user">User (read-only)</option>
               <option value="admin">Administrator</option>
             </select>
           </div>
@@ -303,9 +342,9 @@ export const UserManagementPage: React.FC = () => {
             className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
           >
             <option value="">All Roles</option>
+            <option value="superadmin">Superadmin</option>
             <option value="admin">Administrator</option>
-            <option value="ml_engineer">ML Engineer</option>
-            <option value="viewer">Viewer</option>
+            <option value="user">User (read-only)</option>
           </select>
 
           <select
@@ -386,16 +425,17 @@ export const UserManagementPage: React.FC = () => {
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2">
                           {getRoleBadge(u.role)}
-                          <select
-                            disabled={isUpdating}
-                            value={u.role}
-                            onChange={(e) => handleRoleChange(u, e.target.value as UserRole)}
-                            className="text-[11px] border border-slate-200 rounded px-1.5 py-0.5 bg-white text-slate-600 hover:border-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-50"
-                          >
-                            <option value="admin">Administrator</option>
-                            <option value="ml_engineer">ML Engineer</option>
-                            <option value="viewer">Viewer</option>
-                          </select>
+                          {canAssignRoles && !isCurrent && !isSuperadmin(u) && (
+                            <select
+                              disabled={isUpdating}
+                              value={u.role}
+                              onChange={(e) => handleRoleChange(u, e.target.value as AssignableRole)}
+                              className="text-[11px] border border-slate-200 rounded px-1.5 py-0.5 bg-white text-slate-600 hover:border-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-50"
+                            >
+                              <option value="admin">Administrator</option>
+                              <option value="user">User (read-only)</option>
+                            </select>
+                          )}
                         </div>
                       </td>
 
@@ -421,27 +461,61 @@ export const UserManagementPage: React.FC = () => {
                       </td>
 
                       <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={() => handleToggleStatus(u)}
-                          disabled={isUpdating}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium border transition-colors disabled:opacity-50 ${
-                            u.is_active
-                              ? 'border-rose-200 text-rose-700 hover:bg-rose-50'
-                              : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
-                          }`}
-                        >
-                          {u.is_active ? (
-                            <>
-                              <UserX className="w-3 h-3" />
-                              Deactivate
-                            </>
-                          ) : (
-                            <>
-                              <UserCheck className="w-3 h-3" />
-                              Activate
-                            </>
+                        <div className="flex items-center justify-end gap-2 flex-wrap">
+                          {!isCurrent && (
+                            <button
+                              onClick={() => handleToggleStatus(u)}
+                              disabled={isUpdating}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium border transition-colors disabled:opacity-50 ${
+                                u.is_active
+                                  ? 'border-rose-200 text-rose-700 hover:bg-rose-50'
+                                  : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
+                              }`}
+                            >
+                              {u.is_active ? (
+                                <>
+                                  <UserX className="w-3 h-3" />
+                                  Deactivate
+                                </>
+                              ) : (
+                                <>
+                                  <UserCheck className="w-3 h-3" />
+                                  Activate
+                                </>
+                              )}
+                            </button>
                           )}
-                        </button>
+                          {canGrantSuperadmin && !isCurrent && u.is_active && !isSuperadmin(u) && (
+                            <button
+                              onClick={() => handleGrantSuperadmin(u)}
+                              disabled={isUpdating}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium border border-amber-200 text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50"
+                            >
+                              <Crown className="w-3 h-3" />
+                              Make superadmin
+                            </button>
+                          )}
+                          {canGrantSuperadmin && !isCurrent && isSuperadmin(u) && (
+                            <button
+                              onClick={() => handleRevokeSuperadmin(u)}
+                              disabled={isUpdating}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium border border-amber-200 text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50"
+                            >
+                              <Crown className="w-3 h-3" />
+                              Revoke superadmin
+                            </button>
+                          )}
+                          {can('users:manage') && !isCurrent && !u.is_active && !isSuperadmin(u) && (
+                            <button
+                              onClick={() => handleDeleteUser(u)}
+                              disabled={isUpdating}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium border border-slate-300 text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              Delete
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -462,32 +536,32 @@ export const UserManagementPage: React.FC = () => {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
           <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700/60">
+            <p className="font-semibold text-amber-400 flex items-center gap-1.5">
+              <Crown className="w-3.5 h-3.5" />
+              Superadmin
+            </p>
+            <p className="text-slate-400 text-[11px] mt-1">
+              Full platform access. Manages user accounts and roles, grants or revokes superadmin, reads audit logs and system settings. The last active superadmin can never be demoted, deactivated or deleted.
+            </p>
+          </div>
+
+          <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700/60">
             <p className="font-semibold text-purple-400 flex items-center gap-1.5">
               <ShieldCheck className="w-3.5 h-3.5" />
               Administrator
             </p>
             <p className="text-slate-400 text-[11px] mt-1">
-              Full enterprise control. Can manage user accounts & roles, deploy/undeploy production models, access audit logs, and configure platform settings. Protected against accidental self-demotion if last admin.
-            </p>
-          </div>
-
-          <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700/60">
-            <p className="font-semibold text-blue-400 flex items-center gap-1.5">
-              <Shield className="w-3.5 h-3.5" />
-              ML Engineer
-            </p>
-            <p className="text-slate-400 text-[11px] mt-1">
-              Data science & ML lifecycle workflows. Can upload datasets, trigger model training, run single/batch inferences, and submit ground-truth evaluation labels.
+              ML management. Uploads datasets, trains models, runs experiments and jobs, manages deployments, runs predictions and explanations. Cannot manage accounts, roles, audit logs or settings.
             </p>
           </div>
 
           <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700/60">
             <p className="font-semibold text-slate-300 flex items-center gap-1.5">
-              <span>👁️</span>
-              Viewer
+              <Shield className="w-3.5 h-3.5" />
+              User (read-only)
             </p>
             <p className="text-slate-400 text-[11px] mt-1">
-              Read-only stakeholder. Can view dashboards, model registries, telemetry charts, and performance metrics. Cannot train, deploy, or alter platform state.
+              Views dashboards, models, datasets, reports and monitoring, and can run predictions and SHAP/LIME explanations. Cannot create, change or delete any managed resource. Every public registration is a user.
             </p>
           </div>
         </div>

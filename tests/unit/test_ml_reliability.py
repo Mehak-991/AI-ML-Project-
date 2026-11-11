@@ -1,18 +1,13 @@
 """PostgreSQL and Unit tests for Phase 18 ML Validation, Reliability & Performance."""
 
-import threading
-import time
 import uuid
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.config import Settings
-from app.database.models.job import Job
-from app.database.models.ml_model import MLModel
+import pytest
+from sqlalchemy.orm import Session
+
 from app.database.models.user import User
 from app.ml.prediction import validate_records
-from app.services import job_service, model_service
+from app.services import job_service
 
 API = "/api/v1"
 

@@ -1,7 +1,4 @@
-import pytest
 from starlette.testclient import TestClient
-
-from app.main import app
 
 
 def test_metrics_endpoint_returns_prometheus_format(api_client: TestClient) -> None:

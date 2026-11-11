@@ -1,12 +1,8 @@
 """Unit tests for Phase 14 Background Jobs, Distributed Task Queue & Job Management."""
 
-import time
 import uuid
-import pytest
-from fastapi.testclient import TestClient
 
-from app.ml.synthetic import make_classification_frame
-from tests.helpers import to_csv_bytes
+from fastapi.testclient import TestClient
 
 API = "/api/v1"
 

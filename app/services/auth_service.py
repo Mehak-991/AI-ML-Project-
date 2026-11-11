@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import NoReturn
 
 from pydantic import EmailStr, TypeAdapter, ValidationError
@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.core import security
 from app.core.config import Settings
-from app.core.permissions import Permission, Role, effective_role, has_permission
 from app.core.exceptions import (
     AuthenticationError,
     ConflictError,
@@ -17,19 +16,20 @@ from app.core.exceptions import (
     NotFoundError,
     PermissionDeniedError,
 )
+from app.core.permissions import Permission, Role, effective_role, has_permission
 from app.database.models.user import RefreshToken, User
 from app.repositories.users import RefreshTokenRepository, UserRepository
-from app.services import audit_service
 from app.schemas.auth import (
-    SelfUpdateRequest,
-    UserCreateRequest,
     RefreshTokenRequest,
+    SelfUpdateRequest,
     TokenResponse,
+    UserCreateRequest,
     UserLoginRequest,
     UserRead,
     UserRegisterRequest,
     UserUpdateRequest,
 )
+from app.services import audit_service
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ def authenticate_user(
     )
 
     raw_refresh_token, token_hash = security.generate_refresh_token()
-    expire_date = datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
+    expire_date = datetime.now(UTC) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
 
     token_repo = RefreshTokenRepository(session)
     refresh_record = RefreshToken(
@@ -169,7 +169,7 @@ def refresh_access_token(
         _revoke_after_reuse(session, token_repo, record.user_id)
 
     expires_at = datetime.fromisoformat(record.expires_at)
-    if datetime.now(timezone.utc) > expires_at:
+    if datetime.now(UTC) > expires_at:
         raise AuthenticationError("Refresh token has expired. Please log in again.")
 
     user = UserRepository(session).get(record.user_id)
@@ -192,7 +192,7 @@ def refresh_access_token(
         {"sub": str(user.id), "email": user.email, "role": user.role}, settings
     )
     raw_new_refresh, new_hash = security.generate_refresh_token()
-    new_expire_date = datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
+    new_expire_date = datetime.now(UTC) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
 
     new_record = RefreshToken(
         user_id=user.id,

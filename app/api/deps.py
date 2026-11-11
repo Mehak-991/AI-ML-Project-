@@ -1,8 +1,14 @@
 """Shared FastAPI dependencies."""
 
+import contextlib
+import logging
+import uuid
+from collections.abc import Generator
 from typing import Annotated
 
-from fastapi import Depends, Request
+import jwt
+from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.ai.classification import TextClassificationService
@@ -10,8 +16,13 @@ from app.ai.container import AIServices
 from app.ai.embeddings import EmbeddingService
 from app.ai.llm import ChatService
 from app.ai.tokens import TokenCounter
+from app.core import security
 from app.core.config import Settings, get_settings
+from app.core.exceptions import DatabaseNotConfiguredError
+from app.core.permissions import Permission, effective_role, has_permission
+from app.database.models.user import User
 from app.database.session import get_db
+from app.repositories.users import UserRepository
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbSession = Annotated[Session, Depends(get_db)]
@@ -40,20 +51,6 @@ def get_token_counter(ai: AIServicesDep) -> TokenCounter:
     return ai.token_counter
 
 
-import logging
-import uuid
-
-import jwt
-from fastapi import HTTPException, Security, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-
-from app.core import security
-from app.core.permissions import Permission, effective_role, has_permission
-from collections.abc import Generator
-from app.core.exceptions import DatabaseNotConfiguredError
-from app.database.models.user import User
-from app.repositories.users import UserRepository
-
 security_bearer = HTTPBearer(auto_error=False)
 auth_logger = logging.getLogger("app.auth")
 
@@ -67,10 +64,8 @@ def get_db_optional(request: Request) -> Generator[Session | None, None, None]:
             try:
                 yield session
             finally:
-                try:
+                with contextlib.suppress(StopIteration):
                     next(res)
-                except StopIteration:
-                    pass
         else:
             yield res
         return

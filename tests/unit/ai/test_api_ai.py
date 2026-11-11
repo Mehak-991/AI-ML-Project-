@@ -37,6 +37,7 @@ def chat() -> FakeChat:
 @pytest.fixture
 def ai_client(app, chat):
     import uuid
+
     from app.api.deps import get_current_user
     from app.database.models.user import User
 
@@ -178,6 +179,7 @@ def test_chat_provider_errors(ai_client, chat, error, status, code) -> None:
 
 def test_chat_without_api_key_is_actionable(app) -> None:
     import uuid
+
     from app.api.deps import get_current_user
     from app.database.models.user import User
 
@@ -236,6 +238,7 @@ def test_token_count_requires_exactly_one_input(ai_client, payload) -> None:
 
 def test_status_reports_configuration_without_secrets(make_settings) -> None:
     import uuid
+
     from app.api.deps import get_current_user
     from app.database.models.user import User
 
@@ -256,6 +259,7 @@ def test_status_reports_configuration_without_secrets(make_settings) -> None:
 
 def test_embeddings_without_sentence_transformers(monkeypatch, make_settings) -> None:
     import uuid
+
     from app.api.deps import get_current_user
     from app.database.models.user import User
 
@@ -274,6 +278,7 @@ def test_embeddings_without_sentence_transformers(monkeypatch, make_settings) ->
 
 def test_classify_without_torch(monkeypatch, make_settings) -> None:
     import uuid
+
     from app.api.deps import get_current_user
     from app.database.models.user import User
 
@@ -297,6 +302,7 @@ def test_openapi_documents_ai_endpoints(client: TestClient) -> None:
 
 def test_token_count_respects_configured_char_limit(make_settings) -> None:
     import uuid
+
     from app.api.deps import get_current_user
     from app.database.models.user import User
 
@@ -331,6 +337,7 @@ def test_ai_endpoints_require_authentication(app) -> None:
 def test_ai_role_enforcement_for_chat_and_analyze(app) -> None:
     """Finding 1.1 verification: viewer role gets 403 on chat and analyze; admin is allowed."""
     import uuid
+
     from app.api.deps import get_current_user
     from app.database.models.user import User
 

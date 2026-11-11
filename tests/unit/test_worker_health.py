@@ -2,7 +2,6 @@
 
 import time
 from pathlib import Path
-import pytest
 
 from scripts.check_worker_health import check_worker_health
 

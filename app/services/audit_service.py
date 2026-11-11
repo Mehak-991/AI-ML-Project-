@@ -33,7 +33,7 @@ ACTION_SUPERADMIN_REVOKED = "superadmin.revoked"
 ACTION_DEPLOYED = "deployment.deployed"
 ACTION_UNDEPLOYED = "deployment.undeployed"
 ACTION_CLI_BOOTSTRAP = "cli.superadmin_bootstrap"
-ACTION_CLI_PASSWORD_RESET = "cli.password_reset"  # noqa: S105 - audit action label, not a password
+ACTION_CLI_PASSWORD_RESET = "cli.password_reset"
 ACTION_MIGRATION_ROLE_MAPPED = "migration.role_mapped"
 
 
@@ -45,7 +45,7 @@ class AuditContext:
     client_ip: str | None = None
 
     @classmethod
-    def for_request(cls, client_ip: str | None) -> "AuditContext":
+    def for_request(cls, client_ip: str | None) -> AuditContext:
         request_id = request_id_var.get()
         return cls(request_id=None if request_id == "-" else request_id, client_ip=client_ip)
 

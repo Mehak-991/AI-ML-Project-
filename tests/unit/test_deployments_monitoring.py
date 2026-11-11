@@ -1,12 +1,11 @@
 import uuid
-import pytest
+
 from fastapi.testclient import TestClient
 
+from app.ml.synthetic import make_classification_frame
 from app.schemas.datasets import DatasetCreateResponse
 from app.schemas.models import ModelRead
 from tests.helpers import to_csv_bytes
-from app.ml.synthetic import make_classification_frame
-
 
 API = "/api/v1"
 

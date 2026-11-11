@@ -7,23 +7,22 @@ import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import case, desc, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.permissions import has_full_resource_access
 from app.core.config import Settings
-from pydantic import ValidationError
-
 from app.core.exceptions import (
     AppError,
     DataValidationError,
     NotFoundError,
     PermissionDeniedError,
 )
+from app.core.permissions import has_full_resource_access
 from app.database.models.dataset import Dataset
 from app.database.models.experiment import Experiment
 from app.database.models.job import Job
@@ -52,13 +51,13 @@ def worker_identity() -> str:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _as_aware(value: datetime | None) -> datetime | None:
     # SQLite returns naive datetimes; PostgreSQL returns aware ones.
     if value is not None and value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        return value.replace(tzinfo=UTC)
     return value
 
 
@@ -183,7 +182,7 @@ def cancel_job(session: Session, job_id: uuid.UUID, user: User) -> Job:
         raise DataValidationError(f"Cannot cancel job in '{job.status}' status.")
 
     job.status = "cancelled"
-    job.completed_at = datetime.now(timezone.utc)
+    job.completed_at = datetime.now(UTC)
     job.current_stage = "Job cancelled by user"
     session.commit()
     session.refresh(job)
@@ -469,7 +468,7 @@ def _run_claimed_job(session: Session, settings: Settings, job: Job, worker_id: 
         job.status = "completed"
         job.progress_percentage = 100
         job.current_stage = "Task finished successfully"
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
         job.execution_duration_seconds = round(duration, 4)
         job.worker_id = None
         session.commit()
@@ -514,7 +513,7 @@ def _run_claimed_job(session: Session, settings: Settings, job: Job, worker_id: 
 
         job.error_category = type(exc).__name__
         job.error_message = str(exc)[:1000]
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
         job.execution_duration_seconds = round(duration, 4)
         job.worker_id = None
         session.commit()

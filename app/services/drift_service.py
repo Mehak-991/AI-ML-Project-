@@ -41,7 +41,7 @@ from app.schemas.drift import (
     ModelDriftSummary,
 )
 from app.services import authorization
-from app.services.dataset_service import load_dataset_frame, get_dataset
+from app.services.dataset_service import get_dataset, load_dataset_frame
 
 logger = logging.getLogger(__name__)
 
@@ -610,7 +610,7 @@ def analyze_model_performance(session: Session, model_id: uuid.UUID) -> DriftRep
             continue
         preds = log.prediction_summary.get("predictions", [])
         gts = log.ground_truth
-        for p, g in zip(preds, gts):
+        for p, g in zip(preds, gts, strict=False):
             all_preds.append(p)
             all_ground.append(g)
 
@@ -637,7 +637,7 @@ def analyze_model_performance(session: Session, model_id: uuid.UUID) -> DriftRep
     alerts_data: list[dict[str, Any]] = []
 
     if model.problem_type == "classification":
-        matches = sum(1 for p, g in zip(all_preds, all_ground) if str(p) == str(g))
+        matches = sum(1 for p, g in zip(all_preds, all_ground, strict=False) if str(p) == str(g))
         prod_accuracy = round(matches / sample_size, 4)
         ref_accuracy = train_metrics.get("accuracy", None)
 
@@ -854,7 +854,7 @@ def get_drift_overview(
         total_active += active_alert_count
         total_critical += critical_alert_count
 
-        def _latest_status(rtype: str) -> DriftStatus | None:
+        def _latest_status(rtype: str, model=model) -> DriftStatus | None:
             r = session.scalar(
                 select(DriftReport)
                 .where(DriftReport.model_id == model.id, DriftReport.report_type == rtype)

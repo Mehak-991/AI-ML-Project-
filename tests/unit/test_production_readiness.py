@@ -23,10 +23,9 @@ from app.database.session import get_db
 from app.main import create_app
 from app.ml.synthetic import make_classification_frame
 from app.schemas.experiment import ExperimentCreate
-from tests.helpers import insert_account
 from app.services import experiment_service, explainability_service, job_service
 from scripts import restore_db
-from tests.helpers import to_csv_bytes
+from tests.helpers import insert_account, to_csv_bytes
 
 API = "/api/v1"
 PASSWORD = "Str0ngPassw0rd"
@@ -318,8 +317,9 @@ def test_database_outage_during_auth_is_503_not_401(make_settings) -> None:
 
 def test_auth_lookup_releases_its_database_connection(session_factory, make_settings) -> None:
     """The auth session is separate from the route's; it must not pin a second connection."""
-    from app.api.deps import get_current_user
     from fastapi.security import HTTPAuthorizationCredentials
+
+    from app.api.deps import get_current_user
 
     settings = make_settings(APP_ENV="testing", JWT_SECRET_KEY="k" * 48)
     with session_factory() as session:
@@ -865,7 +865,7 @@ def test_estimator_importances_sum_one_hot_columns_per_feature() -> None:
     scores = explainability_service._estimator_importances(pipeline, ["a", "b", "c"])
     assert sum(scores) == pytest.approx(1.0)
     assert all(score > 0 for score in scores)  # not the uniform fallback either
-    assert len(set(round(s, 6) for s in scores)) == 3
+    assert len({round(s, 6) for s in scores}) == 3
 
 
 # --- artifacts ---------------------------------------------------------------------------

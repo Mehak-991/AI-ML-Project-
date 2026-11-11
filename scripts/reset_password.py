@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-PASSWORD_ENV = "RESET_PASSWORD"  # noqa: S105 - the NAME of an environment variable, not a password
+PASSWORD_ENV = "RESET_PASSWORD"
 
 
 def _read_password() -> str | None:

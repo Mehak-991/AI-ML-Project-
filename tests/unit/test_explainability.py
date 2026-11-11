@@ -1,10 +1,9 @@
 """Unit tests for Phase 13 Model Explainability (SHAP & LIME)."""
 
-import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from app.ml.synthetic import make_classification_frame, make_regression_frame
+from app.ml.synthetic import make_classification_frame
 from tests.helpers import to_csv_bytes
 
 API = "/api/v1"

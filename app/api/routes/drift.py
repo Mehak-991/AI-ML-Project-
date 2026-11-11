@@ -9,6 +9,7 @@ import uuid
 from fastapi import APIRouter, Query
 
 from app.api.deps import DbSession, MlOperatorDep, ReadAccessDep, SettingsDep
+from app.database.models.user import User
 from app.schemas.common import ErrorResponse
 from app.schemas.drift import (
     AnalyzeDriftRequest,
@@ -19,9 +20,9 @@ from app.schemas.drift import (
     DriftReportRead,
 )
 from app.services import authorization, drift_service, model_service
-from app.database.models.user import User
 
 router = APIRouter(prefix="/drift", tags=["drift"])
+_DEFAULT_ANALYZE_REQUEST = AnalyzeDriftRequest()
 
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Resource not found"}}
 AUTH_ERRORS = {
@@ -157,7 +158,7 @@ def analyze_feature_drift(
     db: DbSession,
     settings: SettingsDep,
     user: AnalystRole,
-    request: AnalyzeDriftRequest = AnalyzeDriftRequest(),
+    request: AnalyzeDriftRequest = _DEFAULT_ANALYZE_REQUEST,
 ) -> DriftReportRead:
     """Computes PSI, Kolmogorov-Smirnov (numeric), and Chi-square (categorical) drift
     between training reference distribution and production data."""

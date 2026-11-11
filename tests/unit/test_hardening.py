@@ -184,6 +184,7 @@ def test_token_bucket_prunes_keys() -> None:
 def test_rate_limit_returns_429_with_retry_after(make_settings) -> None:
     app = create_app(make_settings(RATE_LIMIT_AI_PER_MINUTE=2))
     import uuid
+
     from app.api.deps import get_current_user
     from app.database.models.user import User
     app.dependency_overrides[get_current_user] = lambda: User(
@@ -223,6 +224,7 @@ def test_rate_limit_rules() -> None:
 def test_rate_limiting_can_be_disabled(make_settings) -> None:
     app = create_app(make_settings(RATE_LIMIT_ENABLED=False, RATE_LIMIT_AI_PER_MINUTE=1))
     import uuid
+
     from app.api.deps import get_current_user
     from app.database.models.user import User
     app.dependency_overrides[get_current_user] = lambda: User(
@@ -259,6 +261,7 @@ def _failing_session(exc: Exception):
 )
 def test_database_errors_are_mapped_without_leaking(app, exc, status, error_code) -> None:
     import uuid
+
     from app.api.deps import get_current_user
     from app.database.models.user import User
 

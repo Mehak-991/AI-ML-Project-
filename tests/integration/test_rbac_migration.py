@@ -124,9 +124,8 @@ def test_server_default_and_constraint_after_upgrade(db) -> None:
         with engine.begin() as conn:
             conn.execute(text(insert), {"i": uuid.uuid4().hex, "e": f"{role}@x.com", "r": role})
     for bad in ("ml_engineer", "root", "ADMIN", ""):
-        with pytest.raises(IntegrityError):
-            with engine.begin() as conn:
-                conn.execute(text(insert), {"i": uuid.uuid4().hex, "e": f"{bad or 'empty'}@x.com", "r": bad})
+        with pytest.raises(IntegrityError), engine.begin() as conn:
+            conn.execute(text(insert), {"i": uuid.uuid4().hex, "e": f"{bad or 'empty'}@x.com", "r": bad})
     with engine.begin() as conn:  # an account created without a role is a read-only user
         conn.execute(
             text("INSERT INTO users (id, email, hashed_password, full_name, is_active) VALUES (:i, 'norole@x.com', 'h', '', 1)"),

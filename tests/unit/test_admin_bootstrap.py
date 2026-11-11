@@ -2,10 +2,8 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
 from sqlalchemy import select
 
-from app.core.config import Settings
 from app.core.exceptions import ConflictError, DataValidationError
 from app.database.models.user import User
 from app.database.session import get_db

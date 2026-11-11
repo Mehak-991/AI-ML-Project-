@@ -399,6 +399,7 @@ def test_ollama_provider_needs_no_openai_package(make_settings, monkeypatch) -> 
 @pytest.fixture
 def ollama_app(make_settings):
     import uuid
+
     from app.api.deps import get_current_user
     from app.database.models.user import User
 
@@ -465,6 +466,7 @@ def test_chat_endpoint_when_ollama_is_down(ollama_app) -> None:
 def test_real_container_wiring_hits_configured_ollama_url(make_settings) -> None:
     """No dependency override: the app's own container builds the Ollama client."""
     import uuid
+
     from app.api.deps import get_current_user
     from app.database.models.user import User
 

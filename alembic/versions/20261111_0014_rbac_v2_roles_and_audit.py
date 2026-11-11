@@ -99,21 +99,32 @@ def upgrade() -> None:
     if ml_engineers:
         mapped = bind.execute(sa.text("SELECT id, email FROM users WHERE role = 'ml_engineer'")).all()
         bind.execute(sa.text("UPDATE users SET role = :role WHERE role = 'ml_engineer'"), {"role": mapping})
-        for user_id, email in mapped:
-            bind.execute(
-                sa.text(
-                    "INSERT INTO audit_logs (id, action, target_id, target_email, before, after, detail) "
-                    "VALUES (:id, 'migration.role_mapped', :target_id, :email, :before, :after, :detail)"
-                ),
+        # Typed columns, so each database converts UUIDs and JSON correctly (raw text() would not).
+        audit = sa.table(
+            "audit_logs",
+            sa.column("id", sa.Uuid()),
+            sa.column("action", sa.String()),
+            sa.column("target_id", sa.Uuid()),
+            sa.column("target_email", sa.String()),
+            sa.column("before", JSON_TYPE),
+            sa.column("after", JSON_TYPE),
+            sa.column("detail", sa.Text()),
+        )
+        bind.execute(
+            audit.insert(),
+            [
                 {
                     "id": uuid.uuid4(),
-                    "target_id": user_id,
-                    "email": email,
-                    "before": json.dumps({"role": "ml_engineer"}),
-                    "after": json.dumps({"role": mapping}),
+                    "action": "migration.role_mapped",
+                    "target_id": uuid.UUID(str(user_id)),
+                    "target_email": email,
+                    "before": {"role": "ml_engineer"},
+                    "after": {"role": mapping},
                     "detail": "explicit operator mapping supplied to migration 0014 (-x ml_engineer)",
-                },
-            )
+                }
+                for user_id, email in mapped
+            ],
+        )
 
     with op.batch_alter_table("users") as batch:
         batch.alter_column(

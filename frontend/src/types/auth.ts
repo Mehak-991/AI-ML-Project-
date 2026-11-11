@@ -21,7 +21,8 @@ export type Permission =
   | 'roles:assign'
   | 'superadmin:grant'
   | 'audit:read'
-  | 'settings:read';
+  | 'settings:read'
+  | 'billing:read';
 
 export interface User {
   id: string;

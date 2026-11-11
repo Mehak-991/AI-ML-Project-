@@ -1,7 +1,7 @@
 # RBAC V2 Implementation Report
 
-**Branch:** `feature/rbac-v2` (HEAD `f89c040`, images built from `531b99e`) · **Release candidate:** `0.6.0-rc1`
-**Status:** implemented and verified in isolated environments only. **Nothing has been applied to production.**
+**Branch:** `feature/rbac-v2` (images built from `531b99e`; release-readiness review in §12–15) · **Release candidate:** `0.6.0-rc1`
+**Status:** implemented and verified in isolated environments only; **not yet ready to deploy** (open items in §12.6). **Nothing has been applied to production.**
 
 > Production still runs the p21 images (backend `83b37eaeee4a`, frontend `3fd9ea8bab02`) on database
 > revision `0013`, with roles `admin=1`, `viewer=2`. Migration 0014 has not been run on it, no
@@ -229,30 +229,188 @@ A superadmin can grant additional permissions." The UI is a convenience; the API
 No image input (app, alembic, scripts, frontend, requirements, Dockerfile, pyproject) changed after
 `531b99e`; only tests and docs followed. Not deployed. Rollback images (p21, p22 / 0.5.1) are untouched.
 
-## 12. Deployment instructions (do not run until separately approved)
+## 12. Release-readiness review (2026-11-11)
 
-1. **Backup** the production database with the existing backup procedure and verify it restores into a disposable database.
-2. **Expand:** deploy the v2 images with `RBAC_STORE_LEGACY_VIEWER=true`; v2 runs on revision 0013. Confirm health and a normal login.
-3. **Review** accounts: the existing `admin` stays `admin`, two `viewer` accounts become `user`. Decide on any `ml_engineer` before migrating (none exist today).
-4. **Migrate:** `alembic upgrade 0014`. It aborts on anything unmapped and changes nothing in that case.
-5. **Bootstrap:** run `create_superadmin.py` for **the account you name** (new account, or `--promote` of an existing one).
-6. **Verify:** `scripts/e2e_check.py` with `E2E_SUPERADMIN_EMAIL/PASSWORD`, `check_stack.py`, review the audit log.
-7. **Contract** (later release): set `RBAC_STORE_LEGACY_VIEWER=false`, drop the `viewer` allowance from the CHECK constraint after the rollback window.
+Review-only. No production change, merge, push, deployment, migration, bootstrap or recovery run was
+made. Tests ran only on a throwaway PostgreSQL 18 container (tmpfs, removed afterwards), SQLite, an
+unpacked `git archive` of `origin/main` (deleted afterwards) and a no-database probe of the P21 image.
+Production was re-checked afterwards: all `aiproject-*` containers still run the p21 images, healthy.
 
-**Rollback:** before step 5, `alembic downgrade 0013` is lossless for roles and requires `-x audit_export=<file>` if audit entries exist, then redeploy the p21/p22 images. After step 5, export the audit log first, because downgrade maps `superadmin→admin`. As a last resort, restore the pre-migration backup into a separate database. Never use `docker compose down -v`.
+### 12.1 Branch topology (items 1–3)
 
-## 13. Remaining risks and notes
+| Fact | Value |
+|---|---|
+| `feature/rbac-v2` | `daacd5b` (this report), local **and** `origin/feature/rbac-v2` are identical |
+| `origin/main` = local `main` | `8c846b7` |
+| Merge base | `b79252d` ("docs: add RBAC v2 audit and implementation plan report") |
+| `8c846b7` parent | `b79252d` (single parent, one commit ahead of the base) |
+| `8c846b7` ancestor of `feature/rbac-v2`? | **No.** The branches diverged at `b79252d` |
+| Commits only on feature | 24 |
+| Commits only on main | 1 (`8c846b7`) |
 
-- **No superadmin exists until step 5.** After migration, nobody can manage accounts or read the audit log until the CLI is run. The existing `admin` keeps all ML capabilities but cannot manage users (D4).
-- **`origin/main` carries a stray commit `8c846b7`** (v2 tests alongside old app code) from a branch mix-up. It is harmless until `feature/rbac-v2` is merged. History was not rewritten and nothing was force-pushed.
-- **Current production `.env`** has `APP_VERSION=0.5.0-p22` and `PASSWORD_REHASH_ON_LOGIN=false`; both need review at deployment time. The live admin password has not been rotated.
-- `ml_engineer` is treated as `user` by the legacy reader, and migration refuses to guess. There are none in production today.
-- Audit `before`/`after` of an empty value is stored as JSON `null`, not SQL NULL.
-- The CLIs ran only in unit tests and on the disposable stack, never on production.
+**Correction to my earlier hand-off:** I said the feature branch was not pushed. It already exists on
+`origin` at `daacd5b` (pushed by your tooling). Nothing in this review pushed anything.
 
-## 14. Awaiting approval
+**`8c846b7`** (Mehak-991, 2026-11-11 14:06 +0530, "test: add unit tests for admin bootstrap, RBAC, and
+auth helpers") touches four files only: `tests/helpers.py` (+35), `tests/unit/test_admin_bootstrap.py`,
+`tests/unit/test_auth_rbac.py`, `tests/unit/test_registration_rbac.py` (+209 / −244 in total). It
+contains **no application code**. It is the set of RBAC-v2 tests I restored after the working tree was
+switched to `main` mid-work, committed on `main` by your tooling.
 
-Per instructions, work stops here. Needed from you, separately:
-1. Approval to run migration 0014 on production, and the deployment of the `0.6.0-rc1` images.
-2. **The explicit account** to become superadmin (D6) and whether it is the existing admin (`--promote`) or a new account. I will not select one.
-3. Whether to merge `feature/rbac-v2` and how to handle `8c846b7` on `origin/main`.
+**Overlap with the feature branch:** exactly those four files.
+- The three `test_*.py` files are **byte-identical** on both branches.
+- `tests/helpers.py` differs by 25 lines: the feature side adds `iter_api_routes` after the same `insert_account`.
+- A trial merge (`git merge-tree`, no refs touched) reports **one conflict**, in `tests/helpers.py` (both sides appended at the end of the file). Everything else merges cleanly.
+
+**`origin/main` is currently red.** Its tests expect RBAC v2 behaviour but its application code is the
+old code. Run in an unpacked copy of `origin/main`: `test_admin_bootstrap`, `test_auth_rbac`,
+`test_registration_rbac` give **6 failed, 10 passed, 29 errors** (login returns 500 because the old
+`UserRead` rejects the role `user`). So `main` should not be tagged or built until the feature is merged.
+
+**Recommended integration (history-preserving, no rewrite, no force-push):**
+1. Merge with a **true merge commit**: `git switch main` → `git merge --no-ff feature/rbac-v2`. Never rebase or squash, so `8c846b7` and all 24 feature commits stay reachable and the pushed `feature/rbac-v2` stays valid.
+2. Resolve the single `tests/helpers.py` conflict by **keeping the feature side** (it is a strict superset: identical `insert_account` plus `iter_api_routes`). The other three files are identical, so the merged tree should equal the feature tree.
+3. Before pushing, check `git diff feature/rbac-v2 HEAD` is empty and re-run the unit and PostgreSQL integration suites on the merge result. The image inputs are unchanged from `531b99e`, so `0.6.0-rc1` stays valid for the merged tree.
+4. Push `main` as a fast-forward of the merge commit (normal push, no `--force`); tag the release at the merge commit. A GitHub pull request (merge-commit method) achieves the same and also runs CI.
+5. Do this **before** the production deployment so the deployed image has a commit on `main`. It needs your separate approval.
+
+### 12.2 Verification of the safety properties (items 4–6, 10)
+
+| Check | Evidence this review | Result |
+|---|---|---|
+| Migration 0014 and its rollback | `tests/integration/test_rbac_migration.py` (10 tests: mapping, no promotion, constraint and default, downgrade, guarded downgrade, repeat upgrade) + PostgreSQL test of the real migration, plus the earlier restored-backup rehearsal | PASS |
+| Unmapped `ml_engineer` aborts | `test_an_unmapped_ml_engineer_aborts_and_changes_nothing`, `test_an_unknown_role_value_aborts`, explicit `-x ml_engineer=user\|admin` audited; rehearsal showed the database unchanged | PASS |
+| Every route covered; unregistered routes fail closed | `test_every_registered_route_declares_a_policy`, `test_a_route_with_no_declared_policy_is_refused_for_everyone`, `test_the_matrix_covers_exactly_the_routes_the_app_serves`, and the 70-pair table in §4 | PASS |
+| Last-superadmin concurrency | `test_rbac_pg.py`: mutual demotion, ring of five, concurrent deactivate/demote, simultaneous bootstrap, concurrent registrations, on real PostgreSQL | PASS |
+| Audit immutability | PostgreSQL triggers `audit_logs_no_change` / `audit_logs_no_truncate`; UPDATE, DELETE, TRUNCATE rejected (earlier on the disposable stack, and in the PG migration test) | PASS |
+| Registration defaults | `test_registration_rbac.py`, `test_concurrent_public_registrations_never_produce_a_privileged_account`: no role field; always `user` | PASS |
+| Bootstrap safeguards | `test_cli_superadmin.py` (16 tests): one-time, refuses before 0014, never picks an account, promotion needs typed confirmation, no password echoed | PASS |
+| Isolated test run | Integration suite **36 passed** on a PostgreSQL migrated to head 0014; RBAC unit files plus the integration directory passed in the same session | PASS |
+
+An early run in this review showed 4 errors in `test_job_recovery_pg.py` ("relation jobs does not
+exist"). That was my test setup (a fresh PostgreSQL that had not been migrated), not a product fault;
+after `alembic upgrade head` all 36 integration tests passed. The full unit suite was not re-run: only
+documentation changed since the last full run (724 passed, 1 skipped).
+
+### 12.3 Deployment sequence defect found and fixed (item 7)
+
+My earlier sequence (deploy v2 on revision 0013 first, migrate and bootstrap afterwards) has a real gap:
+- Account management belongs to `superadmin` only (D4), so from the moment v2 code serves traffic **nobody can manage accounts**.
+- `create_superadmin.py` refuses before migration 0014 (by design, it needs `audit_logs`), so a superadmin cannot be established until the migration has run.
+- Between "v2 started" and "bootstrap finished" the system is therefore up with no way to manage accounts.
+
+The sequence in §14 closes the gap by never serving v2 traffic until a superadmin exists: the
+application and worker are stopped, the database is migrated and the superadmin created with one-off
+containers, and only then is v2 started. The "expand" phase (v2 code on 0013 with
+`RBAC_STORE_LEGACY_VIEWER=true`) is **not** used for this deployment; it stays available as a
+documented option but it is what creates the gap, and it does not make a P21 rollback safer (§12.4).
+
+### 12.4 P21 compatibility and exact rollback limitations (item 8)
+
+Probe run inside the real P21 image (`aiproject-backend:0.5.0-p21`, no database, nothing persisted):
+
+| Stored role | `UserRead` (used by `/auth/me`, `/auth/users`, register, update) | Role-gated "viewer" route | Admin route | `is_admin` |
+|---|---|---|---|---|
+| `viewer` | ok | allowed | 403 | false |
+| `admin` | ok | allowed | allowed | true |
+| `user` | **ValidationError → HTTP 500** | **403** | 403 | false |
+| `superadmin` | **ValidationError → HTTP 500** | **403** | 403 | false |
+
+Reading the P21 source: `UserRole = Literal["admin","ml_engineer","viewer"]`; `require_role` is an
+exact string match; ownership helpers test `role == "admin"`. Consequences if P21 runs against a
+database that still holds `user` or `superadmin`:
+- Login still succeeds (the token response has no role field) but `/auth/me` fails with 500 for those accounts, and **`GET /auth/users` fails with 500 for the whole list as soon as one such account exists**, which also breaks the P21 admin's user screen.
+- `user` accounts get 403 on every role-gated route (including read-only ones); a `superadmin` gets 403 everywhere and is not treated as admin, so it loses even its former admin access.
+- P21 cannot verify Argon2id hashes (its `CryptContext` is PBKDF2 and bcrypt only). If `PASSWORD_REHASH_ON_LOGIN=true` has converted any hash under v2, those users **cannot log in** after a rollback to P21.
+
+Therefore:
+1. **P21 must never be started against a 0014 database.** The only safe states for P21 are revision 0013 with only `admin`/`viewer`/`ml_engineer` roles.
+2. Rollback after migration needs the roles mapped back first: `alembic downgrade 0013` (`user→viewer`, `superadmin→admin`) with `-x audit_export=<new file>` (audit entries are dropped from the database and kept only in that file).
+3. The downgrade is **not lossless**: `superadmin` and `admin` become indistinguishable; accounts created or changed after the migration come back as `viewer`/`admin` regardless of intent; an `ml_engineer` that was mapped with `-x` does not return to `ml_engineer`; the audit log table disappears.
+4. **Standing rule conflict:** your rules forbid an Alembic downgrade on production. Rollback therefore means either (a) restoring the pre-migration backup into a separate database and pointing P21 at it, which loses every write made after the backup (new accounts, jobs, predictions, deployments), or (b) your explicit, separate approval for the downgrade. Decide which before the window opens.
+5. Keep `PASSWORD_REHASH_ON_LOGIN=false` until the rollback window has closed; otherwise a rollback strands rehashed users.
+6. Because rollback is destructive in both forms, the window should be short and the verification in §14 complete before reopening to users.
+
+### 12.5 Password rotation prerequisite (item 9)
+
+**Status: PENDING. Not verified, and I cannot verify it.** The live admin password was not rotated as of
+the last preflight, and nothing since then shows otherwise. I did not read `.env` values or try any
+credential. I will treat it as done only when you confirm that you rotated it yourself, through your
+own channel, and that the old password no longer works; I should not be given the password to check.
+Deployment is blocked on this item, along with the checklist below.
+
+### 12.6 Release-readiness checklist
+
+| # | Item | Status |
+|---|---|---|
+| 1 | RBAC v2 code complete on `feature/rbac-v2` (`daacd5b`) | ✅ |
+| 2 | Unit (724) and integration (36) tests pass on isolated databases | ✅ |
+| 3 | Route policy coverage and deny-by-default proven | ✅ |
+| 4 | Migration 0014 upgrade, downgrade, abort conditions proven on SQLite, PostgreSQL and a restored real backup | ✅ |
+| 5 | Concurrency, audit immutability, registration and bootstrap safeguards proven | ✅ |
+| 6 | Candidate images `0.6.0-rc1` built from `531b99e`, not deployed | ✅ |
+| 7 | P21 and p22/0.5.1 rollback images preserved | ✅ |
+| 8 | Deployment sequence without a no-superadmin interval | ✅ designed (§14), not yet executed |
+| 9 | `main` red until the feature merge (`8c846b7`) | ⛔ resolve by merge (§12.1) |
+| 10 | Feature merged into `main`, pushed, tagged | ⏳ needs your approval |
+| 11 | Admin password rotation independently confirmed | ⏳ **PENDING** |
+| 12 | Superadmin account named by you (D6), and new-vs-promote chosen | ⏳ needs your decision |
+| 13 | Rollback method chosen: backup restore (default) or approved downgrade | ⏳ needs your decision |
+| 14 | Fresh verified production backup immediately before the window | ⏳ at deployment |
+| 15 | Production `.env` values reviewed and updated at the window (§14, step 3) | ⏳ needs your approval |
+| 16 | Written go-ahead for the production migration and deployment | ⏳ |
+
+## 13. Unresolved risks
+
+| Risk | Severity | Mitigation / owner |
+|---|---|---|
+| Admin password rotation not independently confirmed | High (blocks deploy) | You rotate and confirm (§12.5) |
+| Rollback after migration is destructive either way (restore loses later writes; downgrade merges roles and drops audit rows) and downgrade is barred by standing rule | High | Short window, fresh backup, decide method up front (§12.4) |
+| P21 mis-handles `user`/`superadmin` (500s, 403s, admin list failing) | High if P21 is ever started on 0014 | Never run P21 against 0014; follow §12.4 |
+| `PASSWORD_REHASH_ON_LOGIN=true` would strand users on rollback | Medium | Keep `false` until the rollback window closes |
+| `main` red until merge; `8c846b7` on `origin/main` without app code | Medium | Merge commit per §12.1 |
+| Production `.env` has `APP_VERSION=0.5.0-p22` (value reported by earlier preflight; not re-read now) and must be set to `0.6.0-rc1`; `RBAC_STORE_LEGACY_VIEWER` left unset (false) | Medium | Change only inside the approved window |
+| After migration no one can manage accounts until the CLI runs | Medium | Run it inside the window before starting v2 (§14) |
+| The single existing `admin` loses user management (D4, `superadmin` only) | Low (by design) | Promote that account, or create a new superadmin: your decision (D6) |
+| `/metrics` and `/health` are unauthenticated routes in the app (unchanged from before) | Low | Keep them off the public edge as in the existing Nginx setup |
+| Audit `before`/`after` of an empty value stored as JSON `null` | Low | Cosmetic |
+
+## 14. Exact production deployment sequence (NOT to be run until separately approved)
+
+All commands run from the project directory with the production compose file and `.env.production`.
+Never `docker compose down -v`; never touch volumes; keep the `pre-p21`, `0.5.0-p21` and `0.5.1` images.
+
+**A. Before the window (no production change)**
+1. Merge `feature/rbac-v2` into `main` as in §12.1; confirm tests green on the merge result and `git diff feature/rbac-v2 HEAD` is empty.
+2. You confirm the admin password was rotated (§12.5) and name the superadmin account (D6): either a **new** email (the CLI creates it and prompts for a password) or the **existing** admin email via `--promote`.
+3. You choose the rollback method (§12.4, item 4).
+4. Prepare the `.env.production` edit (do not apply yet): `APP_VERSION=0.6.0-rc1`, `PASSWORD_REHASH_ON_LOGIN=false`, leave `RBAC_STORE_LEGACY_VIEWER` unset. Confirm backend and frontend images `0.6.0-rc1` are present (`d8e5d5baf6cb`, `19b123ad0a4a`).
+
+**B. Window**
+1. **Backup:** take a fresh database backup with the existing script; verify checksum; restore it into a *separate disposable* database and confirm row counts and revision `0013`.
+2. **Stop traffic:** stop `frontend`, `app` and `worker` (leave `db` running). Record the container list.
+3. **Apply the `.env.production` edit** from A4.
+4. **Dry-run the plan:** `alembic current` (expect `0013`); `alembic heads` (expect `0014`); list roles (expect only `admin`/`viewer`; if any `ml_engineer` exists, stop and ask for `-x ml_engineer=user|admin`).
+5. **Migrate (one-off container, `--no-deps`, v2 image):** `alembic upgrade 0014`. Expect it to end at `0014`; roles `admin` stays `admin`, `viewer → user`; zero superadmins.
+6. **Bootstrap the superadmin before any v2 traffic** (one-off container, `--no-deps`, v2 image): `python scripts/create_superadmin.py --email <named account>` (password via `-it` prompt or `BOOTSTRAP_SUPERADMIN_PASSWORD`), or add `--promote` and type the email to confirm. Unset the password variable afterwards.
+7. **Verify in the database:** exactly one active `superadmin`; revision `0014`; audit rows for the role mappings and the bootstrap; user and resource counts equal to the backup.
+8. **Start v2:** `up -d --no-deps app worker frontend` with `0.6.0-rc1`. Wait for healthy.
+9. **Verify:** `scripts/check_stack.py`; `scripts/e2e_check.py` with the superadmin credentials supplied through environment variables; sign in as the superadmin in the browser and check Users, Audit Logs and Settings; sign in as a `user` and as the `admin` and check their limited views; confirm public registration creates only a `user`; read the audit log.
+10. **Go / no-go:** if any check fails, roll back (below) before reopening to users.
+
+**C. Rollback (decided in A3)**
+- *Default, backup restore:* stop `frontend`, `app`, `worker`; restore the verified backup into a **separate** database; revert `.env.production`; start the P21 images (`aiproject-backend:0.5.0-p21`, `aiproject-frontend:0.5.0-p21`) against that database. All writes after the backup are lost; the 0014 database is kept untouched for later analysis.
+- *Only with your explicit approval:* `alembic downgrade 0013 -x audit_export=<new file>` then P21 images (§12.4 for the data consequences).
+
+**D. After the window**
+- Keep `PASSWORD_REHASH_ON_LOGIN=false` until the rollback window closes, then enable it deliberately.
+- Later release (contract): remove the `viewer` allowance from the CHECK constraint and the legacy reader.
+
+## 15. Awaiting approval
+
+Work stops here; nothing below has been done. I need from you, separately:
+1. Approval to merge `feature/rbac-v2` into `main` (merge commit, no force) and push, or tell me to open a pull request instead.
+2. Independent confirmation that the admin password was rotated.
+3. The account to become superadmin, and whether it is new or the existing admin (D6).
+4. The rollback method (backup restore or an approved downgrade).
+5. Written approval for the production backup, migration, bootstrap and deployment window in §14.

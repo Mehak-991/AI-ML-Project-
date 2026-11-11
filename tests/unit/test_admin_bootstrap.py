@@ -18,8 +18,8 @@ PASSWORD = "Str0ngPassw0rd"
 
 @pytest.fixture
 def secure_client(make_settings, session_factory):
-    """Settings as shipped: ALLOW_FIRST_USER_ADMIN left at its default."""
-    settings = make_settings(APP_ENV="testing", RATE_LIMIT_ENABLED=False, ALLOW_FIRST_USER_ADMIN=False)
+    """Settings as shipped."""
+    settings = make_settings(APP_ENV="testing", RATE_LIMIT_ENABLED=False)
     app = create_app(settings)
 
     def _get_db():
@@ -48,30 +48,15 @@ def _register(client, email, **fields):
     return client.post(f"{API}/auth/register", json={"email": email, "password": PASSWORD, **fields})
 
 
-def test_flag_is_off_by_default() -> None:
-    assert Settings(_env_file=None).ALLOW_FIRST_USER_ADMIN is False
-
-
-def test_production_refuses_the_legacy_flag() -> None:
-    with pytest.raises(ValidationError, match="ALLOW_FIRST_USER_ADMIN"):
-        Settings(
-            _env_file=None,
-            APP_ENV="production",
-            ALLOW_FIRST_USER_ADMIN=True,
-            JWT_SECRET_KEY="k" * 48,
-            DATABASE_URL="postgresql+psycopg://u:p@h/db",
-        )
-
-
-def test_first_public_registration_on_an_empty_database_is_only_a_viewer(secure_client) -> None:
+def test_first_public_registration_on_an_empty_database_is_only_a_user(secure_client) -> None:
     response = _register(secure_client, "visitor@x.com")
     assert response.status_code == 201
-    assert response.json()["role"] == "viewer"
+    assert response.json()["role"] == "user"
 
 
 def test_first_registration_cannot_request_admin_either(secure_client) -> None:
     response = _register(secure_client, "visitor@x.com", role="admin")
-    assert response.status_code == 403
+    assert response.status_code == 422  # the public payload has no role field at all
     assert secure_client.post(
         f"{API}/auth/login", json={"email": "visitor@x.com", "password": PASSWORD}
     ).status_code == 401, "a rejected registration must not leave an account behind"
@@ -79,23 +64,7 @@ def test_first_registration_cannot_request_admin_either(secure_client) -> None:
 
 def test_nobody_becomes_admin_by_registering_many_times(secure_client) -> None:
     roles = {_register(secure_client, f"u{i}@x.com").json()["role"] for i in range(3)}
-    assert roles == {"viewer"}
-
-
-def test_legacy_flag_still_gives_the_first_account_admin_for_development(make_settings, session_factory) -> None:
-    app = create_app(make_settings(APP_ENV="testing", RATE_LIMIT_ENABLED=False, ALLOW_FIRST_USER_ADMIN=True))
-
-    def _get_db():
-        session = session_factory()
-        try:
-            yield session
-        finally:
-            session.close()
-
-    app.dependency_overrides[get_db] = _get_db
-    with TestClient(app) as client:
-        assert _register(client, "dev@x.com").json()["role"] == "admin"
-        assert _register(client, "next@x.com").json()["role"] == "viewer"
+    assert roles == {"user"}
 
 
 def test_bootstrap_creates_one_admin_who_can_log_in(secure_client, session_factory) -> None:
@@ -124,7 +93,7 @@ def test_bootstrap_never_promotes_or_changes_an_existing_account(secure_client, 
             auth_service.create_bootstrap_admin(session, "member@x.com", "Different1Password")
     with session_factory() as session:
         member = session.scalar(select(User).where(User.email == "member@x.com"))
-        assert member.role == "viewer" and member.hashed_password == before
+        assert member.role == "user" and member.hashed_password == before
 
 
 def test_bootstrap_rejects_weak_passwords(session_factory) -> None:

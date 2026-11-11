@@ -417,10 +417,10 @@ def actors(secure_client, session_factory) -> dict:
       viewer  user;       another read-only account
     """
     c = secure_client
-    insert_account(session_factory, "root@x.com", "superadmin")
-    insert_account(session_factory, "mle1@x.com", "admin")
-    insert_account(session_factory, "mle2@x.com", "user")
-    insert_account(session_factory, "view@x.com", "user")
+    insert_account(session_factory, "root@x.com", "superadmin", PASSWORD)
+    insert_account(session_factory, "mle1@x.com", "admin", PASSWORD)
+    insert_account(session_factory, "mle2@x.com", "user", PASSWORD)
+    insert_account(session_factory, "view@x.com", "user", PASSWORD)
     return {
         "admin": _login(c, "root@x.com"),
         "mle1": _login(c, "mle1@x.com"),
@@ -567,9 +567,11 @@ def test_legacy_models_without_owner_stay_usable(
         session.commit()
     response = _predict(secure_client, owned_model["id"], _bearer(actors["viewer"]))
     assert response.status_code == 200, response.text
-    # The viewer sees only their own request; other non-admin users do not.
+    # The reader sees only their own request; other non-privileged users do not, while admins
+    # (full resource access) see it.
     assert _history_total(secure_client, actors["viewer"]) == 1
-    assert _history_total(secure_client, actors["mle1"]) == 0
+    assert _history_total(secure_client, actors["mle2"]) == 0
+    assert _history_total(secure_client, actors["mle1"]) == 1
 
 
 @pytest.mark.parametrize(

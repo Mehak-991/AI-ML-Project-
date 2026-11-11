@@ -23,6 +23,7 @@ from app.database.session import get_db
 from app.main import create_app
 from app.ml.synthetic import make_classification_frame
 from app.schemas.experiment import ExperimentCreate
+from tests.helpers import insert_account
 from app.services import experiment_service, explainability_service, job_service
 from scripts import restore_db
 from tests.helpers import to_csv_bytes
@@ -59,21 +60,22 @@ def _bearer(tokens: dict) -> dict:
 
 
 @pytest.fixture
-def actors(secure_client) -> dict:
+def actors(secure_client, session_factory) -> dict:
+    """admin = superadmin; owner = admin (owns the created resources); other and viewer = users.
+
+    Privileged accounts are created out of band, as the server-side bootstrap would; public
+    registration can only create a read-only user.
+    """
     c = secure_client
-    assert c.post(
-        f"{API}/auth/register", json={"email": "root@x.com", "password": PASSWORD}
-    ).status_code == 201
-    admin = _login(c, "root@x.com")
-    for email, role in (("a@x.com", "ml_engineer"), ("b@x.com", "ml_engineer"), ("v@x.com", "viewer")):
-        created = c.post(
-            f"{API}/auth/register",
-            json={"email": email, "password": PASSWORD, "role": role},
-            headers=_bearer(admin),
-        )
-        assert created.status_code == 201, created.text
+    for email, role in (
+        ("root@x.com", "superadmin"),
+        ("a@x.com", "admin"),
+        ("b@x.com", "user"),
+        ("v@x.com", "user"),
+    ):
+        insert_account(session_factory, email, role, PASSWORD)
     return {
-        "admin": admin,
+        "admin": _login(c, "root@x.com"),
         "owner": _login(c, "a@x.com"),
         "other": _login(c, "b@x.com"),
         "viewer": _login(c, "v@x.com"),
@@ -268,7 +270,7 @@ def test_concurrent_refresh_loser_gets_rejected(db_session: Session, make_settin
     from app.services import auth_service
 
     settings = make_settings(APP_ENV="testing")
-    user = User(email="r@x.com", hashed_password="x", full_name="", role="viewer", is_active=True)
+    user = User(email="r@x.com", hashed_password="x", full_name="", role="user", is_active=True)
     db_session.add(user)
     db_session.flush()
     raw, token_hash = security.generate_refresh_token()
@@ -321,7 +323,7 @@ def test_auth_lookup_releases_its_database_connection(session_factory, make_sett
 
     settings = make_settings(APP_ENV="testing", JWT_SECRET_KEY="k" * 48)
     with session_factory() as session:
-        user = User(email="c@x.com", hashed_password="x", full_name="n", role="viewer", is_active=True)
+        user = User(email="c@x.com", hashed_password="x", full_name="n", role="user", is_active=True)
         session.add(user)
         session.commit()
         user_id = user.id

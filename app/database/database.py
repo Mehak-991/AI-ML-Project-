@@ -36,3 +36,4 @@ def check_db_connection() -> dict:
         return {"status": "ok", "url": DATABASE_URL}
     except Exception as exc:
         return {"status": "error", "detail": str(exc)}
+

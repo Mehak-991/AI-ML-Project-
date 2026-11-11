@@ -126,3 +126,4 @@ def test_ollama_model_available():
         f"Model '{OLLAMA_MODEL}' is not available locally. "
         f"Run: ollama pull {OLLAMA_MODEL}"
     )
+

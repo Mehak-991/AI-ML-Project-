@@ -35,3 +35,4 @@ def check_ollama_connection() -> dict:
             "model": OLLAMA_MODEL,
             "detail": str(exc),
         }
+

@@ -14,6 +14,7 @@ from app.schemas.common import ErrorResponse
 from app.schemas.datasets import (
     DatasetCreateResponse,
     DatasetList,
+    DatasetPreview,
     DatasetRead,
     DatasetValidationResponse,
 )
@@ -107,6 +108,24 @@ def get_dataset(dataset_id: uuid.UUID, user: ReadAccessDep, db: DbSession) -> Da
     dataset = dataset_service.get_dataset(db, dataset_id)
     authorization.ensure_dataset_access(user, dataset)
     return DatasetRead.model_validate(dataset)
+
+
+@router.get(
+    "/{dataset_id}/preview",
+    response_model=DatasetPreview,
+    summary="First rows of a stored dataset",
+    responses=NOT_FOUND | UNAUTHORIZED,
+)
+def get_dataset_preview(
+    dataset_id: uuid.UUID,
+    user: ReadAccessDep,
+    db: DbSession,
+    settings: SettingsDep,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> DatasetPreview:
+    dataset = dataset_service.get_dataset(db, dataset_id)
+    authorization.ensure_dataset_access(user, dataset)
+    return DatasetPreview(**dataset_service.preview_dataset(settings, dataset, limit))
 
 
 @router.get(

@@ -12,7 +12,7 @@ import os
 import threading
 import uuid
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine, delete, select
@@ -77,7 +77,7 @@ def _run_concurrently(n_threads, target):
 @requires_db
 def test_concurrent_reapers_recover_each_job_exactly_once(pg_factory) -> None:
     factory, tag = pg_factory
-    stale = datetime.now(timezone.utc) - timedelta(hours=1)
+    stale = datetime.now(UTC) - timedelta(hours=1)
     ids = _insert(factory, tag, 20, status="running", worker_id="dead:1", **_stale_times(stale))
 
     def reap():
@@ -97,7 +97,7 @@ def test_concurrent_reapers_recover_each_job_exactly_once(pg_factory) -> None:
 @requires_db
 def test_reaper_skips_job_locked_by_finishing_worker(pg_factory) -> None:
     factory, tag = pg_factory
-    stale = datetime.now(timezone.utc) - timedelta(hours=1)
+    stale = datetime.now(UTC) - timedelta(hours=1)
     (job_id,) = _insert(factory, tag, 1, status="running", worker_id="slow:1", **_stale_times(stale))
 
     with factory() as worker_session:

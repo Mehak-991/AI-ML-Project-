@@ -45,7 +45,7 @@ class AuditContext:
     client_ip: str | None = None
 
     @classmethod
-    def for_request(cls, client_ip: str | None) -> "AuditContext":
+    def for_request(cls, client_ip: str | None) -> AuditContext:
         request_id = request_id_var.get()
         return cls(request_id=None if request_id == "-" else request_id, client_ip=client_ip)
 

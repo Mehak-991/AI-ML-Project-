@@ -116,7 +116,7 @@ class _FeatureCodec:
             series = frame[spec.name]
             if spec.kind == "categorical":
                 lookup = {value: code for code, value in enumerate(self.categories[spec.name])}
-                columns.append(series.map(lambda v: 0 if pd.isna(v) else lookup[str(v)]))
+                columns.append(series.map(lambda v, lookup=lookup: 0 if pd.isna(v) else lookup[str(v)]))
             else:
                 columns.append(series.fillna(self.medians[spec.name]))
         return np.column_stack([np.asarray(c, dtype=float) for c in columns])

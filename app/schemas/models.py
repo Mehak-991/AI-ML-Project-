@@ -7,7 +7,7 @@ from typing import Any, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ProblemType = Literal["classification", "regression"]
-Algorithm = Literal["linear", "random_forest"]
+Algorithm = Literal["linear", "random_forest", "gradient_boosting", "decision_tree"]
 FeatureValue = str | int | float | bool | None
 
 

@@ -1,8 +1,7 @@
 """Unversioned endpoints: welcome message and liveness probe."""
 
-from typing import Annotated
-
 import hmac
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Security
 from fastapi.responses import PlainTextResponse

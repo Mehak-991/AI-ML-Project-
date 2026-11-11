@@ -3,7 +3,7 @@
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import sklearn
@@ -35,7 +35,7 @@ from app.ml.preprocessing import (
     select_features,
     split_dataset,
 )
-from app.ml.training import MIN_TRAINING_ROWS, TrainingResult, _prepare_target
+from app.ml.training import MIN_TRAINING_ROWS, TrainingResult, _prepare_target, build_estimator
 from app.ml.utils import to_python
 from app.services.dataset_service import get_dataset, load_dataset_frame
 
@@ -135,11 +135,11 @@ def _abandon_stale_runs(session: Session, experiment: Experiment, settings: Sett
     """Refuse a concurrent run, but let a run orphaned by a crashed process be replaced."""
     if experiment.status != "running":
         return
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=settings.JOB_STALE_TIMEOUT_MINUTES)
+    cutoff = datetime.now(UTC) - timedelta(minutes=settings.JOB_STALE_TIMEOUT_MINUTES)
     active = [run for run in experiment.runs if run.status == "running"]
     # SQLite returns naive datetimes; PostgreSQL returns aware ones.
     started = [
-        (run.started_at.replace(tzinfo=timezone.utc) if run.started_at.tzinfo is None
+        (run.started_at.replace(tzinfo=UTC) if run.started_at.tzinfo is None
          else run.started_at)
         for run in active
         if run.started_at is not None
@@ -149,7 +149,7 @@ def _abandon_stale_runs(session: Session, experiment: Experiment, settings: Sett
     for run in active:
         run.status = "failed"
         run.error_message = "Abandoned: the process running it stopped."
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(UTC)
 
 
 def execute_pipeline_run(
@@ -176,7 +176,7 @@ def execute_pipeline_run(
         experiment_id=experiment.id,
         run_number=run_count + 1,
         status="running",
-        started_at=datetime.now(timezone.utc),
+        started_at=datetime.now(UTC),
     )
     session.add(run)
     experiment.status = "running"
@@ -229,20 +229,27 @@ def execute_pipeline_run(
         )
 
         # 5. Estimator Setup
-        if experiment.problem_type == "classification":
+        if experiment.algorithm in ("gradient_boosting", "decision_tree"):
+            base_estimator = build_estimator(
+                experiment.problem_type, experiment.algorithm, experiment.random_state
+            )
+        elif experiment.problem_type == "classification":
             base_estimator = (
                 LogisticRegression(max_iter=2000, random_state=experiment.random_state)
                 if experiment.algorithm == "linear"
                 else RandomForestClassifier(random_state=experiment.random_state)
             )
-            evaluate = _classification_metrics
         else:
             base_estimator = (
                 Ridge(random_state=experiment.random_state)
                 if experiment.algorithm == "linear"
                 else RandomForestRegressor(random_state=experiment.random_state)
             )
-            evaluate = _regression_metrics
+        evaluate = (
+            _classification_metrics
+            if experiment.problem_type == "classification"
+            else _regression_metrics
+        )
 
         full_pipeline = Pipeline(
             steps=[
@@ -315,11 +322,12 @@ def execute_pipeline_run(
             class_labels=class_labels,
             metrics={"validation": val_metrics, "test": test_metrics},
             metadata={
-                "trained_at": datetime.now(timezone.utc).isoformat(),
+                "trained_at": datetime.now(UTC).isoformat(),
                 "training_seconds": round(duration, 4),
                 "experiment_id": str(experiment.id),
                 "run_id": str(run.id),
                 "best_hyperparameters": best_params,
+                "estimator": type(base_estimator).__name__,
                 "class_labels": class_labels,
             },
         )
@@ -358,7 +366,7 @@ def execute_pipeline_run(
         run.test_metrics = test_metrics
         run.cv_results = cv_results
         run.registered_model_id = registered_model.id
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(UTC)
         run.execution_duration_seconds = round(duration, 4)
 
         experiment.status = "completed"
@@ -379,7 +387,7 @@ def execute_pipeline_run(
         experiment = session.get(Experiment, exp_id, populate_existing=True)
         run.status = "failed"
         run.error_message = str(exc)[:2000]
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(UTC)
         run.execution_duration_seconds = round(duration, 4)
 
         experiment.status = "failed"
@@ -398,7 +406,7 @@ def cancel_experiment(session: Session, experiment_id: uuid.UUID) -> Experiment:
         raise DataValidationError(f"Cannot cancel experiment in '{experiment.status}' status")
 
     experiment.status = "cancelled"
-    experiment.completed_at = datetime.now(timezone.utc)
+    experiment.completed_at = datetime.now(UTC)
     for run in experiment.runs:
         if run.status in ("pending", "running"):
             run.status = "cancelled"

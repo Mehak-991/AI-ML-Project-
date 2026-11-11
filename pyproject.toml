@@ -101,6 +101,7 @@ target-version = "py312"
 extend-exclude = ["notebooks"]
 
 [tool.ruff.lint]
+ignore = ["E501"]  # advisory: no enforced formatter; long lines are mostly SQL, messages and test data
 select = [
     "E", "W",   # pycodestyle
     "F",        # pyflakes
@@ -110,6 +111,7 @@ select = [
     "SIM",      # simplify
     "C4",       # comprehensions
     "RUF",      # ruff-specific
+    "S",        # bandit (security)
 ]
 
 [tool.ruff.lint.isort]

@@ -15,7 +15,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, delete, func, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from alembic import command
 from app.core.config import Settings, get_settings
@@ -67,7 +67,7 @@ def _race(jobs: list) -> list:
         barrier.wait()
         try:
             outcomes[index] = job()
-        except Exception as exc:  # noqa: BLE001 - the outcome is what the test inspects
+        except Exception as exc:
             outcomes[index] = exc
 
     threads = [threading.Thread(target=run, args=(i, job)) for i, job in enumerate(jobs)]
@@ -282,20 +282,18 @@ def test_migration_on_postgres_maps_roles_preserves_data_and_installs_the_audit_
     with engine.begin() as conn:
         conn.execute(text("INSERT INTO audit_logs (id, action) VALUES (:i, 'user.created')"), {"i": uuid.uuid4()})
     for statement in ("UPDATE audit_logs SET action = 'x'", "DELETE FROM audit_logs", "TRUNCATE audit_logs"):
-        with pytest.raises(DBAPIError, match="append-only"):
-            with engine.begin() as conn:
-                conn.execute(text(statement))
+        with pytest.raises(DBAPIError, match="append-only"), engine.begin() as conn:
+            conn.execute(text(statement))
     with engine.connect() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM audit_logs")).scalar() == 2
 
     # The CHECK constraint refuses retired and invented roles.
     for bad in ("ml_engineer", "root"):
-        with pytest.raises(DBAPIError, match="ck_users_role"):
-            with engine.begin() as conn:
-                conn.execute(
-                    text("INSERT INTO users (id, email, hashed_password, full_name, role, is_active) VALUES (:i, :e, 'h', '', :r, true)"),
-                    {"i": uuid.uuid4(), "e": f"{bad}@x.com", "r": bad},
-                )
+        with pytest.raises(DBAPIError, match="ck_users_role"), engine.begin() as conn:
+            conn.execute(
+                text("INSERT INTO users (id, email, hashed_password, full_name, role, is_active) VALUES (:i, :e, 'h', '', :r, true)"),
+                {"i": uuid.uuid4(), "e": f"{bad}@x.com", "r": bad},
+            )
 
 
 @requires_db

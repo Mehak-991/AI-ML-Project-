@@ -1,7 +1,7 @@
 export type ExperimentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type SearchStrategy = 'none' | 'grid' | 'random';
 export type ProblemType = 'classification' | 'regression';
-export type Algorithm = 'linear' | 'random_forest';
+export type Algorithm = 'linear' | 'random_forest' | 'gradient_boosting' | 'decision_tree';
 
 export interface ExperimentRunRead {
   id: string;

@@ -44,7 +44,7 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
         await login({ email: email.trim(), password });
       }
       onClose();
-    } catch (err: unknown) {
+    } catch {
       // Error message is stored in context or caught
     } finally {
       setSubmitting(false);

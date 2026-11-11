@@ -1,5 +1,4 @@
 import datetime
-import time
 import uuid
 from typing import Any
 
@@ -14,7 +13,11 @@ from app.database.models.user import User
 from app.ml import persistence
 from app.repositories.deployments import DeploymentRepository, PredictionLogRepository
 from app.repositories.ml_models import MLModelRepository
-from app.schemas.deployments import DeployRequest, ModelMonitoringResponse, MonitoringOverviewResponse
+from app.schemas.deployments import (
+    DeployRequest,
+    ModelMonitoringResponse,
+    MonitoringOverviewResponse,
+)
 from app.services import audit_service
 
 
@@ -47,7 +50,7 @@ def deploy_model(
     dep_repo = DeploymentRepository(session)
     # Undeploy previous active deployments for this model
     existing_active = dep_repo.get_active_for_model(model_id)
-    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    now_iso = datetime.datetime.now(datetime.UTC).isoformat()
     if existing_active:
         existing_active.status = "Undeployed"
         existing_active.undeployed_at = now_iso
@@ -90,7 +93,7 @@ def undeploy_model(
     if not active:
         raise NotFoundError(f"No active deployment found for model {model_id}.")
 
-    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    now_iso = datetime.datetime.now(datetime.UTC).isoformat()
     active.status = "Undeployed"
     active.undeployed_at = now_iso
     if actor is not None:
@@ -177,7 +180,7 @@ def get_monitoring_overview(session: Session) -> MonitoringOverviewResponse:
     avg_duration = session.scalar(select(func.avg(PredictionLog.duration_ms))) or 0.0
     total_records = session.scalar(select(func.sum(PredictionLog.record_count))) or 0
 
-    one_day_ago = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)
+    one_day_ago = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
     recent_volume = log_repo.count_filtered(start_date=one_day_ago)
 
     return MonitoringOverviewResponse(
@@ -215,7 +218,7 @@ def get_model_monitoring(session: Session, model_id: uuid.UUID) -> ModelMonitori
 
     evaluated_logs = session.scalars(
         select(PredictionLog).where(
-            PredictionLog.model_id == model_id, PredictionLog.is_evaluated == True
+            PredictionLog.model_id == model_id, PredictionLog.is_evaluated.is_(True)
         )
     ).all()
 
@@ -229,7 +232,7 @@ def get_model_monitoring(session: Session, model_id: uuid.UUID) -> ModelMonitori
             if elog.prediction_summary and "predictions" in elog.prediction_summary and elog.ground_truth:
                 preds = elog.prediction_summary["predictions"]
                 gts = elog.ground_truth
-                for p, g in zip(preds, gts):
+                for p, g in zip(preds, gts, strict=False):
                     total_samples += 1
                     if str(p) == str(g):
                         matches += 1

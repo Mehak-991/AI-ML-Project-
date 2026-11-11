@@ -85,7 +85,7 @@ def _levels(origin: str) -> dict[str, str]:
 
 
 def test_healthy_stack_passes_and_the_bare_health_html_is_only_a_warning(stack, capsys) -> None:
-    origin, seen = stack("healthy")
+    origin, _seen = stack("healthy")
     assert check_stack.main(["--origin", origin]) == 0
     levels = _levels(origin)
     assert levels["GET /api/v1/health"] == "PASS"

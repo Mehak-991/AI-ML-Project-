@@ -12,9 +12,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.core.config import load_settings
-from app.services.job_service import run_worker_loop
-from app.utils.logging import configure_logging
+from app.core.config import load_settings  # noqa: E402 - needs the sys.path entry above
+from app.services.job_service import run_worker_loop  # noqa: E402 - needs the sys.path entry above
+from app.utils.logging import configure_logging  # noqa: E402 - needs the sys.path entry above
 
 logger = logging.getLogger("worker")
 

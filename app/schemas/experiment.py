@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 ExperimentStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 SearchStrategy = Literal["none", "grid", "random"]
 ProblemType = Literal["classification", "regression"]
-Algorithm = Literal["linear", "random_forest"]
+Algorithm = Literal["linear", "random_forest", "gradient_boosting", "decision_tree"]
 
 
 class ExperimentBase(BaseModel):

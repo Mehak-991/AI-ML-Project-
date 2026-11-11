@@ -3,7 +3,6 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import Select, func, or_, select
-from sqlalchemy.orm import Session
 
 from app.database.models.deployment import Deployment, PredictionLog
 from app.database.models.ml_model import MLModel

@@ -590,6 +590,8 @@ export function ExperimentTrackingPage() {
                   >
                     <option value="random_forest">Random Forest</option>
                     <option value="linear">Linear / Logistic Regression</option>
+                    <option value="gradient_boosting">Gradient Boosting</option>
+                    <option value="decision_tree">Decision Tree</option>
                   </select>
                 </div>
               </div>

@@ -7,7 +7,7 @@ tests/integration/test_job_recovery_pg.py.
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -15,7 +15,7 @@ from app.core.config import Settings
 from app.database.models.job import Job
 from app.services import job_service
 
-NOW = datetime(2026, 10, 31, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)
 
 
 def _job(session, *, status="running", age_minutes=0, heartbeat_minutes=None, **fields) -> Job:
@@ -181,7 +181,7 @@ def test_worker_restart_does_not_duplicate_live_prediction(
         db_session,
         _job(db_session, status="running", worker_id="old-host:1", age_minutes=0, heartbeat_minutes=0),
     )
-    job.heartbeat_at = datetime.now(timezone.utc)
+    job.heartbeat_at = datetime.now(UTC)
     db_session.commit()
     job_service.run_worker_loop(
         worker_env["settings"],
@@ -201,7 +201,7 @@ def test_worker_startup_recovers_abandoned_job_then_runs_it_once(
     job = _job(db_session, status="running", worker_id="crashed:1", age_minutes=60, heartbeat_minutes=60)
     job = _with_model(db_session, job)
     # Move the abandoned job's timestamps into the real past relative to wall-clock time.
-    old = datetime.now(timezone.utc) - timedelta(hours=1)
+    old = datetime.now(UTC) - timedelta(hours=1)
     job.heartbeat_at = job.updated_at = job.started_at = old
     db_session.commit()
     with session_factory() as s:  # updated_at has onupdate=now(); force it back
@@ -290,7 +290,7 @@ def test_heartbeat_only_updates_owned_running_job(db_session, session_factory) -
     job_service._JobHeartbeat(session_factory, mine.id, "me:1", 30).beat()
     job_service._JobHeartbeat(session_factory, theirs.id, "me:1", 30).beat()
     refreshed = job_service._as_aware(_reload(session_factory, mine.id).heartbeat_at)
-    assert refreshed > datetime.now(timezone.utc) - timedelta(minutes=1)
+    assert refreshed > datetime.now(UTC) - timedelta(minutes=1)
     assert _reload(session_factory, theirs.id).heartbeat_at == before
 
 

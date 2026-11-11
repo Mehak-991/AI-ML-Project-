@@ -28,13 +28,13 @@ import logging
 logger = logging.getLogger("app.auth")
 
 
-class Role(str, enum.Enum):
+class Role(str, enum.Enum):  # noqa: UP042 - StrEnum would change str(member); kept for stable formatting
     USER = "user"
     ADMIN = "admin"
     SUPERADMIN = "superadmin"
 
 
-class Permission(str, enum.Enum):
+class Permission(str, enum.Enum):  # noqa: UP042 - see Role
     # Reading platform resources (datasets, models, experiments, jobs, monitoring, drift,
     # prediction history). Object-level scoping still applies for non-privileged roles.
     RESOURCES_READ = "resources:read"

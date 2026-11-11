@@ -2,7 +2,6 @@ import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from app.core.permissions import LEGACY_ROLE_NAMES
 from app.database.models.user import RefreshToken, User
@@ -102,6 +101,6 @@ class RefreshTokenRepository(BaseRepository[RefreshToken]):
         return self.session.scalars(stmt).first()
 
     def revoke_all_for_user(self, user_id: uuid.UUID) -> None:
-        stmt = select(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked == False)
+        stmt = select(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked.is_(False))
         for token in self.session.scalars(stmt).all():
             token.revoked = True

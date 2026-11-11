@@ -75,6 +75,13 @@ export interface DatasetCreateResponse {
   validation: ValidationReport;
 }
 
+export interface DatasetPreview {
+  columns: string[];
+  rows: Array<Record<string, string | number | boolean | null>>;
+  total_rows: number;
+  shown_rows: number;
+}
+
 export interface DatasetValidationResponse {
   filename: string;
   file_format: string;

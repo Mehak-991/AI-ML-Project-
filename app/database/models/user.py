@@ -1,7 +1,6 @@
 import uuid
-from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, String, Text, Uuid
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base, TimestampMixin

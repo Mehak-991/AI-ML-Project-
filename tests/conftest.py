@@ -7,6 +7,7 @@ when TEST_DATABASE_URL is set.
 """
 
 from collections.abc import Callable, Iterator
+from datetime import UTC
 from pathlib import Path
 
 import pandas as pd
@@ -139,11 +140,11 @@ def db_session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
 @pytest.fixture
 def api_client(app: FastAPI, session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
     """Client whose get_db and auth dependencies are backed by the SQLite test database."""
-    from typing import Any
-    from datetime import datetime, timezone
+    import uuid
+    from datetime import datetime
+
     from app.api.deps import get_current_user, get_current_user_optional
     from app.database.models.user import User
-    import uuid
 
     mock_admin = User(
         id=uuid.uuid4(),
@@ -152,8 +153,8 @@ def api_client(app: FastAPI, session_factory: sessionmaker[Session]) -> Iterator
         hashed_password="mock",
         role="admin",
         is_active=True,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
 
     def _get_db() -> Iterator[Session]:
@@ -167,8 +168,10 @@ def api_client(app: FastAPI, session_factory: sessionmaker[Session]) -> Iterator
             session.close()
 
     from typing import Annotated
+
     from fastapi import Security
     from fastapi.security import HTTPAuthorizationCredentials
+
     from app.api.deps import DbSession, SettingsDep, security_bearer
 
     real_get_current_user = get_current_user

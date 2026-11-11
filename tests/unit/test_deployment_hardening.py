@@ -66,15 +66,15 @@ def test_preflight_secret_rules() -> None:
     good = {"POSTGRES_PASSWORD": "x", "JWT_SECRET_KEY": "k" * 48, "METRICS_TOKEN": "t"}
     assert all(level == "OK" for level, _ in preflight.check_secrets(good))
     assert ("ERROR", "POSTGRES_PASSWORD is not set.") in preflight.check_secrets({**good, "POSTGRES_PASSWORD": ""})
-    assert any(l == "ERROR" and "JWT_SECRET_KEY" in m for l, m in preflight.check_secrets({**good, "JWT_SECRET_KEY": "short"}))
-    assert any(l == "ERROR" and "JWT_SECRET_KEY" in m for l, m in preflight.check_secrets({**good, "JWT_SECRET_KEY": "change-me" + "x" * 40}))
+    assert any(level == "ERROR" and "JWT_SECRET_KEY" in m for level, m in preflight.check_secrets({**good, "JWT_SECRET_KEY": "short"}))
+    assert any(level == "ERROR" and "JWT_SECRET_KEY" in m for level, m in preflight.check_secrets({**good, "JWT_SECRET_KEY": "change-me" + "x" * 40}))
     # The removed development flag is now only reported as obsolete (it can no longer weaken anything).
     obsolete = preflight.check_secrets({**good, "ALLOW_FIRST_USER_ADMIN": "true"})
-    assert any(l == "WARN" and "ALLOW_FIRST_USER_ADMIN" in m and "obsolete" in m for l, m in obsolete)
-    assert not any(l == "ERROR" for l, _ in obsolete)
+    assert any(level == "WARN" and "ALLOW_FIRST_USER_ADMIN" in m and "obsolete" in m for level, m in obsolete)
+    assert not any(level == "ERROR" for level, _ in obsolete)
     expand = preflight.check_secrets({**good, "RBAC_STORE_LEGACY_VIEWER": "true"})
-    assert any(l == "WARN" and "RBAC_STORE_LEGACY_VIEWER" in m for l, m in expand)
-    assert any(l == "WARN" and "METRICS_TOKEN" in m for l, m in preflight.check_secrets({**good, "METRICS_TOKEN": ""}))
+    assert any(level == "WARN" and "RBAC_STORE_LEGACY_VIEWER" in m for level, m in expand)
+    assert any(level == "WARN" and "METRICS_TOKEN" in m for level, m in preflight.check_secrets({**good, "METRICS_TOKEN": ""}))
 
 
 def test_preflight_cli_fails_without_a_version_and_never_prints_secret_values(tmp_path, monkeypatch, capsys) -> None:
@@ -112,15 +112,15 @@ def test_health_reports_the_release_tag(make_settings) -> None:
 
 def test_proxies_report_the_trusted_scheme_not_the_raw_one() -> None:
     common = _text("frontend/server-common.inc")
-    lines = [l for l in common.splitlines() if "X-Forwarded-Proto" in l and "proxy_set_header" in l]
+    lines = [level for level in common.splitlines() if "X-Forwarded-Proto" in level and "proxy_set_header" in level]
     assert len(lines) == 3
-    assert all("$forwarded_proto" in l and "$scheme" not in l for l in lines)
+    assert all("$forwarded_proto" in level and "$scheme" not in level for level in lines)
 
 
 def test_nothing_is_trusted_by_default() -> None:
     trust = _text("frontend/proxy-trust.conf")
     geo = trust[trust.index("geo $trusted_tls_proxy") : trust.index("map ")]
-    active = [l.strip() for l in geo.splitlines() if l.strip() and not l.strip().startswith("#")]
+    active = [level.strip() for level in geo.splitlines() if level.strip() and not level.strip().startswith("#")]
     assert active == ["geo $trusted_tls_proxy {", "default 0;", "}"]
     assert '"1:https" https;' in trust and "default   $scheme;" in trust
 

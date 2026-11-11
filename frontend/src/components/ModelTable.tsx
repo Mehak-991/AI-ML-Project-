@@ -14,7 +14,7 @@ import {
   Square,
   GitCompare,
 } from 'lucide-react';
-import type { ModelRead } from '../types/model';
+import type { Algorithm, ModelRead } from '../types/model';
 
 interface ModelTableProps {
   models: ModelRead[];
@@ -46,7 +46,7 @@ export const ModelTable: React.FC<ModelTableProps> = ({
   onCompareSelected,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [algorithmFilter, setAlgorithmFilter] = useState<'all' | 'linear' | 'random_forest'>('all');
+  const [algorithmFilter, setAlgorithmFilter] = useState<'all' | Algorithm>('all');
   const [problemFilter, setProblemFilter] = useState<'all' | 'classification' | 'regression'>('all');
   const [sortBy, setSortBy] = useState<'created_at' | 'name' | 'score'>('created_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -179,13 +179,15 @@ export const ModelTable: React.FC<ModelTableProps> = ({
             <select
               value={algorithmFilter}
               onChange={(e) =>
-                setAlgorithmFilter(e.target.value as 'all' | 'linear' | 'random_forest')
+                setAlgorithmFilter(e.target.value as 'all' | Algorithm)
               }
               className="bg-transparent text-slate-700 focus:outline-none cursor-pointer pr-1 py-0.5"
             >
               <option value="all">All Algorithms</option>
               <option value="linear">Linear / Logistic</option>
               <option value="random_forest">Random Forest</option>
+              <option value="gradient_boosting">Gradient Boosting</option>
+              <option value="decision_tree">Decision Tree</option>
             </select>
           </div>
 

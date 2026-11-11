@@ -1,10 +1,8 @@
 """Unit tests for Phase 12 Automated ML Pipelines and Experiment Tracking."""
 
-import uuid
-import pytest
 from fastapi.testclient import TestClient
 
-from app.ml.synthetic import make_classification_frame, make_regression_frame
+from app.ml.synthetic import make_classification_frame
 from tests.helpers import to_csv_bytes
 
 API = "/api/v1"
@@ -65,3 +63,44 @@ def test_experiment_lifecycle_and_pipeline_execution(api_client: TestClient) -> 
     comp_data = compare_res.json()
     assert len(comp_data["experiments"]) == 1
     assert comp_data["experiments"][0]["experiment_name"] == "rf_experiment_test"
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("algorithm", "grid", "estimator_name"),
+    [
+        ("gradient_boosting", {"n_estimators": [10, 20]}, "GradientBoostingClassifier"),
+        ("decision_tree", {"max_depth": [2, 4]}, "DecisionTreeClassifier"),
+    ],
+)
+def test_experiment_runs_the_algorithm_that_was_requested(
+    api_client: TestClient, algorithm: str, grid: dict, estimator_name: str
+) -> None:
+    """A requested algorithm must never be silently replaced by another one."""
+    dataset_id = api_client.post(
+        f"{API}/datasets",
+        files={"file": ("algo.csv", to_csv_bytes(make_classification_frame(150, seed=7)))},
+        data={"name": f"algo_{algorithm}"},
+    ).json()["dataset"]["id"]
+    created = api_client.post(
+        f"{API}/experiments",
+        json={
+            "name": f"exp_{algorithm}",
+            "dataset_id": dataset_id,
+            "target_column": "label",
+            "problem_type": "classification",
+            "algorithm": algorithm,
+            "search_strategy": "grid",
+            "hyperparameter_config": grid,
+            "cv_folds": 2,
+        },
+    )
+    assert created.status_code == 201, created.text
+    run = api_client.post(f"{API}/experiments/{created.json()['id']}/run")
+    assert run.status_code == 200, run.text
+    assert run.json()["status"] == "completed"
+    model = api_client.get(f"{API}/models/{run.json()['registered_model_id']}").json()
+    assert model["algorithm"] == algorithm
+    assert model["training_metadata"]["estimator"] == estimator_name

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core import security
 from app.core.config import Settings
+from app.core.permissions import Permission, Role, effective_role, has_permission
 from app.core.exceptions import (
     AuthenticationError,
     ConflictError,
@@ -18,7 +19,10 @@ from app.core.exceptions import (
 )
 from app.database.models.user import RefreshToken, User
 from app.repositories.users import RefreshTokenRepository, UserRepository
+from app.services import audit_service
 from app.schemas.auth import (
+    SelfUpdateRequest,
+    UserCreateRequest,
     RefreshTokenRequest,
     TokenResponse,
     UserLoginRequest,
@@ -74,45 +78,31 @@ def create_bootstrap_admin(
     return user
 
 
-def register_user(
-    session: Session,
-    request: UserRegisterRequest,
-    requested_by: User | None = None,
-    *,
-    allow_first_user_admin: bool = False,
-) -> User:
+def _stored_role_name(role: str, settings: Settings) -> str:
+    """The value written to ``users.role``.
+
+    During the expand window (code deployed, migration 0014 not yet applied or rollback still
+    wanted) ``RBAC_STORE_LEGACY_VIEWER`` keeps new read-only accounts stored as ``viewer`` so
+    previous releases can still read them. The effective role is ``user`` either way.
+    """
+    if role == "user" and settings.RBAC_STORE_LEGACY_VIEWER:
+        return "viewer"
+    return role
+
+
+def register_user(session: Session, request: UserRegisterRequest, settings: Settings) -> User:
+    """Public self-registration. Always creates a read-only ``user``; there is no way to ask
+    for anything else (the request schema has no role field)."""
     user_repo = UserRepository(session)
-    # Without the explicit development flag nobody becomes admin by registering first.
-    is_bootstrap = allow_first_user_admin and user_repo.count() == 0
-    if is_bootstrap and session.get_bind().dialect.name == "postgresql":
-        # Two simultaneous first registrations must not both become admin. The lock lasts
-        # until this transaction commits, so the second one then sees the first user.
-        session.execute(select(func.pg_advisory_xact_lock(BOOTSTRAP_LOCK_KEY)))
-        is_bootstrap = user_repo.count() == 0
-    # Self-registration yields 'viewer'; elevated roles must be granted by an admin.
-    if request.role != "viewer" and not is_bootstrap:
-        if requested_by is None or requested_by.role != "admin":
-            raise PermissionDeniedError(
-                "Only administrators can create accounts with the "
-                f"'{request.role}' role. Register as 'viewer' and ask an admin to promote you."
-            )
-    existing = user_repo.get_by_email(request.email)
-    if existing:
+    if user_repo.get_by_email(request.email):
         raise ConflictError(f"A user with email '{request.email}' already exists.")
 
     security.validate_password_strength(request.password)
-    hashed_pwd = security.hash_password(request.password)
-
-    # First user automatically becomes admin if no users exist
-    role = request.role
-    if is_bootstrap:
-        role = "admin"
-
     user = User(
         email=request.email.lower().strip(),
-        hashed_password=hashed_pwd,
+        hashed_password=security.hash_password(request.password),
         full_name=request.full_name.strip(),
-        role=role,
+        role=_stored_role_name("user", settings),
         is_active=True,
     )
     user_repo.add(user)
@@ -260,32 +250,385 @@ def change_password(
     session.commit()
 
 
-def update_user_by_admin(
-    session: Session, current_user_id: uuid.UUID, target_user_id: uuid.UUID, request: UserUpdateRequest
+# --- User administration (superadmin) ------------------------------------------------------------
+
+
+def _require(actor: User, permission: Permission) -> None:
+    """Defence in depth: the routes already require the permission; the service checks again so
+    no caller (CLI, test, future route) can reach these operations without it."""
+    if not has_permission(actor.role, permission):
+        raise PermissionDeniedError(f"Access forbidden: the '{permission.value}' permission is required.")
+
+
+def _get_target(session: Session, target_id: uuid.UUID) -> User:
+    target = UserRepository(session).get(target_id)
+    if target is None:
+        raise NotFoundError(f"User {target_id} not found.")
+    return target
+
+
+def _is_superadmin(user: User) -> bool:
+    return effective_role(user.role) is Role.SUPERADMIN
+
+
+def _guard_last_superadmin(session: Session, target: User, action: str) -> None:
+    """Refuse to remove the last active superadmin.
+
+    Locks every active superadmin row first, then re-reads the target, so two concurrent requests
+    that would each leave one superadmin cannot both succeed: the second one sees the result of
+    the first and is refused. Called before any change that would stop ``target`` from being an
+    active superadmin.
+    """
+    active = UserRepository(session).lock_active_superadmins()
+    session.refresh(target)
+    if _is_superadmin(target) and target.is_active and len(active) <= 1:
+        raise ConflictError(
+            f"Cannot {action} the last active superadmin. Grant superadmin to another account first."
+        )
+
+
+def create_user(
+    session: Session,
+    actor: User,
+    request: UserCreateRequest,
+    settings: Settings,
+    context: audit_service.AuditContext | None = None,
 ) -> User:
-    user_repo = UserRepository(session)
-    target = user_repo.get(target_user_id)
-    if not target:
-        raise NotFoundError(f"User {target_user_id} not found.")
+    _require(actor, Permission.USERS_MANAGE)
+    _require(actor, Permission.ROLES_ASSIGN)
+    repo = UserRepository(session)
+    if repo.get_by_email(request.email):
+        raise ConflictError(f"A user with email '{request.email}' already exists.")
+    security.validate_password_strength(request.password)
+    user = User(
+        email=request.email.lower().strip(),
+        hashed_password=security.hash_password(request.password),
+        full_name=request.full_name.strip(),
+        role=_stored_role_name(request.role, settings),
+        is_active=True,
+    )
+    repo.add(user)
+    session.flush()
+    audit_service.record(
+        session,
+        action=audit_service.ACTION_USER_CREATED,
+        actor=actor,
+        target=user,
+        after=audit_service.user_snapshot(user),
+        context=context,
+    )
+    session.commit()
+    session.refresh(user)
+    return user
 
-    # Prevent self-demotion or self-deactivation if last admin
-    if target.role == "admin":
-        active_admins = user_repo.count_active_admins()
-        if active_admins <= 1:
-            if request.is_active is False:
-                raise DataValidationError("Cannot deactivate the last active administrator.")
-            if request.role is not None and request.role != "admin":
-                raise DataValidationError("Cannot change the role of the last active administrator.")
 
-    if request.role is not None:
-        target.role = request.role
-    if request.is_active is not None:
-        target.is_active = request.is_active
-        if request.is_active is False:  # security event: end the account's sessions
+def update_user(
+    session: Session,
+    actor: User,
+    target_id: uuid.UUID,
+    request: UserUpdateRequest,
+    settings: Settings,
+    context: audit_service.AuditContext | None = None,
+) -> User:
+    """Change a user's role (between ``user`` and ``admin``), active flag or display name.
+
+    One transaction: the change, the last-superadmin check and the audit entries commit together.
+    Granting or revoking superadmin has its own operations below.
+    """
+    _require(actor, Permission.USERS_MANAGE)
+    target = _get_target(session, target_id)
+    changing_status = request.is_active is not None and request.is_active != target.is_active
+    new_role = request.role
+    current_effective = effective_role(target.role)
+
+    if target.id == actor.id and (new_role is not None or request.is_active is not None):
+        raise PermissionDeniedError("You cannot change your own role or active status.")
+
+    role_change = new_role is not None and (
+        current_effective is None or current_effective.value != new_role
+    )
+    if role_change:
+        _require(actor, Permission.ROLES_ASSIGN)
+        if _is_superadmin(target):
+            raise ConflictError("This account is a superadmin; revoke superadmin first.")
+
+    if changing_status and request.is_active is False and _is_superadmin(target):
+        _guard_last_superadmin(session, target, "deactivate")
+
+    before = audit_service.user_snapshot(target)
+    if role_change:
+        target.role = _stored_role_name(new_role, settings)
+        audit_service.record(
+            session,
+            action=audit_service.ACTION_ROLE_CHANGED,
+            actor=actor,
+            target=target,
+            before={"role": before["role"]},
+            after={"role": target.role},
+            context=context,
+        )
+    if changing_status:
+        target.is_active = bool(request.is_active)
+        if not target.is_active:  # security event: end the account's sessions
             RefreshTokenRepository(session).revoke_all_for_user(target.id)
-    if request.full_name is not None:
+        audit_service.record(
+            session,
+            action=(
+                audit_service.ACTION_REACTIVATED
+                if target.is_active
+                else audit_service.ACTION_DEACTIVATED
+            ),
+            actor=actor,
+            target=target,
+            before={"is_active": before["is_active"]},
+            after={"is_active": target.is_active},
+            context=context,
+        )
+    if request.full_name is not None and request.full_name.strip() != target.full_name:
         target.full_name = request.full_name.strip()
+        audit_service.record(
+            session,
+            action=audit_service.ACTION_PROFILE_UPDATED,
+            actor=actor,
+            target=target,
+            before={"full_name": before["full_name"]},
+            after={"full_name": target.full_name},
+            context=context,
+        )
 
+    session.commit()
+    session.refresh(target)
+    return target
+
+
+def grant_superadmin(
+    session: Session,
+    actor: User,
+    target_id: uuid.UUID,
+    context: audit_service.AuditContext | None = None,
+) -> User:
+    """Only an existing superadmin can do this (the permission is held by no other role)."""
+    _require(actor, Permission.SUPERADMIN_GRANT)
+    target = _get_target(session, target_id)
+    if not target.is_active:
+        raise ConflictError("Only an active account can be made a superadmin.")
+    if _is_superadmin(target):
+        raise ConflictError("This account is already a superadmin.")
+    before = audit_service.user_snapshot(target)
+    target.role = "superadmin"
+    audit_service.record(
+        session,
+        action=audit_service.ACTION_SUPERADMIN_GRANTED,
+        actor=actor,
+        target=target,
+        before={"role": before["role"]},
+        after={"role": "superadmin"},
+        context=context,
+    )
+    session.commit()
+    session.refresh(target)
+    return target
+
+
+def revoke_superadmin(
+    session: Session,
+    actor: User,
+    target_id: uuid.UUID,
+    context: audit_service.AuditContext | None = None,
+) -> User:
+    """Demote a superadmin to admin. The last active superadmin can never be demoted."""
+    _require(actor, Permission.SUPERADMIN_GRANT)
+    target = _get_target(session, target_id)
+    if target.id == actor.id:
+        raise PermissionDeniedError("You cannot revoke your own superadmin role.")
+    _guard_last_superadmin(session, target, "demote")
+    if not _is_superadmin(target):
+        raise ConflictError("This account is not a superadmin.")
+    target.role = "admin"
+    audit_service.record(
+        session,
+        action=audit_service.ACTION_SUPERADMIN_REVOKED,
+        actor=actor,
+        target=target,
+        before={"role": "superadmin"},
+        after={"role": "admin"},
+        context=context,
+    )
+    session.commit()
+    session.refresh(target)
+    return target
+
+
+def _owned_resource_counts(session: Session, user_id: uuid.UUID) -> dict[str, int]:
+    from app.database.models.dataset import Dataset
+    from app.database.models.deployment import PredictionLog
+    from app.database.models.experiment import Experiment
+    from app.database.models.job import Job
+    from app.database.models.ml_model import MLModel
+
+    owned_by = {
+        "datasets": (Dataset, Dataset.owner_id),
+        "models": (MLModel, MLModel.owner_id),
+        "experiments": (Experiment, Experiment.created_by_id),
+        "jobs": (Job, Job.created_by_id),
+        "prediction_logs": (PredictionLog, PredictionLog.requested_by_id),
+    }
+    return {
+        name: session.scalar(select(func.count()).select_from(model).where(column == user_id)) or 0
+        for name, (model, column) in owned_by.items()
+    }
+
+
+def delete_user(
+    session: Session,
+    actor: User,
+    target_id: uuid.UUID,
+    confirm_email: str,
+    context: audit_service.AuditContext | None = None,
+) -> None:
+    """Hard-delete an account. Deactivation is the default; this is deliberately narrow:
+
+    the account must already be deactivated, must not be a superadmin, must own no resources,
+    and the caller must type its email address as explicit confirmation.
+    """
+    _require(actor, Permission.USERS_MANAGE)
+    target = _get_target(session, target_id)
+    if target.id == actor.id:
+        raise PermissionDeniedError("You cannot delete your own account.")
+    if _is_superadmin(target):
+        raise ConflictError("A superadmin cannot be deleted; revoke superadmin first.")
+    if target.is_active:
+        raise ConflictError("Deactivate the account first; deletion is only for deactivated accounts.")
+    if confirm_email.strip().lower() != target.email.lower():
+        raise DataValidationError("The confirmation email does not match the account.")
+    owned = {name: n for name, n in _owned_resource_counts(session, target.id).items() if n}
+    if owned:
+        raise ConflictError(
+            "This account owns resources and cannot be deleted; keep it deactivated instead: "
+            + ", ".join(f"{n} {name}" for name, n in owned.items())
+        )
+    audit_service.record(
+        session,
+        action=audit_service.ACTION_DELETED,
+        actor=actor,
+        target=target,
+        before=audit_service.user_snapshot(target),
+        context=context,
+    )
+    session.delete(target)
+    session.commit()
+
+
+def update_own_profile(
+    session: Session,
+    user: User,
+    request: SelfUpdateRequest,
+    context: audit_service.AuditContext | None = None,
+) -> User:
+    """Display name only. A role or status can never be changed through this path."""
+    _require(user, Permission.PROFILE_MANAGE)
+    db_user = _get_target(session, user.id)
+    new_name = request.full_name.strip()
+    if new_name != db_user.full_name:
+        before = db_user.full_name
+        db_user.full_name = new_name
+        audit_service.record(
+            session,
+            action=audit_service.ACTION_PROFILE_UPDATED,
+            actor=db_user,
+            target=db_user,
+            before={"full_name": before},
+            after={"full_name": new_name},
+            context=context,
+        )
+        session.commit()
+        session.refresh(db_user)
+    return db_user
+
+
+# --- Server-side bootstrap and recovery (used by the CLIs; never exposed through the API) ----------
+
+
+def bootstrap_superadmin(
+    session: Session,
+    *,
+    email: str,
+    password: str | None = None,
+    promote_existing: bool = False,
+    full_name: str = "Superadmin",
+    actor_label: str = "cli",
+) -> User:
+    """Create the first superadmin, or promote one explicit existing account. One-time: refuses
+    once any active superadmin exists. Writes an audit entry. Never changes a password.
+    """
+    repo = UserRepository(session)
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(select(func.pg_advisory_xact_lock(BOOTSTRAP_LOCK_KEY)))
+    if repo.lock_active_superadmins():
+        raise ConflictError("An active superadmin already exists; bootstrap is one-time.")
+    try:
+        normalized = _EMAIL_ADAPTER.validate_python(email.strip()).lower()
+    except ValidationError as exc:
+        raise DataValidationError("The email address is not valid for sign-in.") from exc
+
+    existing = repo.get_by_email(normalized)
+    if promote_existing:
+        if existing is None:
+            raise NotFoundError(f"No account with email '{normalized}' exists; nothing was changed.")
+        if not existing.is_active:
+            raise ConflictError("That account is deactivated; reactivate it before promoting it.")
+        before_role = existing.role
+        existing.role = "superadmin"
+        user = existing
+        detail = "promoted existing account"
+    else:
+        if existing is not None:
+            raise ConflictError(f"A user with email '{normalized}' already exists; it was not changed.")
+        if not password:
+            raise DataValidationError("A password is required to create a new account.")
+        security.validate_password_strength(password)
+        user = User(
+            email=normalized,
+            hashed_password=security.hash_password(password),
+            full_name=full_name.strip() or "Superadmin",
+            role="superadmin",
+            is_active=True,
+        )
+        repo.add(user)
+        session.flush()
+        before_role = None
+        detail = "created new account"
+    audit_service.record(
+        session,
+        action=audit_service.ACTION_CLI_BOOTSTRAP,
+        actor_label=actor_label,
+        target=user,
+        before={"role": before_role} if before_role else None,
+        after={"role": "superadmin"},
+        detail=detail,
+    )
+    session.commit()
+    session.refresh(user)
+    return user
+
+
+def reset_password_by_operator(
+    session: Session, *, email: str, new_password: str, actor_label: str = "cli"
+) -> User:
+    """Recovery when a superadmin password is lost. Revokes the account's sessions; audited."""
+    target = UserRepository(session).get_by_email(email)
+    if target is None:
+        raise NotFoundError("No account with that email exists; nothing was changed.")
+    security.validate_password_strength(new_password)
+    target.hashed_password = security.hash_password(new_password)
+    RefreshTokenRepository(session).revoke_all_for_user(target.id)
+    audit_service.record(
+        session,
+        action=audit_service.ACTION_CLI_PASSWORD_RESET,
+        actor_label=actor_label,
+        target=target,
+        detail="password reset by operator; sessions revoked",
+    )
     session.commit()
     session.refresh(target)
     return target

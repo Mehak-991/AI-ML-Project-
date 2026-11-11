@@ -49,7 +49,7 @@ def list_models(
 ) -> ModelList:
     repo = MLModelRepository(db)
     # Non-admins see only their own models or legacy unowned models.
-    owner_filter = None if authorization.is_admin(user) else user.id
+    owner_filter = None if authorization.has_full_access(user) else user.id
     if dataset_id is not None:
         models = repo.list_for_dataset(dataset_id, owner_id=owner_filter)
         total = len(models)

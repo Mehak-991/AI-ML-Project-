@@ -48,6 +48,7 @@ from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core import security
+from app.core.permissions import Permission, effective_role, has_permission
 from collections.abc import Generator
 from app.core.exceptions import DatabaseNotConfiguredError
 from app.database.models.user import User
@@ -166,15 +167,98 @@ CurrentUserDep = Annotated[User, Depends(get_current_user)]
 CurrentUserOptionalDep = Annotated[User | None, Depends(get_current_user_optional)]
 
 
-def require_role(*allowed_roles: str):
-    """Factory dependency enforcing RBAC roles: 'admin', 'ml_engineer', 'viewer'."""
+POLICY_ATTR = "__rbac_policy__"
 
-    def _role_checker(current_user: CurrentUserDep) -> User:
-        if current_user.role not in allowed_roles:
+
+def _declare_policy(func, policy: tuple[str, Permission | None]):
+    setattr(func, POLICY_ATTR, policy)
+    return func
+
+
+def require_permission(permission: Permission):
+    """Dependency factory: the caller must hold ``permission``. Returns the authenticated user.
+
+    Unauthenticated callers get 401 from ``get_current_user`` before this runs; authenticated
+    callers without the permission get 403. Routes never compare role names.
+    """
+
+    def _permission_checker(current_user: CurrentUserDep) -> User:
+        if not has_permission(current_user.role, permission):
+            role = effective_role(current_user.role)
+            auth_logger.info(
+                "denied: role=%s lacks %s", role.value if role else "unknown", permission.value
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access forbidden: role '{current_user.role}' lacks permission for this action. Required: {', '.join(allowed_roles)}.",
+                detail=(
+                    f"Access forbidden: your role ({role.value if role else 'unknown'}) lacks the "
+                    f"'{permission.value}' permission."
+                ),
             )
         return current_user
 
-    return _role_checker
+    return _declare_policy(_permission_checker, ("permission", permission))
+
+
+def public_route() -> None:
+    """Marks a route as intentionally reachable without authentication."""
+
+
+_declare_policy(public_route, ("public", None))
+
+# Usable as a parameter dependency or in ``dependencies=[...]``.
+PublicRoute = Depends(public_route)
+
+# Common permission dependencies; the value is the authenticated User.
+ReadAccessDep = Annotated[User, Depends(require_permission(Permission.RESOURCES_READ))]
+PredictAccessDep = Annotated[User, Depends(require_permission(Permission.PREDICT))]
+MlOperatorDep = Annotated[User, Depends(require_permission(Permission.ML_OPERATE))]
+DeploymentManagerDep = Annotated[User, Depends(require_permission(Permission.DEPLOYMENTS_MANAGE))]
+ProfileDep = Annotated[User, Depends(require_permission(Permission.PROFILE_MANAGE))]
+
+
+def _declared_policies(dependant) -> list[tuple[str, Permission | None]]:
+    found: list[tuple[str, Permission | None]] = []
+    for sub in dependant.dependencies:
+        policy = getattr(sub.call, POLICY_ATTR, None)
+        if policy is not None:
+            found.append(policy)
+        found.extend(_declared_policies(sub))
+    return found
+
+
+_policy_cache: dict[int, bool] = {}
+
+
+def route_has_policy(route) -> bool:
+    """True if the route declares a permission or is explicitly public."""
+    dependant = getattr(route, "dependant", None)
+    if dependant is None:
+        return False
+    return bool(_declared_policies(dependant))
+
+
+def enforce_route_policy(request: Request) -> None:
+    """Deny-by-default: an API route that declares neither a permission nor ``public_route`` is
+    refused (403) instead of being served. Applied to the whole application.
+
+    Fails closed: if the matched route cannot be inspected, the request is denied too.
+    """
+    route = request.scope.get("route")
+    if route is None:
+        # Not matched to an API route (for example the documentation pages), nothing to enforce.
+        return
+    key = id(route)
+    declared = _policy_cache.get(key)
+    if declared is None:
+        declared = _policy_cache[key] = route_has_policy(route)
+    if not declared:
+        auth_logger.error(
+            "route %s %s declares no access policy; denied",
+            request.method,
+            getattr(route, "path", "?"),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: this route has no declared access policy.",
+        )

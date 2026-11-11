@@ -74,10 +74,11 @@ class Settings(BaseSettings):
     # rollback. New and changed passwords are always Argon2id.
     PASSWORD_REHASH_ON_LOGIN: bool = True
 
-    # Legacy convenience for local development only: the first public registration on an empty
-    # database becomes admin. Off by default and refused in production; create the first admin
-    # with scripts/create_admin.py instead.
-    ALLOW_FIRST_USER_ADMIN: bool = False
+    # RBAC v2 rollout (expand phase): while True, new read-only accounts are stored with the legacy
+    # name "viewer" so releases from before RBAC v2 can still read them. The effective role is
+    # "user" either way. Set it true when deploying the RBAC v2 code BEFORE migration 0014, and
+    # remove it once the rollback window has closed.
+    RBAC_STORE_LEGACY_VIEWER: bool = False
 
     # JWT Authentication & Authorization
     JWT_SECRET_KEY: SecretStr = Field(
@@ -260,11 +261,6 @@ class Settings(BaseSettings):
             )
         if self.CORS_ORIGINS and "*" in self.CORS_ORIGINS:
             problems.append("CORS_ORIGINS must not contain '*' when APP_ENV=production")
-        if self.ALLOW_FIRST_USER_ADMIN:
-            problems.append(
-                "ALLOW_FIRST_USER_ADMIN must be false when APP_ENV=production "
-                "(create the first administrator with scripts/create_admin.py)"
-            )
         if problems:
             raise ValueError("; ".join(problems))
         return self

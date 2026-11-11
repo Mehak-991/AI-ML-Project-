@@ -5,6 +5,7 @@ autogenerate.
 """
 
 from app.database.base import Base
+from app.database.models.audit import AuditLog
 from app.database.models.dataset import Dataset
 from app.database.models.deployment import Deployment, PredictionLog
 from app.database.models.drift import DriftAlert, DriftReport
@@ -14,6 +15,7 @@ from app.database.models.ml_model import MLModel
 from app.database.models.user import RefreshToken, User
 
 __all__ = [
+    "AuditLog",
     "Base",
     "Dataset",
     "Deployment",

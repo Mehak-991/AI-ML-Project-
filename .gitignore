@@ -1,60 +1,66 @@
-# Python
+# Secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Python virtual environments (ALL common naming conventions)
+.venv/
+.venv*/
+venv/
+venv*/
+env/
+env*/
+ENV/
+.env/
+
+# Frontend build outputs and dependencies
+frontend/node_modules/
+frontend/dist/
+node_modules/
+
+
+# Python caches and build artifacts
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 *.egg-info/
-dist/
 build/
-*.egg
 
-# Virtual environments
-venv/
-.venv/
-.venv312/
-env/
-ENV/
-
-# Environment files — NEVER commit real credentials
-.env
-*.env.local
-
-# Jupyter
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 .ipynb_checkpoints/
-*.ipynb~
 
-# Data & model artifacts (keep .gitkeep placeholders instead)
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Data and artifacts (keep directory placeholders)
+datasets/*
+!datasets/.gitkeep
+!datasets/examples/
 uploads/*
 !uploads/.gitkeep
 trained_models/*
 !trained_models/.gitkeep
-datasets/*
-!datasets/.gitkeep
-!datasets/examples/
 logs/*
 !logs/.gitkeep
+backups/*
+!backups/.gitkeep
 
-# SQLite database
+# Runtime-generated (never commit)
+model_cache/
 *.db
 *.sqlite3
+*.joblib
+*.tmp
+*.part
+compose.override.yaml
 
-# Node / Frontend artifacts (if any remain)
-node_modules/
-frontend/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Coverage & pytest
-.coverage
-.pytest_cache/
-htmlcov/
-
-# Ruff / linting caches
-.ruff_cache/
+# Build and tool logs (UTF-16 PowerShell transcripts etc.)
+*.log

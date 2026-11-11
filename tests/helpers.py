@@ -53,3 +53,28 @@ def insert_account(
         session.refresh(user)
         session.expunge(user)
         return user
+
+
+def iter_api_routes(app):
+    """Yield (method, path, route_like) for every API route of a FastAPI app.
+
+    Works with older FastAPI (a flat list of APIRoute) and with releases that wrap included
+    routers in lazy objects exposing ``effective_route_contexts()``. ``route_like`` always has
+    ``.dependant`` and ``.endpoint``. HEAD and OPTIONS are skipped.
+    """
+
+    def visit(obj):
+        if hasattr(obj, "effective_route_contexts"):
+            for ctx in obj.effective_route_contexts():
+                yield from visit(ctx)
+            return
+        dependant = getattr(obj, "dependant", None)
+        methods = getattr(obj, "methods", None)
+        path = getattr(obj, "path", None) or getattr(obj, "path_format", None)
+        if dependant is None or not methods or path is None:
+            return
+        for method in sorted(set(methods) - {"HEAD", "OPTIONS"}):
+            yield method, path, obj
+
+    for route in app.routes:
+        yield from visit(route)

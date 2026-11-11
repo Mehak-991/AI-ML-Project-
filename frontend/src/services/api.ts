@@ -306,6 +306,21 @@ export const datasetApi = {
     });
     return response.data;
   },
+
+  /**
+   * First rows of a stored dataset (missing values come back as null).
+   * GET /api/v1/datasets/{id}/preview
+   */
+  async getDatasetPreview(
+    id: string,
+    limit = 20
+  ): Promise<import('../types/dataset').DatasetPreview> {
+    const response = await apiClient.get<import('../types/dataset').DatasetPreview>(
+      `/datasets/${id}/preview`,
+      { params: { limit } }
+    );
+    return response.data;
+  },
 };
 
 export const modelApi = {
@@ -572,6 +587,23 @@ export const authApi = {
   async getMe(): Promise<import('../types/auth').User> {
     const response = await apiClient.get<import('../types/auth').User>('/auth/me');
     return response.data;
+  },
+
+  /**
+   * Update own display name. A role or status can never be sent here.
+   * PATCH /api/v1/auth/me
+   */
+  async updateMe(payload: { full_name: string }): Promise<import('../types/auth').User> {
+    const response = await apiClient.patch<import('../types/auth').User>('/auth/me', payload);
+    return response.data;
+  },
+
+  /**
+   * Change own password; the server revokes every refresh token.
+   * POST /api/v1/auth/change-password
+   */
+  async changePassword(payload: { current_password: string; new_password: string }): Promise<void> {
+    await apiClient.post('/auth/change-password', payload);
   },
 
   /**

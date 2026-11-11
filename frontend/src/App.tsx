@@ -14,6 +14,7 @@ import {
   LogIn,
   LogOut,
   ShieldAlert,
+  UserCircle,
 } from 'lucide-react';
 import { AuthModal } from './components/AuthModal';
 import { useAuth } from './context/AuthContext';
@@ -37,6 +38,9 @@ const DeploymentMonitoringPage = lazy(() =>
 );
 const AuditLogsPage = lazy(() =>
   import('./pages/AuditLogsPage').then((m) => ({ default: m.AuditLogsPage }))
+);
+const ProfilePage = lazy(() =>
+  import('./pages/ProfilePage').then((m) => ({ default: m.ProfilePage }))
 );
 const SystemSettingsPage = lazy(() =>
   import('./pages/SystemSettingsPage').then((m) => ({ default: m.SystemSettingsPage }))
@@ -68,7 +72,8 @@ type NavTab =
   | 'jobs'
   | 'users'
   | 'audit'
-  | 'settings';
+  | 'settings'
+  | 'profile';
 
 export function App() {
   const { user, loading, logout, can } = useAuth();
@@ -133,6 +138,12 @@ export function App() {
       label: 'Background Jobs & Tasks',
       icon: <Layers className="w-4 h-4" />,
       phase: 'Phase 14',
+    },
+    {
+      id: 'profile',
+      label: 'My Profile',
+      icon: <UserCircle className="w-4 h-4" />,
+      phase: 'Account',
     },
     {
       id: 'users',
@@ -295,6 +306,7 @@ export function App() {
                 {activeTab === 'users' && 'Enterprise User Administration'}
                 {activeTab === 'audit' && 'Audit Logs'}
                 {activeTab === 'settings' && 'System Settings'}
+                {activeTab === 'profile' && 'My Profile'}
               </h1>
               <p className="text-xs text-slate-500 hidden sm:block">
                 {activeTab === 'models' &&
@@ -311,6 +323,7 @@ export function App() {
                   'Role-Based Access Control, user provisioning, account statuses, and admin security.'}
                 {activeTab === 'audit' && 'Append-only record of role changes and privileged operations.'}
                 {activeTab === 'settings' && 'Runtime configuration and backend server properties.'}
+                {activeTab === 'profile' && 'Your account details, display name and password.'}
               </p>
             </div>
           </div>
@@ -429,6 +442,8 @@ export function App() {
 
           {activeTab === 'settings' && can('settings:read') && <SystemSettingsPage />}
 
+          {activeTab === 'profile' && <ProfilePage />}
+
           {activeTab === 'datasets' && (
             <div className="bg-slate-950 text-slate-100 p-6 md:p-8 rounded-3xl shadow-lg border border-slate-800">
               <DatasetManagementPage />
@@ -468,6 +483,7 @@ export function App() {
             activeTab !== 'explainability' &&
             activeTab !== 'users' &&
             activeTab !== 'audit' &&
+            activeTab !== 'profile' &&
             activeTab !== 'settings' && (
             <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-md mx-auto my-12 shadow-sm">
               <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 mx-auto mb-4">

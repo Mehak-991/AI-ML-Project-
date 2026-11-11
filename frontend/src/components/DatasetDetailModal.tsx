@@ -13,7 +13,7 @@ import {
   Hash,
   AlertCircle,
 } from 'lucide-react';
-import type { DatasetRead, DatasetValidationResponse } from '../types/dataset';
+import type { DatasetPreview, DatasetRead, DatasetValidationResponse } from '../types/dataset';
 import { datasetApi, parseApiError, type ErrorDetails } from '../services/api';
 
 interface DatasetDetailModalProps {
@@ -22,7 +22,9 @@ interface DatasetDetailModalProps {
 }
 
 export const DatasetDetailModal: React.FC<DatasetDetailModalProps> = ({ dataset, onClose }) => {
-  const [activeTab, setActiveTab] = useState<'schema' | 'profile'>('schema');
+  const [activeTab, setActiveTab] = useState<'schema' | 'preview' | 'profile'>('schema');
+  const [preview, setPreview] = useState<DatasetPreview | null>(null);
+  const [previewError, setPreviewError] = useState<ErrorDetails | null>(null);
   const [summaryData, setSummaryData] = useState<DatasetValidationResponse | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [errorDetails, setErrorDetails] = useState<ErrorDetails | null>(null);
@@ -48,7 +50,17 @@ export const DatasetDetailModal: React.FC<DatasetDetailModalProps> = ({ dataset,
       }
     };
 
+    const fetchPreview = async () => {
+      try {
+        const data = await datasetApi.getDatasetPreview(dataset.id);
+        if (isMounted) setPreview(data);
+      } catch (err: unknown) {
+        if (isMounted) setPreviewError(parseApiError(err));
+      }
+    };
+
     fetchSummary();
+    fetchPreview();
     return () => {
       isMounted = false;
     };
@@ -169,6 +181,17 @@ export const DatasetDetailModal: React.FC<DatasetDetailModalProps> = ({ dataset,
             Column Schema & Data Types ({dataset.columns.length})
           </button>
           <button
+            onClick={() => setActiveTab('preview')}
+            className={`pb-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition-colors ${
+              activeTab === 'preview'
+                ? 'border-blue-500 text-blue-400'
+                : 'border-transparent text-slate-400 hover:text-slate-300'
+            }`}
+          >
+            <TableIcon className="w-4 h-4" />
+            Data Preview
+          </button>
+          <button
             onClick={() => setActiveTab('profile')}
             className={`pb-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition-colors ${
               activeTab === 'profile'
@@ -223,6 +246,49 @@ export const DatasetDetailModal: React.FC<DatasetDetailModalProps> = ({ dataset,
                 <span>Original File: <strong className="text-white font-mono">{dataset.original_filename}</strong></span>
                 <span>SHA256: <strong className="text-slate-300 font-mono">{dataset.sha256.slice(0, 16)}...</strong></span>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'preview' && (
+            <div>
+              {previewError ? (
+                <p className="text-sm text-red-400">{previewError.message}</p>
+              ) : !preview ? (
+                <p className="text-sm text-slate-400">Loading preview…</p>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-400 mb-2">
+                    Showing the first {preview.shown_rows} of {preview.total_rows.toLocaleString()}{' '}
+                    rows. Missing values are shown as “—”.
+                  </p>
+                  <div className="overflow-x-auto border border-slate-700 rounded-lg">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-slate-800 text-slate-300">
+                        <tr>
+                          {preview.columns.map((column) => (
+                            <th key={column} scope="col" className="px-3 py-2 text-left font-semibold">
+                              {column}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800 text-slate-200">
+                        {preview.rows.map((row, index) => (
+                          <tr key={index}>
+                            {preview.columns.map((column) => (
+                              <td key={column} className="px-3 py-1.5 font-mono whitespace-nowrap">
+                                {row[column] === null || row[column] === undefined
+                                  ? '—'
+                                  : String(row[column])}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
             </div>
           )}
 

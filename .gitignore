@@ -44,7 +44,6 @@ Thumbs.db
 datasets/*
 !datasets/.gitkeep
 !datasets/examples/
-reports/
 uploads/*
 !uploads/.gitkeep
 trained_models/*
@@ -62,3 +61,6 @@ model_cache/
 *.tmp
 *.part
 compose.override.yaml
+
+# Build and tool logs (UTF-16 PowerShell transcripts etc.)
+*.log

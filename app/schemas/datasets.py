@@ -55,6 +55,13 @@ class ColumnSummary(BaseModel):
     top_values: list[dict[str, Any]] | None = None
 
 
+class DatasetPreview(BaseModel):
+    columns: list[str]
+    rows: list[dict[str, Any]]
+    total_rows: int
+    shown_rows: int
+
+
 class DatasetSummary(BaseModel):
     n_rows: int
     n_columns: int

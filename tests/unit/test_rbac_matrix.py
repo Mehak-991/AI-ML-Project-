@@ -196,6 +196,7 @@ ENDPOINTS: list[tuple[str, str, str]] = [
     ("GET", f"{API}/datasets", USER),
     ("GET", f"{API}/datasets/{{}}", USER),
     ("GET", f"{API}/datasets/{{}}/summary", USER),
+    ("GET", f"{API}/datasets/{{}}/preview", USER),
     ("GET", f"{API}/models", USER),
     ("GET", f"{API}/models/{{}}", USER),
     ("GET", f"{API}/deployments", USER),

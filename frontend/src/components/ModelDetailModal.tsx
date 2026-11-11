@@ -253,6 +253,46 @@ export const ModelDetailModal: React.FC<ModelDetailModalProps> = ({
                 </div>
               </div>
 
+              {/* Cross-validation (training + validation rows only; the test split is never used) */}
+              {model.training_metadata?.cross_validation && (
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Cross-Validation
+                    </span>
+                  </div>
+                  {model.training_metadata.cross_validation.status === 'ok' ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-3 text-xs">
+                      {Object.entries(model.training_metadata.cross_validation)
+                        .filter(([, value]) => typeof value === 'object' && value !== null)
+                        .map(([name, value]) => {
+                          const stat = value as { mean: number | null; std: number | null };
+                          return (
+                            <div key={name}>
+                              <span className="text-slate-400 block text-[11px]">
+                                {name.replace('_', ' ')} (mean ± std)
+                              </span>
+                              <span className="font-mono font-bold text-slate-800 text-sm">
+                                {stat.mean ?? '—'} ± {stat.std ?? '—'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      <div>
+                        <span className="text-slate-400 block text-[11px]">Folds</span>
+                        <span className="font-mono font-bold text-slate-800 text-sm">
+                          {model.training_metadata.cross_validation.folds}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="p-3 text-xs text-slate-500">
+                      Not computed: {model.training_metadata.cross_validation.reason}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Feature Schema Table */}
               <div className="border border-slate-200 rounded-xl overflow-hidden">
                 <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">

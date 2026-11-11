@@ -162,6 +162,7 @@ def test_other_users_cannot_reach_owned_objects(secure_client, actors, owned) ->
     denied = [
         ("get", f"{API}/datasets/{owned['dataset']}", None),
         ("get", f"{API}/datasets/{owned['dataset']}/summary", None),
+        ("get", f"{API}/datasets/{owned['dataset']}/preview", None),
         ("get", f"{API}/deployments?model_id={owned['model']}", None),
         ("get", f"{API}/deployments/{owned['deployment']}", None),
         ("get", f"{API}/monitoring/models/{owned['model']}", None),

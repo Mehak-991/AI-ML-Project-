@@ -136,17 +136,16 @@ def cross_validate_model(
 ) -> dict[str, Any]:
     if len(y) > CV_MAX_ROWS:
         return {"status": "skipped", "reason": f"more than {CV_MAX_ROWS} training rows"}
-    if problem_type == "classification":
-        smallest_class = int(y.value_counts().min())
-        folds = min(CV_FOLDS, smallest_class)
+    classification = problem_type == "classification"
+    folds = min(CV_FOLDS, int(y.value_counts().min()) if classification else len(y))
+    if folds < 2:
+        return {"status": "skipped", "reason": "too few rows per class for cross-validation"}
+    if classification:
         splitter = StratifiedKFold(n_splits=folds, shuffle=True, random_state=random_state)
         scoring = {"accuracy": "accuracy", "f1_macro": "f1_macro"}
     else:
-        folds = min(CV_FOLDS, len(y))
         splitter = KFold(n_splits=folds, shuffle=True, random_state=random_state)
         scoring = {"r2": "r2", "rmse": "neg_root_mean_squared_error"}
-    if folds < 2:
-        return {"status": "skipped", "reason": "too few rows per class for cross-validation"}
     try:
         scores = cross_validate(clone(pipeline), X, y, cv=splitter, scoring=scoring)
     except ValueError as exc:

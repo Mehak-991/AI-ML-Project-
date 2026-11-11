@@ -1,5 +1,5 @@
 export type ProblemType = 'classification' | 'regression';
-export type Algorithm = 'linear' | 'random_forest';
+export type Algorithm = 'linear' | 'random_forest' | 'gradient_boosting' | 'decision_tree';
 
 export interface FeatureSchemaItem {
   name: string;
@@ -59,7 +59,15 @@ export interface TrainingConfigData {
   [key: string]: unknown;
 }
 
+export interface CrossValidationSummary {
+  status: 'ok' | 'skipped';
+  reason?: string;
+  folds?: number;
+  [metric: string]: { mean: number | null; std: number | null } | string | number | undefined;
+}
+
 export interface ModelTrainingMetadata {
+  cross_validation?: CrossValidationSummary;
   trained_at: string;
   training_seconds: number;
   rows: TrainingMetadataRows;

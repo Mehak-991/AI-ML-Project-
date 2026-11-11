@@ -281,3 +281,33 @@ def test_openapi_documents_ml_endpoints(client: TestClient) -> None:
         assert method in paths[path], path
     components = schema["components"]["schemas"]
     assert {"TrainRequest", "PredictRequest", "PredictResponse", "ModelRead"} <= set(components)
+
+
+def test_dataset_preview_returns_bounded_json_safe_rows(api_client) -> None:
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {"a": [1, 2, None, 4] * 10, "b": ["x", None, "z", "w"] * 10, "label": [0, 1] * 20}
+    )
+    created = api_client.post(
+        f"{API}/datasets", files={"file": ("p.csv", to_csv_bytes(frame))}, data={"name": "prev"}
+    )
+    dataset_id = created.json()["dataset"]["id"]
+
+    preview = api_client.get(f"{API}/datasets/{dataset_id}/preview", params={"limit": 5})
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body["columns"] == ["a", "b", "label"]
+    assert body["total_rows"] == 40
+    assert body["shown_rows"] == len(body["rows"]) == 5
+    assert body["rows"][2]["a"] is None  # a missing value is null, never NaN (which is invalid JSON)
+    assert body["rows"][1]["b"] is None
+
+    assert api_client.get(f"{API}/datasets/{dataset_id}/preview").json()["shown_rows"] == 20
+    for bad in (0, 101, -3):
+        assert (
+            api_client.get(f"{API}/datasets/{dataset_id}/preview", params={"limit": bad}).status_code
+            == 422
+        )
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert api_client.get(f"{API}/datasets/{missing}/preview").status_code == 404

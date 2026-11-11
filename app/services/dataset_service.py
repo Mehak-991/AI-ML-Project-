@@ -1,5 +1,6 @@
 """Use cases for uploading, validating and summarizing datasets."""
 
+import json
 import logging
 import tempfile
 import uuid
@@ -98,6 +99,23 @@ def load_dataset_frame(settings: Settings, dataset: Dataset) -> pd.DataFrame:
     if not path.is_file():
         raise NotFoundError("The dataset's file is missing from storage.")
     return _read(settings, path, dataset.file_format)
+
+
+PREVIEW_MAX_ROWS = 100
+
+
+def preview_dataset(settings: Settings, dataset: Dataset, limit: int = 20) -> dict[str, Any]:
+    """The first rows of a stored dataset as JSON-safe values (missing values become null)."""
+    limit = max(1, min(limit, PREVIEW_MAX_ROWS))
+    frame = load_dataset_frame(settings, dataset)
+    head = frame.head(limit)
+    rows = json.loads(head.to_json(orient="records", date_format="iso", default_handler=str))
+    return {
+        "columns": [str(column) for column in frame.columns],
+        "rows": rows,
+        "total_rows": len(frame),
+        "shown_rows": len(rows),
+    }
 
 
 def summarize_dataset(

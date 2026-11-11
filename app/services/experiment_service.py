@@ -327,6 +327,7 @@ def execute_pipeline_run(
                 "experiment_id": str(experiment.id),
                 "run_id": str(run.id),
                 "best_hyperparameters": best_params,
+                "estimator": type(base_estimator).__name__,
                 "class_labels": class_labels,
             },
         )

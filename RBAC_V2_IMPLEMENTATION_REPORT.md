@@ -414,3 +414,46 @@ Work stops here; nothing below has been done. I need from you, separately:
 3. The account to become superadmin, and whether it is new or the existing admin (D6).
 4. The rollback method (backup restore or an approved downgrade).
 5. Written approval for the production backup, migration, bootstrap and deployment window in §14.
+
+## 16. CI remediation for pull request #1 (2026-11-11)
+
+The first CI run on `4d4760f` had three failing jobs. Each was reproduced locally with the same
+command CI uses, fixed narrowly, and re-run. No application behaviour, security setting, production
+default, Git history or production system was changed.
+
+| Job | Cause (reproduced) | Fix |
+|---|---|---|
+| Backend Regression & Lint | `ruff check . --select=E9,F63,F7,F82,S` reported four **S105** hits on names, not secrets: `PASSWORD_ENV` in `scripts/create_superadmin.py:34`, `scripts/reset_password.py:22`, `scripts/create_admin.py:30` (each holds the *name* of an environment variable) and `ACTION_CLI_PASSWORD_RESET` in `app/services/audit_service.py:36` (an audit action label) | A line-level `# noqa: S105 - <reason>` on exactly those four lines. S105 is not disabled anywhere new |
+| Docker Multi-Stage Build Validation | `docker compose config` fails with "required variable APP_VERSION is missing" because `compose.yaml` has no default on purpose | `APP_VERSION: 0.6.0-rc1` added to the `env:` of the CI "Validate Compose Configuration" step only, with a comment. `compose.yaml` still has **no** default; without the variable validation still fails (re-checked) |
+| Gitleaks | One finding: rule **`jwt`**, commit **`9ccfa4df77…`** (`9ccfa4d`, "add RBAC v2 unit tests"), file `tests/unit/test_rbac_matrix.py`, line 347. The scan output is redacted (`--redact=100`); the value was never printed | See below |
+
+**Gitleaks verification.** The flagged literal is a test fixture. Decoded, it is header `{"alg":"none"}`,
+payload `{"sub":"1","role":"superadmin"}` and an **empty signature**: an unsigned token the test
+`test_a_forged_or_unsigned_token_gets_nothing` sends to prove the API answers 401. It is not issued
+by, derived from, or usable against any real key. Actions: (1) the test now builds that token at run
+time, so no JWT literal remains in the tree; (2) because history cannot be rewritten, the one
+historical occurrence is excluded by a **single fingerprint** in `.gitleaksignore`
+(`<full commit>:tests/unit/test_rbac_matrix.py:jwt:347`) with the verification written beside it.
+`.gitleaks.toml` is unchanged (no rule disabled, no path or regex allowlist, no baseline). A full
+history scan afterwards reports **142 commits scanned, no leaks found**.
+
+**Two further CI failures found while reproducing the backend job** (they were hidden behind the lint
+failure and would have failed next):
+1. `test_rate_limit_returns_429_with_retry_after` and `test_auth_rate_limit_enforced` failed under CI's job-level `RATE_LIMIT_ENABLED=false` / `DOCS_ENABLED=true`, because the test isolation list did not clear them. They are now cleared by `tests/conftest.py` like every other settings variable.
+2. Four tests in `tests/integration/test_job_recovery_pg.py` error with "relation jobs does not exist" on CI's empty PostgreSQL, because they expect the real schema. CI now runs `alembic upgrade head` on the CI database before the integration step (this also exercises the whole migration chain, 0001 to 0014, on every build).
+
+**Re-run after the fixes (isolated environments only):**
+
+| Check | Result |
+|---|---|
+| `ruff check . --select=E9,F63,F7,F82,S` | All checks passed |
+| `pip-audit -r requirements.lock` | No known vulnerabilities |
+| Backend unit suite with CI's environment variables | 724 passed, 1 skipped |
+| PostgreSQL integration, empty database, `alembic upgrade head` then pytest | 36 passed |
+| `scripts/check_tracked_files.py` | No forbidden tracked files |
+| Compose validation, with and without `APP_VERSION` | passes with it; fails without it, as intended |
+| Gitleaks v8.30.0, same command and config as CI | no leaks found |
+| Frontend `npm audit --audit-level=high`, `npm run build` | 0 vulnerabilities; build passes |
+
+Not reproduced locally: the two image build steps at the end of the Docker job (the Dockerfiles are
+unchanged since the local `0.6.0-rc1` images were built from them) and the GitHub Actions cache.

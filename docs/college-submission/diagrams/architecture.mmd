@@ -1,5 +1,5 @@
 flowchart LR
-    user([Browser user]) -->|HTTP(S)| nginx
+    user([Browser user]) -->|HTTP or HTTPS| nginx
 
     subgraph edge[Frontend container]
         nginx[Nginx<br/>static React SPA<br/>security headers<br/>/api reverse proxy]

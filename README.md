@@ -262,6 +262,7 @@ Interactive docs: **http://127.0.0.1:8000/docs** (Swagger), `/redoc`, and the sc
 | `POST /api/v1/datasets` | Upload and register a CSV/XLSX dataset (201) | admin, superadmin |
 | `GET /api/v1/datasets`, `GET /api/v1/datasets/{id}` | List / get dataset metadata | login, owner |
 | `GET /api/v1/datasets/{id}/summary?target_column=` | Validation report and profile | login, owner |
+| `GET /api/v1/datasets/{id}/preview?limit=20` | First rows (1–100), missing values as `null` | login, owner |
 | `POST /api/v1/models/train` | Train a baseline model (201); same `name` → next `version` | admin, superadmin |
 | `GET /api/v1/models[?dataset_id=]`, `GET /api/v1/models/{id}` | Model metadata, schema, metrics, version | login, owner |
 | `POST /api/v1/models/{id}/predict` | Predict with a saved model | login, owner |
@@ -365,7 +366,10 @@ Or run all of it in one go against a running server: `python scripts/smoke_test.
 
 - `target_column`, plus an optional `problem_type`. If it's omitted, text/bool targets and
   integers with ≤20 distinct values are treated as classification; everything else is regression.
-- `algorithm`: `linear` (LogisticRegression / Ridge) or `random_forest`.
+- `algorithm`: `linear` (LogisticRegression / Ridge), `random_forest`, `gradient_boosting` or
+  `decision_tree`. Training stores train/validation/test metrics, a baseline and a 5-fold
+  cross-validation summary (`training_metadata.cross_validation`; skipped with a reason for very large
+  training sets or tiny classes).
 - `feature_columns` / `exclude_columns`: exclude IDs and anything derived from the target.
 - `test_size` / `validation_size` (default 0.2 / 0.2), `random_state` (default 42),
   `drop_duplicates` (default true).
@@ -619,4 +623,19 @@ Back up the database **together with** `UPLOAD_DIR` and `MODEL_DIR`: the rows po
 
 ## Verification status
 
-See [TEST_RESULTS.md](TEST_RESULTS.md) for what was run, how and with what result.
+See [reports/FINAL_TEST_REPORT.md](reports/FINAL_TEST_REPORT.md) for the latest run (unit,
+PostgreSQL integration, end-to-end, lint, dependency and secret scans) and
+[TEST_RESULTS.md](TEST_RESULTS.md) for the earlier history.
+
+## Documentation map
+
+| Need | Document |
+|---|---|
+| Run it locally (Docker or host), quality checks, troubleshooting | [docs/LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md) |
+| Deploy, TLS, backup/restore, rollback | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md), [TLS_DEPLOYMENT.md](TLS_DEPLOYMENT.md) |
+| Every environment variable | [ENVIRONMENT_SETUP.md](ENVIRONMENT_SETUP.md), `.env.example` |
+| Project audit, security audit, production readiness, rollout plan | [reports/](reports/) |
+| RBAC v2 design, migration and rollback analysis | [RBAC_V2_IMPLEMENTATION_REPORT.md](RBAC_V2_IMPLEMENTATION_REPORT.md) |
+| API reference (every route and its permission) | [docs/college-submission/api-reference.md](docs/college-submission/api-reference.md) |
+| College submission package (report, synopsis, slides, demo, viva) | [docs/college-submission/](docs/college-submission/) |
+| Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |

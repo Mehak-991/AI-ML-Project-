@@ -105,7 +105,7 @@ def test_monitoring_endpoints_require_authentication(settings, api_client) -> No
 def test_deploy_and_undeploy_are_audited_with_the_acting_admin(api_client: TestClient, session_factory) -> None:
     """Deployment changes are privileged operations: each leaves an audit entry naming the actor,
     committed in the same transaction as the change."""
-    from sqlalchemy import select
+    from sqlalchemy import select, text
 
     from app.database.models.audit import AuditLog
     from tests.helpers import DEFAULT_TEST_PASSWORD, insert_account
@@ -132,7 +132,8 @@ def test_deploy_and_undeploy_are_audited_with_the_acting_admin(api_client: TestC
     assert api_client.post(f"{API}/models/{model.id}/undeploy", headers=headers).status_code == 200
 
     with session_factory() as session:
-        entries = list(session.scalars(select(AuditLog).order_by(AuditLog.created_at, AuditLog.id)).all())
+        # rowid is insertion order; SQLite timestamps tie within a second
+        entries = list(session.scalars(select(AuditLog).order_by(text("audit_logs.rowid"))).all())
     assert [e.action for e in entries] == ["deployment.deployed", "deployment.undeployed"]
     assert all(e.actor_email == "ops@x.com" and e.actor_role == "admin" for e in entries)
     assert entries[0].after == {"model_id": str(model.id), "version": 1, "environment": "staging"}

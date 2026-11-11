@@ -61,8 +61,10 @@ def _id_of(session_factory, email: str) -> str:
 
 
 def _audit(session_factory, action: str | None = None) -> list[AuditLog]:
+    """Entries in insertion order. SQLite timestamps have one-second resolution, so entries made
+    in the same second tie on created_at; rowid is the true order here."""
     with session_factory() as session:
-        stmt = select(AuditLog).order_by(AuditLog.created_at, AuditLog.id)
+        stmt = select(AuditLog).order_by(text("audit_logs.rowid"))
         if action:
             stmt = stmt.where(AuditLog.action == action)
         return list(session.scalars(stmt).all())

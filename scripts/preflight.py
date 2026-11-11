@@ -6,7 +6,8 @@ Usage:
 Checks:
   * APP_VERSION is set, looks like a release (e.g. 0.5.0-p21), and is not `latest` or the old 0.4.0.
   * Required secrets are present (POSTGRES_PASSWORD, JWT_SECRET_KEY >= 32 bytes, not the shipped
-    default) and ALLOW_FIRST_USER_ADMIN is not enabled. Only variable NAMES are printed.
+    default). Only variable NAMES are printed. ALLOW_FIRST_USER_ADMIN no longer exists (public
+    registration never creates an admin); a leftover setting is reported as obsolete.
   * METRICS_TOKEN is set (warning only).
   * With --check-docker: both images for that tag exist locally, `docker compose config` is valid,
     and the running containers' tag is reported so a mismatch is visible.
@@ -67,8 +68,14 @@ def check_secrets(values: dict[str, str]) -> list[tuple[str, str]]:
         results.append(("ERROR", "JWT_SECRET_KEY is missing, shorter than 32 bytes, or a placeholder."))
     else:
         results.append(("OK", "JWT_SECRET_KEY is set (length ok)"))
-    if values.get("ALLOW_FIRST_USER_ADMIN", "").lower() in {"1", "true", "yes", "on"}:
-        results.append(("ERROR", "ALLOW_FIRST_USER_ADMIN must not be enabled in production."))
+    if "ALLOW_FIRST_USER_ADMIN" in values:
+        results.append(
+            ("WARN", "ALLOW_FIRST_USER_ADMIN is obsolete and ignored; remove it. Create the first superadmin with scripts/create_superadmin.py.")
+        )
+    if values.get("RBAC_STORE_LEGACY_VIEWER", "").lower() in {"1", "true", "yes", "on"}:
+        results.append(
+            ("WARN", "RBAC_STORE_LEGACY_VIEWER is on (expand window): new read-only users are stored under the pre-RBAC-v2 name. Turn it off after migration 0014 and once the rollback window has closed.")
+        )
     if not values.get("METRICS_TOKEN"):
         results.append(("WARN", "METRICS_TOKEN is not set; /metrics is open to anything on the internal network."))
     return results
@@ -138,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
 
 _WATCHED = {
     "APP_VERSION", "POSTGRES_PASSWORD", "JWT_SECRET_KEY", "METRICS_TOKEN", "ALLOW_FIRST_USER_ADMIN",
+    "RBAC_STORE_LEGACY_VIEWER",
 }
 
 if __name__ == "__main__":

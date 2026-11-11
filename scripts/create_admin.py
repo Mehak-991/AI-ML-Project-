@@ -1,4 +1,8 @@
-"""Create the first administrator. One-time, run by an operator with shell access.
+"""LEGACY (pre-RBAC-v2): create the first `admin`. Use scripts/create_superadmin.py instead.
+
+After RBAC v2 an `admin` cannot manage users, so a fresh deployment needs a superadmin.
+This script is kept only for stacks that have not migrated yet. It is one-time, run by an
+operator with shell access.
 
 Usage (Docker, inside the stack's network so DATABASE_URL points at the right database):
     docker compose run --rm --no-deps -it app python scripts/create_admin.py --email admin@example.com

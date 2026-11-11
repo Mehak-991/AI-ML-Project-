@@ -100,3 +100,56 @@ def test_monitoring_endpoints_require_authentication(settings, api_client) -> No
     # Authenticated client has access
     assert api_client.get(f"{API}/monitoring/overview").status_code == 200
 
+
+
+def test_deploy_and_undeploy_are_audited_with_the_acting_admin(api_client: TestClient, session_factory) -> None:
+    """Deployment changes are privileged operations: each leaves an audit entry naming the actor,
+    committed in the same transaction as the change."""
+    from sqlalchemy import select
+
+    from app.database.models.audit import AuditLog
+    from tests.helpers import DEFAULT_TEST_PASSWORD, insert_account
+
+    insert_account(session_factory, "ops@x.com", "admin")
+    login = api_client.post(f"{API}/auth/login", json={"email": "ops@x.com", "password": DEFAULT_TEST_PASSWORD})
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    upload = api_client.post(
+        f"{API}/datasets",
+        files={"file": ("d.csv", to_csv_bytes(make_classification_frame(100, seed=3)))},
+        data={"name": "audit_dataset"},
+        headers=headers,
+    )
+    dataset = DatasetCreateResponse.model_validate(upload.json()).dataset
+    model = ModelRead.model_validate(
+        api_client.post(
+            f"{API}/models/train", json={"dataset_id": str(dataset.id), "target_column": "label"}, headers=headers
+        ).json()
+    )
+    assert api_client.post(
+        f"{API}/models/{model.id}/deploy", json={"environment": "staging"}, headers=headers
+    ).status_code == 200
+    assert api_client.post(f"{API}/models/{model.id}/undeploy", headers=headers).status_code == 200
+
+    with session_factory() as session:
+        entries = list(session.scalars(select(AuditLog).order_by(AuditLog.created_at, AuditLog.id)).all())
+    assert [e.action for e in entries] == ["deployment.deployed", "deployment.undeployed"]
+    assert all(e.actor_email == "ops@x.com" and e.actor_role == "admin" for e in entries)
+    assert entries[0].after == {"model_id": str(model.id), "version": 1, "environment": "staging"}
+    assert entries[1].before["model_id"] == str(model.id)
+
+
+def test_a_denied_deployment_leaves_no_audit_entry(api_client: TestClient, session_factory) -> None:
+    from sqlalchemy import func, select
+
+    from app.database.models.audit import AuditLog
+    from tests.helpers import DEFAULT_TEST_PASSWORD, insert_account
+
+    insert_account(session_factory, "reader@x.com", "user")
+    login = api_client.post(f"{API}/auth/login", json={"email": "reader@x.com", "password": DEFAULT_TEST_PASSWORD})
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    fake = "00000000-0000-0000-0000-000000000001"
+    assert api_client.post(f"{API}/models/{fake}/deploy", json={"environment": "production"}, headers=headers).status_code == 403
+    assert api_client.post(f"{API}/models/{fake}/undeploy", headers=headers).status_code == 403
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(AuditLog)) == 0

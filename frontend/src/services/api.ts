@@ -385,6 +385,15 @@ export const systemApi = {
     const response = await apiClient.get<import('../types/deployment').AIServicesStatusResponse>('/ai/status');
     return response.data;
   },
+
+  /**
+   * Non-secret runtime settings (superadmin only, read-only).
+   * GET /api/v1/system/settings
+   */
+  async getSettings(): Promise<import('../types/auth').SystemSettings> {
+    const response = await apiClient.get<import('../types/auth').SystemSettings>('/system/settings');
+    return response.data;
+  },
 };
 
 export const deploymentApi = {
@@ -593,6 +602,67 @@ export const authApi = {
     const response = await apiClient.patch<import('../types/auth').User>(
       `/auth/users/${userId}`,
       payload
+    );
+    return response.data;
+  },
+
+  /**
+   * Create an account with role user or admin (superadmin only).
+   * POST /api/v1/auth/users
+   */
+  async createUser(
+    payload: import('../types/auth').UserCreatePayload
+  ): Promise<import('../types/auth').User> {
+    const response = await apiClient.post<import('../types/auth').User>('/auth/users', payload);
+    return response.data;
+  },
+
+  /**
+   * Grant superadmin to an active account (existing superadmin only).
+   * POST /api/v1/auth/users/{user_id}/superadmin
+   */
+  async grantSuperadmin(userId: string): Promise<import('../types/auth').User> {
+    const response = await apiClient.post<import('../types/auth').User>(
+      `/auth/users/${userId}/superadmin`
+    );
+    return response.data;
+  },
+
+  /**
+   * Revoke superadmin (the account becomes admin). The last superadmin is protected.
+   * DELETE /api/v1/auth/users/{user_id}/superadmin
+   */
+  async revokeSuperadmin(userId: string): Promise<import('../types/auth').User> {
+    const response = await apiClient.delete<import('../types/auth').User>(
+      `/auth/users/${userId}/superadmin`
+    );
+    return response.data;
+  },
+
+  /**
+   * Hard-delete a deactivated account that owns nothing; the email must be typed to confirm.
+   * DELETE /api/v1/auth/users/{user_id}?confirm_email=...
+   */
+  async deleteUser(userId: string, confirmEmail: string): Promise<void> {
+    await apiClient.delete(`/auth/users/${userId}`, { params: { confirm_email: confirmEmail } });
+  },
+};
+
+export const auditApi = {
+  /**
+   * Audit log entries, newest first (superadmin only).
+   * GET /api/v1/audit-logs
+   */
+  async list(params?: {
+    action?: string;
+    target_id?: string;
+    actor_id?: string;
+    offset?: number;
+    limit?: number;
+  }): Promise<import('../types/auth').AuditLogListResponse> {
+    const response = await apiClient.get<import('../types/auth').AuditLogListResponse>(
+      '/audit-logs',
+      { params }
     );
     return response.data;
   },

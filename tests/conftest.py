@@ -58,8 +58,11 @@ SETTINGS_ENV_VARS = [
     "WORKER_HEARTBEAT_FILE",
     "METRICS_TOKEN",
     "APP_RELEASE",
-    "ALLOW_FIRST_USER_ADMIN",
+    "RBAC_STORE_LEGACY_VIEWER",
     "PASSWORD_REHASH_ON_LOGIN",
+    # CI exports these for the whole job; tests that depend on the shipped defaults must not see them.
+    "RATE_LIMIT_ENABLED",
+    "DOCS_ENABLED",
 ]
 
 
@@ -86,11 +89,6 @@ def make_settings(tmp_path: Path) -> Callable[..., Settings]:
     def _make(**overrides: object) -> Settings:
         overrides.setdefault("UPLOAD_DIR", tmp_path / "uploads")
         overrides.setdefault("MODEL_DIR", tmp_path / "models")
-        # Most suites bootstrap their admin by registering first. The shipped default is off
-        # (see tests/unit/test_admin_bootstrap.py), so they opt in explicitly here.
-        # Production-mode settings keep the shipped default: the flag is refused there.
-        if overrides.get("APP_ENV") != "production":
-            overrides.setdefault("ALLOW_FIRST_USER_ADMIN", True)
         return Settings(_env_file=None, **overrides)
 
     return _make

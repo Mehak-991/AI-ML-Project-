@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     ai,
+    audit,
     auth,
     datasets,
     deployments,
@@ -15,6 +16,7 @@ from app.api.routes import (
     models,
     monitoring,
     predictions,
+    system,
 )
 from app.schemas.common import ErrorResponse
 
@@ -42,4 +44,6 @@ api_v1_router.include_router(experiments.router)
 api_v1_router.include_router(explainability.router)
 api_v1_router.include_router(jobs.router)
 api_v1_router.include_router(ai.router)
+api_v1_router.include_router(audit.router)
+api_v1_router.include_router(system.router)
 

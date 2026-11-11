@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import type { User, LoginCredentials, RegisterCredentials } from '../types/auth';
+import type { User, LoginCredentials, RegisterCredentials, Permission } from '../types/auth';
 import { AUTH_EXPIRED_EVENT, authApi, tokenStorage, parseApiError } from '../services/api';
 
 interface AuthContextType {
@@ -11,6 +11,8 @@ interface AuthContextType {
   logout: () => Promise<void>;
   clearError: () => void;
   refreshUser: () => Promise<void>;
+  /** True when the server granted this permission to the signed-in user. UI hint only: the API enforces it. */
+  can: (permission: Permission) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -97,6 +99,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const clearError = () => setError(null);
 
+  const can = useCallback(
+    (permission: Permission) => Boolean(user?.permissions?.includes(permission)),
+    [user]
+  );
+
   return (
     <AuthContext.Provider
       value={{
@@ -108,6 +115,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         clearError,
         refreshUser: fetchCurrentUser,
+        can,
       }}
     >
       {children}

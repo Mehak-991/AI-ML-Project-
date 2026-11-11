@@ -2,29 +2,30 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from app.api.deps import PublicRoute
 from app.core.exceptions import NotFoundError, ServiceUnavailableError
 from app.schemas.common import ErrorResponse
 
 
 @pytest.fixture
 def error_client(app: FastAPI) -> TestClient:
-    @app.get("/_test/crash")
+    @app.get("/_test/crash", dependencies=[PublicRoute])
     def crash() -> None:
         raise RuntimeError("secret internal detail: password=hunter2")
 
-    @app.get("/_test/not-found")
+    @app.get("/_test/not-found", dependencies=[PublicRoute])
     def not_found() -> None:
         raise NotFoundError("Model 'abc' was not found.")
 
-    @app.get("/_test/unavailable")
+    @app.get("/_test/unavailable", dependencies=[PublicRoute])
     def unavailable() -> None:
         raise ServiceUnavailableError()
 
-    @app.get("/_test/http")
+    @app.get("/_test/http", dependencies=[PublicRoute])
     def http_error() -> None:
         raise HTTPException(status_code=403, detail="Forbidden here")
 
-    @app.get("/_test/items/{item_id}")
+    @app.get("/_test/items/{item_id}", dependencies=[PublicRoute])
     def item(item_id: int) -> dict:
         return {"id": item_id}
 
@@ -92,7 +93,7 @@ def test_debug_mode_never_returns_tracebacks(make_settings) -> None:
 
     app = create_app(make_settings(DEBUG=True))
 
-    @app.get("/_test/crash-debug")
+    @app.get("/_test/crash-debug", dependencies=[PublicRoute])
     def crash() -> None:
         raise RuntimeError("secret internal detail: password=hunter2")
 

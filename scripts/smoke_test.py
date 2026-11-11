@@ -2,7 +2,7 @@
 
 Usage: SMOKE_EMAIL=... SMOKE_PASSWORD=... python scripts/smoke_test.py [base-url] [--with-llm]
 
-The account must have the admin or ml_engineer role. Without credentials only the public
+The account must have the admin or superadmin role. Without credentials only the public
 health checks run. The base URL can be the API (http://127.0.0.1:8000) or nginx (http://host).
 
 Steps: readiness -> login -> AI status -> token count -> (if the DB is up)

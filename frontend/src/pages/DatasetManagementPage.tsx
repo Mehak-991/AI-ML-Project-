@@ -8,12 +8,14 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { DatasetUploadCard } from '../components/DatasetUploadCard';
+import { useAuth } from '../context/AuthContext';
 import { DatasetTable } from '../components/DatasetTable';
 import { DatasetDetailModal } from '../components/DatasetDetailModal';
 import { datasetApi, parseApiError, type ErrorDetails } from '../services/api';
 import type { DatasetRead, DatasetCreateResponse } from '../types/dataset';
 
 export const DatasetManagementPage: React.FC = () => {
+  const { can } = useAuth();
   const [datasets, setDatasets] = useState<DatasetRead[]>([]);
   const [total, setTotal] = useState<number>(0);
   const [offset, setOffset] = useState<number>(0);
@@ -158,8 +160,8 @@ export const DatasetManagementPage: React.FC = () => {
         </div>
       )}
 
-      {/* Section 1: Dataset Upload & Validation */}
-      <DatasetUploadCard onUploadSuccess={handleUploadSuccess} />
+      {/* Section 1: Dataset Upload & Validation (read-only users do not see it) */}
+      {can('ml:operate') && <DatasetUploadCard onUploadSuccess={handleUploadSuccess} />}
 
       {/* Section 2: Datasets Table & Inspection */}
       <DatasetTable

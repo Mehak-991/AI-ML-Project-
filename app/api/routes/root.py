@@ -10,6 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app import __version__
+from app.api.deps import PublicRoute
 from app.core.config import Settings, get_settings
 from app.core.exceptions import AuthenticationError
 from app.database.session import get_db
@@ -23,7 +24,7 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 metrics_bearer = HTTPBearer(auto_error=False)
 
 
-@router.get("/", response_model=RootResponse, summary="Welcome")
+@router.get("/", response_model=RootResponse, summary="Welcome", dependencies=[PublicRoute])
 def read_root(settings: SettingsDep) -> RootResponse:
     return RootResponse(
         message=f"Welcome to {settings.APP_NAME}",
@@ -35,13 +36,14 @@ def read_root(settings: SettingsDep) -> RootResponse:
 
 
 
-@router.get("/health", response_model=HealthResponse, summary="Liveness probe")
+@router.get("/health", response_model=HealthResponse, summary="Liveness probe", dependencies=[PublicRoute])
 def liveness(settings: SettingsDep) -> HealthResponse:
     return health_service.get_liveness(settings)
 
 
 @router.get(
     "/metrics",
+    dependencies=[PublicRoute],  # protected by its own bearer token (METRICS_TOKEN)
     summary="Prometheus metrics exporter",
     response_class=PlainTextResponse,
     responses={

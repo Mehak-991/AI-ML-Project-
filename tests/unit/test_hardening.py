@@ -12,14 +12,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from app.api.deps import get_current_user
+from app.api.deps import PublicRoute, get_current_user
 from app.core.middleware import RateLimitMiddleware, TokenBucketLimiter
 from app.database.models.user import User
 from app.database.session import get_db
 from app.main import create_app
 from app.ml.synthetic import make_classification_frame
 from app.utils.logging import JsonFormatter, RequestIdFilter, request_id_var
-from tests.helpers import to_csv_bytes
+from tests.helpers import insert_account, to_csv_bytes
 
 API = "/api/v1"
 
@@ -53,7 +53,7 @@ def test_incoming_request_id_validated(client: TestClient, incoming: str, kept: 
 
 
 def test_request_id_visible_inside_sync_handlers(app: FastAPI) -> None:
-    @app.get("/_test/rid")
+    @app.get("/_test/rid", dependencies=[PublicRoute])
     def rid() -> dict:
         return {"request_id": request_id_var.get()}
 
@@ -150,7 +150,7 @@ def test_uploads_get_the_larger_upload_limit(make_settings, session_factory) -> 
     app = create_app(make_settings(MAX_REQUEST_BODY_MB=0.001, MAX_UPLOAD_SIZE_MB=1))
     app.dependency_overrides[get_db] = lambda: session_factory()
     app.dependency_overrides[get_current_user] = lambda: User(
-        id=uuid.uuid4(), email="mle@x.com", hashed_password="x", role="ml_engineer", is_active=True
+        id=uuid.uuid4(), email="mle@x.com", hashed_password="x", role="admin", is_active=True
     )
     with TestClient(app) as client:
         response = client.post(
@@ -406,25 +406,23 @@ def _bearer(tokens: dict) -> dict:
 
 
 @pytest.fixture
-def actors(secure_client) -> dict:
-    """admin (bootstrap), two ML engineers created by the admin, and a viewer."""
+def actors(secure_client, session_factory) -> dict:
+    """The accounts the hardening tests act as.
+
+    Public registration can only create a read-only ``user``, so privileged accounts are created
+    out of band (as the server-side bootstrap would):
+      admin   superadmin; full access and the only role that administers users
+      mle1    admin;      the owner of the resources the ownership tests create
+      mle2    user;       a different, non-owner, non-privileged account
+      viewer  user;       another read-only account
+    """
     c = secure_client
-    bootstrap = c.post(f"{API}/auth/register", json={"email": "root@x.com", "password": PASSWORD})
-    assert bootstrap.status_code == 201
-    admin = _login(c, "root@x.com")
-    for email, role in (
-        ("mle1@x.com", "ml_engineer"),
-        ("mle2@x.com", "ml_engineer"),
-        ("view@x.com", "viewer"),
-    ):
-        r = c.post(
-            f"{API}/auth/register",
-            json={"email": email, "password": PASSWORD, "role": role},
-            headers=_bearer(admin),
-        )
-        assert r.status_code == 201, r.text
+    insert_account(session_factory, "root@x.com", "superadmin", PASSWORD)
+    insert_account(session_factory, "mle1@x.com", "admin", PASSWORD)
+    insert_account(session_factory, "mle2@x.com", "user", PASSWORD)
+    insert_account(session_factory, "view@x.com", "user", PASSWORD)
     return {
-        "admin": admin,
+        "admin": _login(c, "root@x.com"),
         "mle1": _login(c, "mle1@x.com"),
         "mle2": _login(c, "mle2@x.com"),
         "viewer": _login(c, "view@x.com"),
@@ -569,9 +567,11 @@ def test_legacy_models_without_owner_stay_usable(
         session.commit()
     response = _predict(secure_client, owned_model["id"], _bearer(actors["viewer"]))
     assert response.status_code == 200, response.text
-    # The viewer sees only their own request; other non-admin users do not.
+    # The reader sees only their own request; other non-privileged users do not, while admins
+    # (full resource access) see it.
     assert _history_total(secure_client, actors["viewer"]) == 1
-    assert _history_total(secure_client, actors["mle1"]) == 0
+    assert _history_total(secure_client, actors["mle2"]) == 0
+    assert _history_total(secure_client, actors["mle1"]) == 1
 
 
 @pytest.mark.parametrize(
@@ -649,29 +649,33 @@ def test_deactivation_revokes_refresh_tokens(secure_client, actors) -> None:
 
 def test_self_registration_cannot_grant_elevated_roles(secure_client, actors) -> None:
     c = secure_client
-    for role in ("admin", "ml_engineer"):
+    # The public payload has no role field at all, so asking for any role is a validation error.
+    for role in ("admin", "superadmin", "ml_engineer", "viewer"):
         r = c.post(
             f"{API}/auth/register",
             json={"email": f"{role}-self@x.com", "password": PASSWORD, "role": role},
         )
-        assert r.status_code == 403, role
-        assert code(r) == "permission_denied"
-    # Non-admins cannot grant elevated roles either.
-    r = c.post(
-        f"{API}/auth/register",
-        json={"email": "esc@x.com", "password": PASSWORD, "role": "admin"},
-        headers=_bearer(actors["mle1"]),
-    )
-    assert r.status_code == 403
+        assert r.status_code == 422, role
+    # Neither can privileged-looking callers smuggle one in.
+    for who in ("mle1", "admin"):
+        r = c.post(
+            f"{API}/auth/register",
+            json={"email": f"esc-{who}@x.com", "password": PASSWORD, "role": "admin"},
+            headers=_bearer(actors[who]),
+        )
+        assert r.status_code == 422
     r = c.post(f"{API}/auth/register", json={"email": "plain@x.com", "password": PASSWORD})
-    assert r.status_code == 201 and r.json()["role"] == "viewer"
+    assert r.status_code == 201 and r.json()["role"] == "user"
 
 
 def test_rbac_role_gates_still_apply(secure_client, actors) -> None:
     payload = {"dataset_id": "00000000-0000-0000-0000-000000000001", "target_column": "label"}
-    train = secure_client.post(f"{API}/models/train", json=payload, headers=_bearer(actors["viewer"]))
-    assert train.status_code == 403
+    # A read-only user cannot train; an admin can (the unknown dataset is a 404, not a 403).
+    assert secure_client.post(f"{API}/models/train", json=payload, headers=_bearer(actors["viewer"])).status_code == 403
+    assert secure_client.post(f"{API}/models/train", json=payload, headers=_bearer(actors["mle1"])).status_code == 404
+    # Only the superadmin administers users.
     assert secure_client.get(f"{API}/auth/users", headers=_bearer(actors["mle1"])).status_code == 403
+    assert secure_client.get(f"{API}/auth/users", headers=_bearer(actors["viewer"])).status_code == 403
     assert secure_client.get(f"{API}/auth/users", headers=_bearer(actors["admin"])).status_code == 200
 
 

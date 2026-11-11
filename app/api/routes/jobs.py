@@ -3,10 +3,9 @@
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Query, status
 
-from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
-from app.database.models.user import User
+from app.api.deps import DbSession, MlOperatorDep, ReadAccessDep, SettingsDep
 from app.schemas.common import ErrorResponse
 from app.schemas.job import JobCreatePayload, JobListResponse, JobMetricsResponse, JobRead
 from app.services import job_service
@@ -17,7 +16,7 @@ NOT_FOUND = {404: {"model": ErrorResponse, "description": "Job not found"}}
 UNPROCESSABLE = {422: {"model": ErrorResponse, "description": "Validation or execution error"}}
 FORBIDDEN = {403: {"model": ErrorResponse, "description": "Unauthorized access to job resource"}}
 
-MLEngineerRole = Annotated[User, Depends(require_role("admin", "ml_engineer"))]
+MLEngineerRole = MlOperatorDep
 
 
 @router.post(
@@ -53,7 +52,7 @@ def submit_job(
 )
 def get_job_metrics(
     db: DbSession,
-    user: CurrentUserDep,
+    user: ReadAccessDep,
 ) -> JobMetricsResponse:
     return job_service.get_job_metrics(session=db, user=user)
 
@@ -65,7 +64,7 @@ def get_job_metrics(
 )
 def list_jobs(
     db: DbSession,
-    user: CurrentUserDep,
+    user: ReadAccessDep,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     status: Annotated[str | None, Query()] = None,
@@ -96,7 +95,7 @@ def list_jobs(
 def get_job(
     job_id: uuid.UUID,
     db: DbSession,
-    user: CurrentUserDep,
+    user: ReadAccessDep,
 ) -> JobRead:
     job = job_service.get_job(session=db, job_id=job_id, user=user)
     return JobRead.model_validate(job)
@@ -142,7 +141,7 @@ def retry_job(
 def get_job_result(
     job_id: uuid.UUID,
     db: DbSession,
-    user: CurrentUserDep,
+    user: ReadAccessDep,
 ) -> dict[str, Any] | None:
     job = job_service.get_job(session=db, job_id=job_id, user=user)
     return job.result

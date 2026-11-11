@@ -4,9 +4,12 @@ Exercises every major feature with real HTTP calls: auth, RBAC, ownership, datas
 prediction, batch jobs through the worker, experiments/AutoML, SHAP/LIME, drift, monitoring and
 user management.
 
-It creates users and data, and the first registered user becomes admin, so only point it at a
-DISPOSABLE deployment:
+It creates users and data, so only point it at a DISPOSABLE deployment. The API can never create a
+superadmin, so create one on that deployment first with scripts/create_superadmin.py and pass its
+credentials through the environment (never on the command line):
 
+    $env:E2E_SUPERADMIN_EMAIL = "e2e-root@example.com"
+    $env:E2E_SUPERADMIN_PASSWORD = "<the password you gave the bootstrap>"
     python scripts/e2e_check.py --base-url http://127.0.0.1:18080 --confirm-disposable
 
 Exit code 0 only if every check passed. No credentials are printed.
@@ -15,6 +18,7 @@ Exit code 0 only if every check passed. No credentials are printed.
 import argparse
 import csv
 import io
+import os
 import random
 import secrets
 import sys
@@ -73,9 +77,14 @@ def run(base_url: str) -> Checker:
     client = httpx.Client(base_url=base_url, timeout=300)
     password = f"E2e{secrets.token_hex(12)}"
     suffix = secrets.token_hex(4)
-    admin_email, mle_email, other_email, viewer_email = (
-        f"{name}-{suffix}@example.com" for name in ("admin", "mle", "other", "viewer")
+    mle_email, other_email, viewer_email = (
+        f"{name}-{suffix}@example.com" for name in ("owner", "other", "reader")
     )
+    root_email = os.environ.get("E2E_SUPERADMIN_EMAIL", "")
+    root_password = os.environ.get("E2E_SUPERADMIN_PASSWORD", "")
+    if not root_email or not root_password:
+        c.check("E2E_SUPERADMIN_EMAIL and E2E_SUPERADMIN_PASSWORD are set", False, "see the script docstring")
+        return c
 
     print("Entry point and health")
     c.check("SPA served", "<div id=\"root\"" in client.get("/").text)
@@ -91,47 +100,53 @@ def run(base_url: str) -> Checker:
         c.check(f"{path} requires auth", client.get(f"{API}{path}").status_code == 401)
 
     print("Accounts and RBAC")
-    created = client.post(f"{API}/auth/register", json={"email": admin_email, "password": password})
-    if not c.check("register", created.status_code == 201, created.text):
+    public = client.post(f"{API}/auth/register", json={"email": f"public-{suffix}@example.com", "password": password})
+    c.check("public registration creates a read-only user", public.status_code == 201 and public.json().get("role") == "user", public.text)
+    for role in ("admin", "superadmin"):
+        escalate = client.post(
+            f"{API}/auth/register",
+            json={"email": f"esc-{role}-{suffix}@example.com", "password": password, "role": role},
+        )
+        c.check(f"registration with role={role} is refused", escalate.status_code == 422, escalate.text)
+
+    login = client.post(f"{API}/auth/login", json={"email": root_email, "password": root_password})
+    if not c.check("superadmin login", login.status_code == 200, login.text):
         return c
-    login = client.post(f"{API}/auth/login", json={"email": admin_email, "password": password})
-    c.check("login", login.status_code == 200, login.text)
     tokens = login.json()
-    me = client.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"})
-    is_admin = me.json().get("role") == "admin"
-    c.check("first user is admin (fresh database)", is_admin, me.text)
-    if not is_admin:
-        print("  Not a fresh database; stopping before creating more data.")
-        return c
-    admin = {"Authorization": f"Bearer {tokens['access_token']}"}
+    c.check("account is a superadmin", tokens["user"]["role"] == "superadmin", str(tokens["user"].get("role")))
+    admin = {"Authorization": f"Bearer {tokens['access_token']}"}  # the superadmin
+    c.check("superadmin sees user and audit permissions", {"users:manage", "audit:read"} <= set(tokens["user"]["permissions"]))
 
     def make_user(email: str, role: str) -> dict:
         response = client.post(
-            f"{API}/auth/register",
+            f"{API}/auth/users",
             json={"email": email, "password": password, "role": role},
             headers=admin,
         )
-        c.check(f"admin creates {role}", response.status_code == 201, response.text)
+        c.check(f"superadmin creates {role}", response.status_code == 201, response.text)
         session = client.post(f"{API}/auth/login", json={"email": email, "password": password})
         return {"Authorization": f"Bearer {session.json()['access_token']}"}
 
-    mle = make_user(mle_email, "ml_engineer")
-    other = make_user(other_email, "ml_engineer")
-    viewer = make_user(viewer_email, "viewer")
+    mle = make_user(mle_email, "admin")  # owns the resources created below
+    other = make_user(other_email, "user")  # a different, non-privileged account
+    viewer = make_user(viewer_email, "user")
+    c.check("admin cannot list users", client.get(f"{API}/auth/users", headers=mle).status_code == 403)
+    c.check("admin cannot read the audit log", client.get(f"{API}/audit-logs", headers=mle).status_code == 403)
+    c.check("superadmin reads the audit log", client.get(f"{API}/audit-logs", headers=admin).status_code == 200)
 
     rotated = client.post(f"{API}/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
     c.check("refresh rotates", rotated.status_code == 200, rotated.text)
     replay = client.post(f"{API}/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
     c.check("replayed refresh token rejected", replay.status_code == 401)
     users = client.get(f"{API}/auth/users", headers=admin)
-    c.check("admin lists users", users.status_code == 200 and users.json()["total"] >= 4, users.text)
-    c.check("viewer cannot list users", client.get(f"{API}/auth/users", headers=viewer).status_code == 403)
+    c.check("superadmin lists users", users.status_code == 200 and users.json()["total"] >= 4, users.text)
+    c.check("user cannot list users", client.get(f"{API}/auth/users", headers=viewer).status_code == 403)
 
     print("Datasets")
     files = {"file": ("customers.csv", make_csv(), "text/csv")}
     validated = client.post(f"{API}/datasets/validate", files=files, headers=mle)
     c.check("validate upload", validated.status_code == 200, validated.text)
-    c.check("viewer cannot upload", client.post(f"{API}/datasets", files=files, headers=viewer).status_code == 403)
+    c.check("user cannot upload", client.post(f"{API}/datasets", files=files, headers=viewer).status_code == 403)
     bad = client.post(f"{API}/datasets", files={"file": ("x.exe", b"MZ", "application/octet-stream")}, headers=mle)
     c.check("wrong file type rejected", bad.status_code == 415, bad.text)
     uploaded = client.post(f"{API}/datasets", files=files, data={"name": f"customers-{suffix}"}, headers=mle)

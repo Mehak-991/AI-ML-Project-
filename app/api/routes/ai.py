@@ -15,13 +15,14 @@ from app.ai.llm import ChatMessage, ChatService
 from app.ai.tokens import TokenCounter
 from app.api.deps import (
     AIServicesDep,
-    CurrentUserDep,
+    MlOperatorDep,
+    PredictAccessDep,
+    ReadAccessDep,
     SettingsDep,
     get_chat_service,
     get_embedding_service,
     get_text_classifier,
     get_token_counter,
-    require_role,
 )
 from app.core.exceptions import DataValidationError
 from app.schemas.ai import (
@@ -64,7 +65,7 @@ def _errors(*codes: int) -> dict:
     tags=["ai"],
     responses=_errors(401),
 )
-def ai_status(ai: AIServicesDep, _user: CurrentUserDep) -> AIStatusResponse:
+def ai_status(ai: AIServicesDep, _user: ReadAccessDep) -> AIStatusResponse:
     """Which optional AI packages are installed, provider configuration (never the key)."""
     return AIStatusResponse(**ai.status())
 
@@ -79,7 +80,7 @@ def ai_status(ai: AIServicesDep, _user: CurrentUserDep) -> AIStatusResponse:
 def create_embeddings(
     request: EmbeddingRequest,
     service: Annotated[EmbeddingService, Depends(get_embedding_service)],
-    _user: CurrentUserDep,
+    _user: PredictAccessDep,
 ) -> EmbeddingResponse:
     result = service.embed(request.texts, normalize=request.normalize)
     return EmbeddingResponse(
@@ -100,7 +101,7 @@ def create_embeddings(
 def classify_texts(
     request: ClassificationRequest,
     service: Annotated[TextClassificationService, Depends(get_text_classifier)],
-    _user: CurrentUserDep,
+    _user: PredictAccessDep,
 ) -> ClassificationResponse:
     result = service.classify(request.texts, top_k=request.top_k)
     return ClassificationResponse(
@@ -125,7 +126,7 @@ def classify_texts(
 )
 def chat(
     request: ChatRequest,
-    _user: Annotated[object, Depends(require_role("admin", "ml_engineer"))],
+    _user: MlOperatorDep,
     service: Annotated[ChatService, Depends(get_chat_service)],
 ) -> ChatResponse:
     result = service.complete(
@@ -152,7 +153,7 @@ def chat(
 )
 def count_tokens(
     request: TokenCountRequest,
-    _user: CurrentUserDep,
+    _user: PredictAccessDep,
     counter: Annotated[TokenCounter, Depends(get_token_counter)],
     settings: SettingsDep,
 ) -> TokenCountResponse:
@@ -181,7 +182,7 @@ def count_tokens(
 )
 def analyze_text(
     request: TextAnalysisRequest,
-    _user: Annotated[object, Depends(require_role("admin", "ml_engineer"))],
+    _user: MlOperatorDep,
     ai: AIServicesDep,
 ) -> TextAnalysisResponse:
     workflow = ai.text_analysis(include_sentiment=request.include_sentiment)

@@ -81,39 +81,31 @@ def pg_isolated_engine() -> Iterator:
 
 
 @requires_db
-@pytest.mark.parametrize(
-    ("allow_first_user_admin", "expected_roles"),
-    [
-        # Development flag on: the advisory lock must still hand out exactly one admin.
-        (True, ["admin", "viewer", "viewer", "viewer", "viewer", "viewer"]),
-        # Shipped default: nobody becomes admin by registering first, however they race.
-        (False, ["viewer"] * 6),
-    ],
-)
-def test_simultaneous_first_registrations_admin_only_with_the_dev_flag(
-    pg_isolated_engine, allow_first_user_admin, expected_roles
-) -> None:
-    """Without the advisory lock, both requests can see an empty table and both become admin."""
+def test_simultaneous_first_registrations_never_produce_an_admin(pg_isolated_engine) -> None:
+    """Public registration only ever creates a read-only user, however the requests race on an
+    empty table (the old "first registration becomes admin" rule no longer exists)."""
     from concurrent.futures import ThreadPoolExecutor
 
     from sqlalchemy import func, select
 
+    from app.core.config import Settings
     from app.database.models.user import User
     from app.schemas.auth import UserRegisterRequest
     from app.services import auth_service
 
+    settings = Settings(_env_file=None, APP_ENV="testing")
+
     def register(index: int) -> str:
         with Session(bind=pg_isolated_engine, expire_on_commit=False) as session:
             request = UserRegisterRequest(email=f"u{index}@example.com", password="Password123")
-            return auth_service.register_user(
-                session, request, allow_first_user_admin=allow_first_user_admin
-            ).role
+            return auth_service.register_user(session, request, settings).role
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         roles = list(pool.map(register, range(6)))
-    assert sorted(roles) == expected_roles
+    assert roles == ["user"] * 6
     with Session(bind=pg_isolated_engine) as session:
         assert session.scalar(select(func.count()).select_from(User)) == 6
+        assert session.scalar(select(func.count()).select_from(User).where(User.role != "user")) == 0
 
 
 @requires_db
@@ -126,10 +118,23 @@ def test_api_workflow_against_postgres(pg_isolated_engine, make_settings) -> Non
 
     app.dependency_overrides[get_db] = _get_db
     with TestClient(app) as client:
-        # Dataset upload and training require an authenticated admin/ML engineer. On a
-        # fresh disposable database the first registered user is the bootstrap admin.
+        # Dataset upload and training need an admin. Public registration only creates read-only
+        # users, so the admin is created out of band (as the server-side bootstrap would).
+        from app.core import security
+        from app.database.models.user import User
+
         credentials = {"email": "pg-admin@example.com", "password": "Password123!"}
-        assert client.post("/api/v1/auth/register", json=credentials).status_code == 201
+        with Session(bind=pg_isolated_engine) as session:
+            session.add(
+                User(
+                    email=credentials["email"],
+                    hashed_password=security.hash_password(credentials["password"]),
+                    full_name="",
+                    role="admin",
+                    is_active=True,
+                )
+            )
+            session.commit()
         login = client.post("/api/v1/auth/login", json=credentials).json()
         client.headers["Authorization"] = f"Bearer {login['access_token']}"
 

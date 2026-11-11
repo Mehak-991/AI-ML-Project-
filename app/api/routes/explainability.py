@@ -1,12 +1,10 @@
 """FastAPI endpoints for Model Explainability (SHAP & LIME)."""
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 
-from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
-from app.database.models.user import User
+from app.api.deps import DbSession, MlOperatorDep, PredictAccessDep, ReadAccessDep, SettingsDep
 from app.schemas.common import ErrorResponse
 from app.schemas.explainability import (
     ExplainabilitySummaryResponse,
@@ -22,7 +20,7 @@ router = APIRouter(prefix="/models/{model_id}/explainability", tags=["explainabi
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Model or artifact not found"}}
 UNPROCESSABLE = {422: {"model": ErrorResponse, "description": "Invalid input record or parameter error"}}
 
-AnalystRole = Annotated[User, Depends(require_role("admin", "ml_engineer"))]
+AnalystRole = MlOperatorDep
 
 
 @router.get(
@@ -35,7 +33,7 @@ def get_explainability_summary(
     model_id: uuid.UUID,
     db: DbSession,
     settings: SettingsDep,
-    user: CurrentUserDep,
+    user: ReadAccessDep,
 ) -> ExplainabilitySummaryResponse:
     authorization.ensure_model_access(user, model_service.get_model(db, model_id))
     return explainability_service.get_explainability_summary(db, settings, model_id)
@@ -51,7 +49,7 @@ def get_global_feature_importance(
     model_id: uuid.UUID,
     db: DbSession,
     settings: SettingsDep,
-    user: CurrentUserDep,
+    user: ReadAccessDep,
     sample_size: int = Query(default=50, ge=10, le=200),
 ) -> GlobalFeatureImportanceResponse:
     authorization.ensure_model_access(user, model_service.get_model(db, model_id))
@@ -71,7 +69,7 @@ def explain_with_shap(
     request: ExplainPredictionRequest,
     db: DbSession,
     settings: SettingsDep,
-    user: CurrentUserDep,
+    user: PredictAccessDep,
 ) -> LocalShapExplanationResponse:
     authorization.ensure_model_access(user, model_service.get_model(db, model_id))
     return explainability_service.compute_local_shap_explanation(
@@ -96,7 +94,7 @@ def explain_with_lime(
     request: ExplainPredictionRequest,
     db: DbSession,
     settings: SettingsDep,
-    user: CurrentUserDep,
+    user: PredictAccessDep,
 ) -> LocalLimeExplanationResponse:
     authorization.ensure_model_access(user, model_service.get_model(db, model_id))
     return explainability_service.compute_local_lime_explanation(

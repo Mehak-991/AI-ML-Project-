@@ -68,7 +68,12 @@ def test_preflight_secret_rules() -> None:
     assert ("ERROR", "POSTGRES_PASSWORD is not set.") in preflight.check_secrets({**good, "POSTGRES_PASSWORD": ""})
     assert any(l == "ERROR" and "JWT_SECRET_KEY" in m for l, m in preflight.check_secrets({**good, "JWT_SECRET_KEY": "short"}))
     assert any(l == "ERROR" and "JWT_SECRET_KEY" in m for l, m in preflight.check_secrets({**good, "JWT_SECRET_KEY": "change-me" + "x" * 40}))
-    assert any(l == "ERROR" and "ALLOW_FIRST_USER_ADMIN" in m for l, m in preflight.check_secrets({**good, "ALLOW_FIRST_USER_ADMIN": "true"}))
+    # The removed development flag is now only reported as obsolete (it can no longer weaken anything).
+    obsolete = preflight.check_secrets({**good, "ALLOW_FIRST_USER_ADMIN": "true"})
+    assert any(l == "WARN" and "ALLOW_FIRST_USER_ADMIN" in m and "obsolete" in m for l, m in obsolete)
+    assert not any(l == "ERROR" for l, _ in obsolete)
+    expand = preflight.check_secrets({**good, "RBAC_STORE_LEGACY_VIEWER": "true"})
+    assert any(l == "WARN" and "RBAC_STORE_LEGACY_VIEWER" in m for l, m in expand)
     assert any(l == "WARN" and "METRICS_TOKEN" in m for l, m in preflight.check_secrets({**good, "METRICS_TOKEN": ""}))
 
 

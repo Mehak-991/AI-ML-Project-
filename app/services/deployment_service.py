@@ -10,14 +10,22 @@ from app.core.config import Settings
 from app.core.exceptions import DataValidationError, NotFoundError
 from app.database.models.deployment import Deployment, PredictionLog
 from app.database.models.ml_model import MLModel
+from app.database.models.user import User
 from app.ml import persistence
 from app.repositories.deployments import DeploymentRepository, PredictionLogRepository
 from app.repositories.ml_models import MLModelRepository
 from app.schemas.deployments import DeployRequest, ModelMonitoringResponse, MonitoringOverviewResponse
+from app.services import audit_service
 
 
 def deploy_model(
-    session: Session, settings: Settings, model_id: uuid.UUID, request: DeployRequest
+    session: Session,
+    settings: Settings,
+    model_id: uuid.UUID,
+    request: DeployRequest,
+    *,
+    actor: User | None = None,
+    context: audit_service.AuditContext | None = None,
 ) -> Deployment:
     model = MLModelRepository(session).get(model_id)
     if model is None:
@@ -57,12 +65,26 @@ def deploy_model(
         deployed_at=now_iso,
     )
     dep_repo.add(deployment)
+    if actor is not None:  # privileged operation: recorded in the same transaction
+        audit_service.record(
+            session,
+            action=audit_service.ACTION_DEPLOYED,
+            actor=actor,
+            after={"model_id": str(model_id), "version": version, "environment": request.environment},
+            context=context,
+        )
     session.commit()
     session.refresh(deployment)
     return deployment
 
 
-def undeploy_model(session: Session, model_id: uuid.UUID) -> Deployment:
+def undeploy_model(
+    session: Session,
+    model_id: uuid.UUID,
+    *,
+    actor: User | None = None,
+    context: audit_service.AuditContext | None = None,
+) -> Deployment:
     dep_repo = DeploymentRepository(session)
     active = dep_repo.get_active_for_model(model_id)
     if not active:
@@ -71,6 +93,14 @@ def undeploy_model(session: Session, model_id: uuid.UUID) -> Deployment:
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     active.status = "Undeployed"
     active.undeployed_at = now_iso
+    if actor is not None:
+        audit_service.record(
+            session,
+            action=audit_service.ACTION_UNDEPLOYED,
+            actor=actor,
+            before={"model_id": str(model_id), "version": active.version},
+            context=context,
+        )
     session.commit()
     session.refresh(active)
     return active

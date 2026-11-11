@@ -5,11 +5,10 @@ Write operations (analyze-*, resolve) are restricted to admin and ml_engineer ro
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 
-from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
+from app.api.deps import DbSession, MlOperatorDep, ReadAccessDep, SettingsDep
 from app.schemas.common import ErrorResponse
 from app.schemas.drift import (
     AnalyzeDriftRequest,
@@ -31,7 +30,7 @@ AUTH_ERRORS = {
 }
 
 # Roles that can trigger analysis
-AnalystRole = Annotated[User, Depends(require_role("admin", "ml_engineer"))]
+AnalystRole = MlOperatorDep
 
 
 def _ensure_model_access(db: DbSession, user: User, model_id: uuid.UUID) -> None:
@@ -44,7 +43,7 @@ def _ensure_model_access(db: DbSession, user: User, model_id: uuid.UUID) -> None
     summary="Cross-model drift & data-quality overview",
     responses=AUTH_ERRORS,
 )
-def get_drift_overview(user: CurrentUserDep, db: DbSession) -> DriftOverviewResponse:
+def get_drift_overview(user: ReadAccessDep, db: DbSession) -> DriftOverviewResponse:
     """Aggregated drift status and alert counts for the models the caller may access."""
     return drift_service.get_drift_overview(db, owner_id=authorization.owner_scope(user))
 
@@ -57,7 +56,7 @@ def get_drift_overview(user: CurrentUserDep, db: DbSession) -> DriftOverviewResp
 )
 def list_drift_reports(
     model_id: uuid.UUID,
-    user: CurrentUserDep,
+    user: ReadAccessDep,
     db: DbSession,
     report_type: str | None = Query(default=None, description="Filter: data_quality | feature_drift | performance"),
     offset: int = Query(default=0, ge=0),
@@ -75,7 +74,7 @@ def list_drift_reports(
 )
 def list_model_alerts(
     model_id: uuid.UUID,
-    user: CurrentUserDep,
+    user: ReadAccessDep,
     db: DbSession,
     severity: str | None = Query(default=None, description="Filter: warning | critical"),
     resolved: bool | None = Query(default=None, description="Filter by resolved status"),
@@ -95,7 +94,7 @@ def list_model_alerts(
     responses=AUTH_ERRORS,
 )
 def list_all_alerts(
-    user: CurrentUserDep,
+    user: ReadAccessDep,
     db: DbSession,
     severity: str | None = Query(default=None),
     resolved: bool | None = Query(default=None),

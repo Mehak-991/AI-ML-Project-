@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select
 from sqlalchemy.orm import Session
 
 from app.database.models.audit import AuditLog
@@ -48,6 +48,11 @@ class AuditContext:
     def for_request(cls, client_ip: str | None) -> "AuditContext":
         request_id = request_id_var.get()
         return cls(request_id=None if request_id == "-" else request_id, client_ip=client_ip)
+
+
+def audit_table_exists(session: Session) -> bool:
+    """False until migration 0014 has been applied; the CLIs refuse to run before then."""
+    return inspect(session.get_bind()).has_table(AuditLog.__tablename__)
 
 
 def user_snapshot(user: User) -> dict[str, Any]:

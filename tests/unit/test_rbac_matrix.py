@@ -9,6 +9,8 @@ implementation's tables, so it fails if the implementation drifts from the appro
     superadmin  admin + user administration, role assignment, audit logs, system settings
 """
 
+import base64
+import json
 import re
 
 import pytest
@@ -344,7 +346,11 @@ def test_a_user_cannot_change_anything_through_the_api(tokens, method) -> None:
 
 def test_a_forged_or_unsigned_token_gets_nothing(tokens) -> None:
     client, _ = tokens
-    forged = {"Authorization": "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIiwicm9sZSI6InN1cGVyYWRtaW4ifQ."}
+    # An unsigned ("alg": "none") token claiming superadmin, built here so no JWT literal sits in the repo.
+    def part(data: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+
+    forged = {"Authorization": f"Bearer {part({'alg': 'none'})}.{part({'sub': '1', 'role': 'superadmin'})}."}
     for method, path in (("GET", f"{API}/auth/users"), ("GET", f"{API}/audit-logs"), ("POST", f"{API}/auth/users")):
         assert _call(client, method, path, forged).status_code == 401
 

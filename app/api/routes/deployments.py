@@ -1,0 +1,109 @@
+"""Deployment lifecycle management routes."""
+
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Query, Request, status
+
+from app.api.deps import DbSession, DeploymentManagerDep, ReadAccessDep, SettingsDep
+from app.core.exceptions import NotFoundError
+from app.repositories.deployments import DeploymentRepository
+from app.schemas.common import ErrorResponse
+from app.schemas.deployments import DeploymentList, DeploymentRead, DeployRequest
+from app.services import audit_service, authorization, deployment_service, model_service
+
+router = APIRouter(tags=["deployments"])
+
+NOT_FOUND = {404: {"model": ErrorResponse, "description": "Model or deployment not found"}}
+UNPROCESSABLE = {422: {"model": ErrorResponse, "description": "Invalid input or data"}}
+UNAUTHORIZED = {401: {"model": ErrorResponse, "description": "Authentication required"}}
+FORBIDDEN = {403: {"model": ErrorResponse, "description": "Deployment management permission required"}}
+
+
+def _audit_context(request: Request) -> audit_service.AuditContext:
+    return audit_service.AuditContext.for_request(request.client.host if request.client else None)
+
+
+@router.post(
+    "/models/{model_id}/deploy",
+    response_model=DeploymentRead,
+    status_code=status.HTTP_200_OK,
+    summary="Deploy a trained model to production serving (admin or superadmin)",
+    responses=NOT_FOUND | UNPROCESSABLE | UNAUTHORIZED | FORBIDDEN,
+)
+def deploy_model(
+    model_id: uuid.UUID,
+    request: DeployRequest,
+    http_request: Request,
+    actor: DeploymentManagerDep,
+    db: DbSession,
+    settings: SettingsDep,
+) -> DeploymentRead:
+    deployment = deployment_service.deploy_model(
+        db, settings, model_id, request, actor=actor, context=_audit_context(http_request)
+    )
+    return DeploymentRead.model_validate(deployment)
+
+
+@router.post(
+    "/models/{model_id}/undeploy",
+    response_model=DeploymentRead,
+    status_code=status.HTTP_200_OK,
+    summary="Undeploy an active model from production serving (admin or superadmin)",
+    responses=NOT_FOUND | UNAUTHORIZED | FORBIDDEN,
+)
+def undeploy_model(
+    model_id: uuid.UUID, http_request: Request, actor: DeploymentManagerDep, db: DbSession
+) -> DeploymentRead:
+    deployment = deployment_service.undeploy_model(
+        db, model_id, actor=actor, context=_audit_context(http_request)
+    )
+    return DeploymentRead.model_validate(deployment)
+
+
+@router.get(
+    "/deployments",
+    response_model=DeploymentList,
+    summary="List model deployments the caller may see, with pagination",
+    responses=UNAUTHORIZED,
+)
+def list_deployments(
+    user: ReadAccessDep,
+    db: DbSession,
+    model_id: uuid.UUID | None = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> DeploymentList:
+    repo = DeploymentRepository(db)
+    if model_id is not None:
+        authorization.ensure_model_access(user, model_service.get_model(db, model_id))
+        items = repo.list_for_model(model_id)
+        total = len(items)
+        items = items[offset : offset + limit]
+    else:
+        owner_id = authorization.owner_scope(user)
+        items = repo.list(offset=offset, limit=limit, owner_id=owner_id)
+        total = repo.count(owner_id=owner_id)
+
+    return DeploymentList(
+        items=[DeploymentRead.model_validate(d) for d in items],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/deployments/{deployment_id}",
+    response_model=DeploymentRead,
+    summary="Get deployment details by ID",
+    responses=NOT_FOUND | UNAUTHORIZED,
+)
+def get_deployment(
+    deployment_id: uuid.UUID, user: ReadAccessDep, db: DbSession
+) -> DeploymentRead:
+    dep = DeploymentRepository(db).get(deployment_id)
+    if not dep:
+        raise NotFoundError(f"Deployment {deployment_id} not found.")
+    authorization.ensure_model_access(user, dep.model)
+    return DeploymentRead.model_validate(dep)

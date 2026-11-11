@@ -1,0 +1,19 @@
+# Local development overlay: run ONLY PostgreSQL in Docker and the API on the host
+# with `uvicorn --reload`.
+#
+#   docker compose -f compose.yaml -f compose.dev.yaml up -d db
+#   # .env:  DATABASE_URL=postgresql+psycopg://aiproject:<POSTGRES_PASSWORD>@127.0.0.1:5433/aiproject
+#   alembic upgrade head
+#   uvicorn app.main:app --reload
+#
+# Port 5433 on 127.0.0.1 avoids clashing with a locally installed PostgreSQL on 5432
+# and is never reachable from other machines.
+
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DEV_DB_PORT:-5433}:5432"
+    networks: [backend, devhost]
+
+networks:
+  devhost: {}

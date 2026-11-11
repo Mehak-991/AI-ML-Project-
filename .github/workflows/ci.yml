@@ -1,0 +1,185 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend-lint-and-test:
+    name: Backend Regression & Lint (Python 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-only-disposable
+          POSTGRES_DB: aiproject_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d aiproject_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c requirements.lock -r requirements.txt
+          pip install -c requirements.lock -r requirements-dev.txt
+
+      # Uses the rules in pyproject.toml (pycodestyle, pyflakes, isort, bugbear, pyupgrade, simplify,
+      # comprehensions, ruff-specific and bandit security rules).
+      - name: Run Ruff Linter & Security Checks
+        run: |
+          ruff check .
+
+      - name: Security audit Python dependencies
+        run: |
+          pip-audit -r requirements.lock --no-deps --disable-pip
+
+      - name: Run Backend Regression Test Suite
+        env:
+          APP_ENV: testing
+          DOCS_ENABLED: "true"
+          RATE_LIMIT_ENABLED: "false"
+        run: |
+          pytest tests/unit/ -v --tb=short
+
+      # Real PostgreSQL: enforces what the SQLite test double cannot (column lengths, row locks).
+      # The job-recovery tests run against the real schema, so build it with the migrations
+      # (which also exercises the whole chain up to head on every build).
+      - name: Migrate the CI database to head
+        env:
+          APP_ENV: testing
+          DATABASE_URL: postgresql+psycopg://ci:ci-only-disposable@127.0.0.1:5432/aiproject_ci
+        run: |
+          alembic upgrade head
+
+      - name: Run PostgreSQL Integration Tests (migrations, schema, job recovery)
+        env:
+          APP_ENV: testing
+          TEST_DATABASE_URL: postgresql+psycopg://ci:ci-only-disposable@127.0.0.1:5432/aiproject_ci
+        run: |
+          pytest tests/integration/ -v --tb=short
+
+  frontend-build:
+    name: Frontend Typecheck, Audit & Build (Node 22)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+
+      - name: Frontend lint (oxlint)
+        working-directory: frontend
+        run: |
+          npm run lint
+
+      - name: Security audit Frontend dependencies
+        working-directory: frontend
+        run: |
+          npm audit --audit-level=high
+
+      - name: Frontend Build & Typecheck
+        working-directory: frontend
+        run: |
+          npm run build
+
+  secret-scan:
+    name: Secret scan (gitleaks) and forbidden files
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject tracked database dumps, env files and keys
+        run: python3 scripts/check_tracked_files.py
+
+      # Scans every commit. --redact=100 hides matched values in the log, so a finding is
+      # reported by rule, file and commit but never printed.
+      - name: Scan history for secrets
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" --entrypoint sh ghcr.io/gitleaks/gitleaks:v8.30.0 -c \
+            'git config --global --add safe.directory /repo && gitleaks git /repo --config /repo/.gitleaks.toml --redact=100 --no-banner --exit-code 1'
+
+  docker-dry-run-build:
+    name: Docker Multi-Stage Build Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Compose Configuration
+        env:
+          # compose.yaml deliberately has no APP_VERSION default (a production deploy must name
+          # its release), so validation supplies a CI-only value here and nowhere else.
+          APP_VERSION: 0.6.0-rc1
+          POSTGRES_PASSWORD: ci-only-disposable
+          JWT_SECRET_KEY: ci-only-disposable-secret-at-least-32-bytes
+        run: |
+          docker compose -f compose.yaml config --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: aiproject-backend:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Frontend Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          tags: aiproject-frontend:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

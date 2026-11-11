@@ -1,0 +1,89 @@
+# Everything a `server` block needs except its listen/server_name/TLS lines. Included by
+# nginx.conf (HTTP) and nginx.tls.conf (HTTPS) so the two cannot drift apart.
+
+# Gzip compression
+gzip on;
+gzip_vary on;
+gzip_min_length 1024;
+gzip_proxied expired no-cache no-store private auth;
+gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml application/javascript application/json image/svg+xml;
+
+# Slightly above MAX_UPLOAD_SIZE_MB (25) + multipart framing; the API enforces the exact limit.
+client_max_body_size 50M;
+
+# Security headers. nginx drops inherited add_header lines in any location that declares its
+# own, so locations that need extra headers include this file instead of repeating them.
+include /etc/nginx/conf.d/security-headers.inc;
+
+root /usr/share/nginx/html;
+index index.html;
+
+# Vite content-hashes everything under /assets/, so these can be cached forever.
+location /assets/ {
+    include /etc/nginx/conf.d/security-headers.inc;
+    expires 1y;
+    access_log off;
+    add_header Cache-Control "public, immutable" always;
+    try_files $uri =404;
+}
+
+# Reverse proxy for backend API
+location /api/ {
+    set $api_upstream http://app:8000;
+    proxy_pass $api_upstream;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $forwarded_proto;
+    # Training, AutoML, explanations and local LLM calls run inside the request; the
+    # default 60s turned slow-but-working requests into 504s.
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+    # Stream uploads to the API, which enforces size limits as bytes arrive.
+    proxy_request_buffering off;
+}
+
+# Reverse proxy for API documentation (returns 404 unless DOCS_ENABLED=true).
+# The security headers are repeated without the CSP: Swagger UI loads from a CDN.
+location /docs {
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Strict-Transport-Security $hsts_header always;
+    set $api_upstream http://app:8000;
+    proxy_pass $api_upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $forwarded_proto;
+}
+
+location = /openapi.json {
+    set $api_upstream http://app:8000;
+    proxy_pass $api_upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $forwarded_proto;
+}
+
+# Health check endpoint for container orchestrator
+location = /healthz {
+    access_log off;
+    default_type text/plain;
+    return 200 "healthy\n";
+}
+
+# Never serve internal API endpoints through the public entry point. Prometheus scrapes
+# app:8000/metrics over the internal network (compose.monitoring.yaml).
+location = /metrics {
+    return 404;
+}
+
+# SPA Fallback routing. index.html must revalidate so new asset hashes are picked up.
+location / {
+    include /etc/nginx/conf.d/security-headers.inc;
+    add_header Cache-Control "no-cache" always;
+    try_files $uri $uri/ /index.html;
+}

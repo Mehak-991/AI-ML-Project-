@@ -1,0 +1,18 @@
+# Scrape configuration for the bundled Prometheus (compose.monitoring.yaml).
+# The API's /metrics is blocked at nginx on purpose; Prometheus reaches it directly over the
+# internal Docker network and authenticates with METRICS_TOKEN.
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: aiproject-api
+    metrics_path: /metrics
+    scheme: http
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/metrics_token
+    static_configs:
+      - targets: ["app:8000"]
+        labels:
+          service: api

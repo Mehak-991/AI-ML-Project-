@@ -1,0 +1,324 @@
+"""Application settings loaded from environment variables and an optional .env file."""
+
+from functools import lru_cache
+from pathlib import Path
+from typing import Annotated, Literal
+
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from app.core.exceptions import ConfigurationError
+
+Environment = Literal["development", "testing", "production"]
+DEFAULT_JWT_SECRET = "insecure-dev-secret-key-change-in-production-min-32-bytes"
+
+DEFAULT_DEV_CORS_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+
+class Settings(BaseSettings):
+    """Typed application configuration.
+
+    Values are read from environment variables first, then from `.env`.
+    Secrets are stored as `SecretStr` so they never appear in logs or reprs.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
+
+    APP_NAME: str = "AIProject"
+    APP_ENV: Environment = "development"
+    DEBUG: bool = False
+    API_V1_PREFIX: str = "/api/v1"
+    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    # "json" = one JSON object per line (for log shippers); "text" = human-readable.
+    LOG_FORMAT: Literal["text", "json"] = "text"
+    DOCS_ENABLED: bool = True
+
+    # Request hardening
+    MAX_REQUEST_BODY_MB: float = Field(default=5, gt=0, le=1024)  # non-upload requests
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_DEFAULT_PER_MINUTE: int = Field(default=300, ge=1)
+    RATE_LIMIT_AI_PER_MINUTE: int = Field(default=30, ge=1)
+    RATE_LIMIT_TRAINING_PER_MINUTE: int = Field(default=10, ge=1)
+    RATE_LIMIT_AUTH_PER_MINUTE: int = Field(default=20, ge=1)
+    RATE_LIMIT_ANALYSIS_PER_MINUTE: int = Field(default=60, ge=1)  # jobs, SHAP/LIME, drift
+
+    # Background jobs: a running job whose heartbeat is older than its timeout is
+    # treated as abandoned and re-queued (or failed once retries are exhausted).
+    JOB_STALE_TIMEOUT_MINUTES: int = Field(default=15, ge=1)
+    # Per-job-type overrides, e.g. JOB_STALE_TIMEOUT_BY_TYPE='{"model_training": 60}'.
+    JOB_STALE_TIMEOUT_BY_TYPE: dict[str, int] = Field(default_factory=dict)
+    JOB_HEARTBEAT_INTERVAL_SECONDS: int = Field(default=30, ge=1)
+    JOB_REAPER_INTERVAL_SECONDS: int = Field(default=60, ge=10)
+    # true: the API also runs submitted jobs in its own thread pool (single-process dev setups).
+    # false: only scripts/run_worker.py executes jobs (compose.yaml; keeps ML load out of the API).
+    JOB_INLINE_DISPATCH: bool = True
+    # Written by the worker, read by its healthcheck and /metrics. Must be on storage shared
+    # by both when they run in separate containers.
+    WORKER_HEARTBEAT_FILE: str = "/tmp/worker_heartbeat"
+
+    # When set, GET /metrics requires "Authorization: Bearer <token>".
+    METRICS_TOKEN: SecretStr | None = None
+
+    # Release tag of the running image (compose passes APP_VERSION), reported by /health so an
+    # operator can see which build is live. Unset outside container deployments.
+    APP_RELEASE: str | None = None
+
+    # Upgrade an outdated password hash (PBKDF2/bcrypt) to Argon2id after a successful login.
+    # Turn it off for the first deployment of a release that introduced Argon2id: images from
+    # before it cannot read Argon2id hashes, so an upgraded account could not sign in after a
+    # rollback. New and changed passwords are always Argon2id.
+    PASSWORD_REHASH_ON_LOGIN: bool = True
+
+    # RBAC v2 rollout (expand phase): while True, new read-only accounts are stored with the legacy
+    # name "viewer" so releases from before RBAC v2 can still read them. The effective role is
+    # "user" either way. Set it true when deploying the RBAC v2 code BEFORE migration 0014, and
+    # remove it once the rollback window has closed.
+    RBAC_STORE_LEGACY_VIEWER: bool = False
+
+    # JWT Authentication & Authorization
+    JWT_SECRET_KEY: SecretStr = Field(
+        default=SecretStr(DEFAULT_JWT_SECRET),
+        description="Secret key for signing JWT tokens.",
+    )
+    # HMAC only: tokens are signed and verified with the one shared secret above.
+    JWT_ALGORITHM: Literal["HS256", "HS384", "HS512"] = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, ge=1)
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7, ge=1)
+
+    # Comma-separated in the environment, e.g. "https://a.com,https://b.com".
+    # None means "use the environment's default" (empty list in production).
+    CORS_ORIGINS: Annotated[list[str] | None, NoDecode] = None
+
+    DATABASE_URL: SecretStr | None = None
+    DATABASE_CONNECT_TIMEOUT: int = Field(default=5, ge=1, le=60)
+    DATABASE_POOL_SIZE: int = Field(default=5, ge=1, le=100)
+    DATABASE_MAX_OVERFLOW: int = Field(default=10, ge=0, le=100)
+    DATABASE_ECHO: bool = False
+
+    # Server-side storage locations. Never taken from API requests.
+    UPLOAD_DIR: Path = Path("uploads")
+    MODEL_DIR: Path = Path("trained_models")
+
+    # Data and ML limits.
+    MAX_UPLOAD_SIZE_MB: int = Field(default=25, ge=1, le=1024)
+    MAX_DATASET_ROWS: int = Field(default=200_000, ge=10)
+    MAX_DATASET_COLUMNS: int = Field(default=500, ge=2)
+    MAX_PREDICTION_RECORDS: int = Field(default=1000, ge=1)
+    # strict: refuse to load artifacts saved with a different scikit-learn major.minor
+    # (pickles are not guaranteed compatible); warn: load anyway and log a warning.
+    MODEL_COMPATIBILITY_CHECK: Literal["strict", "warn"] = "strict"
+
+    # --- LLM provider. "openai" (hosted, needs OPENAI_API_KEY) or "ollama" (local, free). ---
+    # Default stays "openai" so deployments without this setting behave exactly as before.
+    LLM_PROVIDER: Literal["openai", "ollama"] = "openai"
+
+    # Ollama (used when LLM_PROVIDER=ollama). No API key involved.
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
+    OLLAMA_MODEL: str = "llama3.2:3b"
+    # Other locally pulled models a request may select (comma-separated).
+    OLLAMA_ALLOWED_MODELS: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Local CPU inference is slow; this bounds one whole /api/chat call (incl. model load).
+    OLLAMA_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0, le=3600)
+
+    # OpenAI (used when LLM_PROVIDER=openai). Optional: the app starts without a key.
+    OPENAI_API_KEY: SecretStr | None = None
+    OPENAI_MODEL: str = "gpt-5.4-mini"
+    # Models a request may select; empty means only OPENAI_MODEL.
+    OPENAI_ALLOWED_MODELS: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    OPENAI_BASE_URL: str | None = None
+    OPENAI_ORGANIZATION: str | None = None
+    OPENAI_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, le=600)
+    OPENAI_MAX_RETRIES: int = Field(default=2, ge=0, le=10)
+    LLM_MAX_MESSAGES: int = Field(default=50, ge=1, le=500)
+    LLM_MAX_INPUT_CHARS: int = Field(default=32_000, ge=1)
+    LLM_MAX_INPUT_TOKENS: int = Field(default=8_000, ge=1)
+    LLM_MAX_OUTPUT_TOKENS: int = Field(default=4_096, ge=16)
+    LLM_DEFAULT_OUTPUT_TOKENS: int = Field(default=1_024, ge=16)
+    # Prompts/completions are never logged unless this is explicitly enabled.
+    LLM_LOG_CONTENT: bool = False
+
+    # --- Local models (Sentence Transformers / Transformers). Loaded lazily. ---
+    AI_DEVICE: Literal["auto", "cpu", "cuda", "mps"] = "auto"
+    AI_MODEL_CACHE_DIR: Path | None = None  # None = Hugging Face default cache
+    AI_ALLOW_MODEL_DOWNLOADS: bool = True
+    AI_MAX_LOADED_MODELS: int = Field(default=3, ge=1, le=20)
+    AI_INFERENCE_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0, le=3600)
+    AI_MAX_CONCURRENT_INFERENCES: int = Field(default=2, ge=1, le=64)
+
+    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # If set, every embedding must have exactly this many dimensions.
+    EMBEDDING_DIMENSION: int | None = Field(default=None, ge=1)
+    EMBEDDING_BATCH_SIZE: int = Field(default=32, ge=1, le=1024)
+    EMBEDDING_MAX_TEXTS: int = Field(default=128, ge=1)
+    EMBEDDING_MAX_TEXT_CHARS: int = Field(default=8_000, ge=1)
+
+    CLASSIFIER_MODEL: str = "distilbert/distilbert-base-uncased-finetuned-sst-2-english"
+    CLASSIFIER_MAX_TEXTS: int = Field(default=64, ge=1)
+    CLASSIFIER_MAX_TEXT_CHARS: int = Field(default=4_000, ge=1)
+
+    TOKENIZER_MAX_TEXT_CHARS: int = Field(default=200_000, ge=1)
+
+    @field_validator("API_V1_PREFIX")
+    @classmethod
+    def _validate_prefix(cls, value: str) -> str:
+        value = value.strip()
+        if not value.startswith("/") or value == "/":
+            raise ValueError("API_V1_PREFIX must start with '/' and not be the root path")
+        return value.rstrip("/")
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def _split_origins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("OLLAMA_BASE_URL")
+    @classmethod
+    def _validate_ollama_url(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("OLLAMA_BASE_URL must start with http:// or https://")
+        return value
+
+    @field_validator("OPENAI_ALLOWED_MODELS", "OLLAMA_ALLOWED_MODELS", mode="before")
+    @classmethod
+    def _split_models(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [model.strip() for model in value.split(",") if model.strip()]
+        return value
+
+    @field_validator(
+        "DATABASE_URL",
+        "METRICS_TOKEN",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_ORGANIZATION",
+        "EMBEDDING_DIMENSION",
+        "AI_MODEL_CACHE_DIR",
+        mode="before",
+    )
+    @classmethod
+    def _blank_to_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("JWT_SECRET_KEY", mode="before")
+    @classmethod
+    def _blank_jwt_secret_to_default(cls, value: object) -> object:
+        # A blank value means "not set". Production then refuses to start (_validate_production).
+        if isinstance(value, str) and not value.strip():
+            return DEFAULT_JWT_SECRET
+        return value
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _normalize_database_url(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        url = value.get_secret_value().strip()
+        # Plain postgres URLs would make SQLAlchemy look for psycopg2; use psycopg 3.
+        for prefix in ("postgresql://", "postgres://"):
+            if url.startswith(prefix):
+                url = "postgresql+psycopg://" + url[len(prefix) :]
+                break
+        return SecretStr(url)
+
+    @model_validator(mode="after")
+    def _validate_job_timeouts(self) -> "Settings":
+        # A live job must heartbeat several times within its stale timeout.
+        timeouts = [self.JOB_STALE_TIMEOUT_MINUTES, *self.JOB_STALE_TIMEOUT_BY_TYPE.values()]
+        if min(timeouts) * 60 < 3 * self.JOB_HEARTBEAT_INTERVAL_SECONDS:
+            raise ValueError(
+                "Job stale timeouts must be at least 3x JOB_HEARTBEAT_INTERVAL_SECONDS"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_production(self) -> "Settings":
+        if not self.is_production:
+            return self
+        problems = []
+        if self.DATABASE_URL is None:
+            problems.append("DATABASE_URL is required when APP_ENV=production")
+        elif not self.DATABASE_URL.get_secret_value().startswith("postgresql+psycopg://"):
+            problems.append("DATABASE_URL must be a PostgreSQL URL when APP_ENV=production")
+        if self.DEBUG:
+            problems.append("DEBUG must be false when APP_ENV=production")
+        if self.DATABASE_ECHO:
+            # Echo logs SQL parameters, which include password hashes and user data.
+            problems.append("DATABASE_ECHO must be false when APP_ENV=production")
+        if self.jwt_secret_is_weak:
+            problems.append(
+                "JWT_SECRET_KEY must be set to a private value of at least 32 bytes when "
+                "APP_ENV=production (generate one with: openssl rand -hex 32)"
+            )
+        if self.CORS_ORIGINS and "*" in self.CORS_ORIGINS:
+            problems.append("CORS_ORIGINS must not contain '*' when APP_ENV=production")
+        if problems:
+            raise ValueError("; ".join(problems))
+        return self
+
+    @property
+    def jwt_secret_is_weak(self) -> bool:
+        """True for the shipped default secret or anything under 32 bytes."""
+        secret = self.JWT_SECRET_KEY.get_secret_value()
+        return secret == DEFAULT_JWT_SECRET or len(secret.encode("utf-8")) < 32
+
+    @property
+    def is_production(self) -> bool:
+        return self.APP_ENV == "production"
+
+    @property
+    def max_upload_bytes(self) -> int:
+        return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+    @property
+    def max_request_body_bytes(self) -> int:
+        return int(self.MAX_REQUEST_BODY_MB * 1024 * 1024)
+
+    @property
+    def active_llm_model(self) -> str:
+        """Default chat model of the selected provider."""
+        return self.OLLAMA_MODEL if self.LLM_PROVIDER == "ollama" else self.OPENAI_MODEL
+
+    @property
+    def allowed_llm_models(self) -> list[str]:
+        """Models a chat request may select, for the selected provider only."""
+        extra = (
+            self.OLLAMA_ALLOWED_MODELS
+            if self.LLM_PROVIDER == "ollama"
+            else self.OPENAI_ALLOWED_MODELS
+        )
+        return list(dict.fromkeys([self.active_llm_model, *extra]))
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """Effective CORS origins: explicit value, else a restrictive per-env default."""
+        if self.CORS_ORIGINS is not None:
+            return self.CORS_ORIGINS
+        return [] if self.is_production else list(DEFAULT_DEV_CORS_ORIGINS)
+
+
+def load_settings(**overrides: object) -> Settings:
+    """Build settings, converting validation failures into a readable ConfigurationError."""
+    try:
+        return Settings(**overrides)
+    except ValidationError as exc:
+        messages = []
+        for error in exc.errors():
+            location = ".".join(str(part) for part in error["loc"]) or "settings"
+            messages.append(f"{location}: {error['msg']}")
+        raise ConfigurationError("Invalid configuration -> " + " | ".join(messages)) from None
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Cached settings instance for use as a FastAPI dependency."""
+    return load_settings()

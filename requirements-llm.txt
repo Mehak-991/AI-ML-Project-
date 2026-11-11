@@ -1,0 +1,8 @@
+# Hosted LLM + workflow extras (no PyTorch needed). Mirrors the "llm" and "agents"
+# extras in pyproject.toml.  pip install -r requirements-llm.txt
+-r requirements.txt
+openai>=2.0,<4            # tested with 2.54 and 3.40
+tiktoken>=0.8,<1
+langgraph>=0.2,<2         # tested with 1.2
+langchain-core>=0.3,<2
+langchain-text-splitters>=0.3,<2

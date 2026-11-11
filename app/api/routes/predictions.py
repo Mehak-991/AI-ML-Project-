@@ -1,0 +1,136 @@
+"""Prediction history audit logging and ground-truth foundation routes."""
+
+import uuid
+from datetime import datetime
+from typing import Annotated
+
+from fastapi import APIRouter, Query
+
+from app.api.deps import DbSession, MlOperatorDep, ReadAccessDep
+from app.core.exceptions import NotFoundError
+from app.repositories.deployments import PredictionLogRepository
+from app.schemas.common import ErrorResponse
+from app.schemas.deployments import GroundTruthRequest, PredictionLogList, PredictionLogRead
+from app.services import authorization, deployment_service
+
+router = APIRouter(tags=["predictions"])
+
+NOT_FOUND = {404: {"model": ErrorResponse, "description": "Prediction log not found"}}
+UNAUTHORIZED = {401: {"model": ErrorResponse, "description": "Authentication required"}}
+FORBIDDEN = {403: {"model": ErrorResponse, "description": "Admin or ML Engineer privileges required"}}
+RECORD_FORBIDDEN = {403: {"model": ErrorResponse, "description": "Not permitted to view this record"}}
+
+
+@router.get(
+    "/predictions/history",
+    response_model=PredictionLogList,
+    summary="List prediction audit history with pagination and filters",
+    responses=UNAUTHORIZED,
+)
+def list_prediction_history(
+    db: DbSession,
+    user: ReadAccessDep,
+    model_id: uuid.UUID | None = None,
+    deployment_id: uuid.UUID | None = None,
+    status: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> PredictionLogList:
+    repo = PredictionLogRepository(db)
+    items = repo.list_filtered(
+        model_id=model_id,
+        deployment_id=deployment_id,
+        status=status,
+        start_date=start_date,
+        end_date=end_date,
+        visible_to_user_id=authorization.prediction_log_scope(user),
+        offset=offset,
+        limit=limit,
+    )
+    total = repo.count_filtered(
+        model_id=model_id,
+        deployment_id=deployment_id,
+        status=status,
+        start_date=start_date,
+        end_date=end_date,
+        visible_to_user_id=authorization.prediction_log_scope(user),
+    )
+    return PredictionLogList(
+        items=[PredictionLogRead.model_validate(p) for p in items],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/predictions/history/{prediction_id}",
+    response_model=PredictionLogRead,
+    summary="Get single prediction audit record by ID",
+    responses=NOT_FOUND | UNAUTHORIZED | RECORD_FORBIDDEN,
+)
+def get_prediction_history_item(
+    prediction_id: uuid.UUID, db: DbSession, user: ReadAccessDep
+) -> PredictionLogRead:
+    item = PredictionLogRepository(db).get(prediction_id)
+    if not item:
+        raise NotFoundError(f"Prediction log {prediction_id} not found.")
+    authorization.ensure_prediction_log_access(user, item)
+    return PredictionLogRead.model_validate(item)
+
+
+@router.get(
+    "/models/{model_id}/predictions/history",
+    response_model=PredictionLogList,
+    summary="List prediction audit history for a specific model",
+    responses=UNAUTHORIZED,
+)
+def list_model_prediction_history(
+    model_id: uuid.UUID,
+    db: DbSession,
+    user: ReadAccessDep,
+    status: str | None = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> PredictionLogList:
+    repo = PredictionLogRepository(db)
+    items = repo.list_filtered(
+        model_id=model_id,
+        status=status,
+        visible_to_user_id=authorization.prediction_log_scope(user),
+        offset=offset,
+        limit=limit,
+    )
+    total = repo.count_filtered(
+        model_id=model_id,
+        status=status,
+        visible_to_user_id=authorization.prediction_log_scope(user),
+    )
+    return PredictionLogList(
+        items=[PredictionLogRead.model_validate(p) for p in items],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.post(
+    "/predictions/history/{prediction_id}/ground-truth",
+    response_model=PredictionLogRead,
+    summary="Submit ground-truth labels for production accuracy evaluation (Admin & ML Engineer only)",
+    responses=NOT_FOUND | UNAUTHORIZED | FORBIDDEN,
+)
+def submit_ground_truth(
+    prediction_id: uuid.UUID,
+    request: GroundTruthRequest,
+    db: DbSession,
+    user: MlOperatorDep,
+) -> PredictionLogRead:
+    item = PredictionLogRepository(db).get(prediction_id)
+    if not item:
+        raise NotFoundError(f"Prediction log {prediction_id} not found.")
+    authorization.ensure_prediction_log_access(user, item)
+    updated = deployment_service.attach_ground_truth(db, prediction_id, request.ground_truth)
+    return PredictionLogRead.model_validate(updated)

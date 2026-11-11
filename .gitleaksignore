@@ -1,0 +1,6 @@
+# Verified false positive: an unsigned test fixture, not a credential. Decoded, it is
+# header {"alg":"none"}, payload {"sub":"1","role":"superadmin"}, empty signature; the test
+# (test_a_forged_or_unsigned_token_gets_nothing) asserts the API rejects it with 401.
+# The line has since been replaced by a runtime-built token; this entry only covers the one
+# historical commit that cannot be rewritten. Fingerprint: commit:file:rule:line.
+9ccfa4df7754b3a133ccc7bded9264b0b7d5a9e2:tests/unit/test_rbac_matrix.py:jwt:347

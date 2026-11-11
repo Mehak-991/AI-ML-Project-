@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 
-from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
+from app.api.deps import DbSession, MlOperatorDep, ReadAccessDep, SettingsDep
 from app.database.models.user import User
 from app.repositories.datasets import DatasetRepository
 from app.schemas.common import ErrorResponse
@@ -33,7 +33,7 @@ UPLOAD_ERRORS = {
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Dataset not found"}}
 UNAUTHORIZED = {401: {"model": ErrorResponse, "description": "Authentication required"}}
 
-UploaderRole = Annotated[User, Depends(require_role("admin", "ml_engineer"))]
+UploaderRole = MlOperatorDep
 UploadedFile = Annotated[UploadFile, File(description="A .csv (UTF-8) or .xlsx file.")]
 
 
@@ -86,7 +86,7 @@ def upload_dataset(
 @router.get("", response_model=DatasetList, summary="List datasets",
     responses=UNAUTHORIZED)
 def list_datasets(
-    user: CurrentUserDep,
+    user: ReadAccessDep,
     db: DbSession,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -104,7 +104,7 @@ def list_datasets(
 
 @router.get("/{dataset_id}", response_model=DatasetRead,
     responses=NOT_FOUND | UNAUTHORIZED)
-def get_dataset(dataset_id: uuid.UUID, user: CurrentUserDep, db: DbSession) -> DatasetRead:
+def get_dataset(dataset_id: uuid.UUID, user: ReadAccessDep, db: DbSession) -> DatasetRead:
     dataset = dataset_service.get_dataset(db, dataset_id)
     authorization.ensure_dataset_access(user, dataset)
     return DatasetRead.model_validate(dataset)
@@ -118,7 +118,7 @@ def get_dataset(dataset_id: uuid.UUID, user: CurrentUserDep, db: DbSession) -> D
 )
 def get_dataset_summary(
     dataset_id: uuid.UUID,
-    user: CurrentUserDep,
+    user: ReadAccessDep,
     db: DbSession,
     settings: SettingsDep,
     target_column: Annotated[str | None, Query(max_length=255)] = None,

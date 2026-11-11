@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
+from app.api.deps import DbSession, MlOperatorDep, PredictAccessDep, ReadAccessDep, SettingsDep
 from app.database.models.user import User
 from app.repositories.ml_models import MLModelRepository
 from app.schemas.common import ErrorResponse
@@ -31,7 +31,7 @@ def train_model(
     request: TrainRequest,
     db: DbSession,
     settings: SettingsDep,
-    user: Annotated[User, Depends(require_role("admin", "ml_engineer"))],
+    user: MlOperatorDep,
 ) -> ModelRead:
     authorization.ensure_dataset_access(user, dataset_service.get_dataset(db, request.dataset_id))
     # Synchronous: runs in FastAPI's threadpool. Fine for small datasets; see README limits.
@@ -41,7 +41,7 @@ def train_model(
 @router.get("", response_model=ModelList, summary="List trained models",
     responses={401: {"model": ErrorResponse, "description": "Authentication required"}})
 def list_models(
-    user: CurrentUserDep,
+    user: ReadAccessDep,
     db: DbSession,
     dataset_id: uuid.UUID | None = None,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -71,7 +71,7 @@ def list_models(
     summary="Model metadata, feature schema and metrics",
     responses=NOT_FOUND | {401: {"model": ErrorResponse, "description": "Authentication required"}},
 )
-def get_model(model_id: uuid.UUID, user: CurrentUserDep, db: DbSession) -> ModelRead:
+def get_model(model_id: uuid.UUID, user: ReadAccessDep, db: DbSession) -> ModelRead:
     model = model_service.get_model(db, model_id)
     authorization.ensure_model_access(user, model)
     return ModelRead.model_validate(model)
@@ -88,7 +88,7 @@ def predict(
     request: PredictRequest,
     db: DbSession,
     settings: SettingsDep,
-    user: CurrentUserDep,
+    user: PredictAccessDep,
 ) -> PredictResponse:
     # Authorize before any inference work so denied callers consume no model resources.
     authorization.ensure_model_access(user, model_service.get_model(db, model_id))

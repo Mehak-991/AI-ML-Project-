@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.deps import CurrentUserDep, DbSession, require_role
+from app.api.deps import DbSession, MlOperatorDep, ReadAccessDep
 from app.database.models.user import User
 from app.core.exceptions import NotFoundError
 from app.repositories.deployments import PredictionLogRepository
@@ -30,7 +30,7 @@ RECORD_FORBIDDEN = {403: {"model": ErrorResponse, "description": "Not permitted 
 )
 def list_prediction_history(
     db: DbSession,
-    user: CurrentUserDep,
+    user: ReadAccessDep,
     model_id: uuid.UUID | None = None,
     deployment_id: uuid.UUID | None = None,
     status: str | None = None,
@@ -73,7 +73,7 @@ def list_prediction_history(
     responses=NOT_FOUND | UNAUTHORIZED | RECORD_FORBIDDEN,
 )
 def get_prediction_history_item(
-    prediction_id: uuid.UUID, db: DbSession, user: CurrentUserDep
+    prediction_id: uuid.UUID, db: DbSession, user: ReadAccessDep
 ) -> PredictionLogRead:
     item = PredictionLogRepository(db).get(prediction_id)
     if not item:
@@ -91,7 +91,7 @@ def get_prediction_history_item(
 def list_model_prediction_history(
     model_id: uuid.UUID,
     db: DbSession,
-    user: CurrentUserDep,
+    user: ReadAccessDep,
     status: str | None = None,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -127,7 +127,7 @@ def submit_ground_truth(
     prediction_id: uuid.UUID,
     request: GroundTruthRequest,
     db: DbSession,
-    user: Annotated[User, Depends(require_role("admin", "ml_engineer"))],
+    user: MlOperatorDep,
 ) -> PredictionLogRead:
     item = PredictionLogRepository(db).get(prediction_id)
     if not item:

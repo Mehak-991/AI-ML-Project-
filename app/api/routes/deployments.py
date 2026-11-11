@@ -5,7 +5,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
+from app.core.permissions import Permission
+from app.api.deps import DbSession, ReadAccessDep, SettingsDep, require_permission
 from app.core.exceptions import NotFoundError
 from app.repositories.deployments import DeploymentRepository
 from app.schemas.common import ErrorResponse
@@ -26,7 +27,7 @@ FORBIDDEN = {403: {"model": ErrorResponse, "description": "Admin privileges requ
     status_code=status.HTTP_200_OK,
     summary="Deploy a trained model to production serving (Admin only)",
     responses=NOT_FOUND | UNPROCESSABLE | UNAUTHORIZED | FORBIDDEN,
-    dependencies=[Depends(require_role("admin"))],
+    dependencies=[Depends(require_permission(Permission.DEPLOYMENTS_MANAGE))],
 )
 def deploy_model(
     model_id: uuid.UUID,
@@ -44,7 +45,7 @@ def deploy_model(
     status_code=status.HTTP_200_OK,
     summary="Undeploy an active model from production serving (Admin only)",
     responses=NOT_FOUND | UNAUTHORIZED | FORBIDDEN,
-    dependencies=[Depends(require_role("admin"))],
+    dependencies=[Depends(require_permission(Permission.DEPLOYMENTS_MANAGE))],
 )
 def undeploy_model(model_id: uuid.UUID, db: DbSession) -> DeploymentRead:
     deployment = deployment_service.undeploy_model(db, model_id)
@@ -58,7 +59,7 @@ def undeploy_model(model_id: uuid.UUID, db: DbSession) -> DeploymentRead:
     responses=UNAUTHORIZED,
 )
 def list_deployments(
-    user: CurrentUserDep,
+    user: ReadAccessDep,
     db: DbSession,
     model_id: uuid.UUID | None = None,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -90,7 +91,7 @@ def list_deployments(
     responses=NOT_FOUND | UNAUTHORIZED,
 )
 def get_deployment(
-    deployment_id: uuid.UUID, user: CurrentUserDep, db: DbSession
+    deployment_id: uuid.UUID, user: ReadAccessDep, db: DbSession
 ) -> DeploymentRead:
     dep = DeploymentRepository(db).get(deployment_id)
     if not dep:

@@ -7,6 +7,7 @@ import {
   ChevronUp,
   Tag,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import type { PredictionLogRead } from '../types/deployment';
 import type { ModelRead } from '../types/model';
 
@@ -42,6 +43,8 @@ export const PredictionActivityMonitoringTable: React.FC<
   onModelFilterChange,
 }) => {
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
+  const { can } = useAuth();
+  const canAnnotate = can('ml:operate');
   const [groundTruthInput, setGroundTruthInput] = useState<Record<string, string>>({});
   const [submittingTruth, setSubmittingTruth] = useState<string | null>(null);
 
@@ -250,7 +253,8 @@ export const PredictionActivityMonitoringTable: React.FC<
                                 </div>
                               </div>
 
-                              {/* Ground-truth submission input */}
+                              {/* Ground-truth submission input (ml:operate only) */}
+                              {canAnnotate && (
                               <div className="p-3 rounded-lg bg-indigo-50/50 border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                                 <div>
                                   <span className="font-bold text-indigo-950 block">
@@ -283,6 +287,7 @@ export const PredictionActivityMonitoringTable: React.FC<
                                   </button>
                                 </div>
                               </div>
+                              )}
                             </div>
                           </td>
                         </tr>

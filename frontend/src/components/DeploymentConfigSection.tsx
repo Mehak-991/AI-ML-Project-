@@ -6,6 +6,7 @@ import {
   AlertCircle,
   History,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import type { ModelRead } from '../types/model';
 import type { DeploymentRead, HealthReadinessResponse } from '../types/deployment';
 
@@ -28,6 +29,8 @@ export const DeploymentConfigSection: React.FC<DeploymentConfigSectionProps> = (
   onUndeploy,
   isActionLoading,
 }) => {
+  const { can } = useAuth();
+  const canManageDeployments = can('deployments:manage');
   const [targetEnv, setTargetEnv] = useState<string>('production');
   const [confirmDialog, setConfirmDialog] = useState<'deploy' | 'undeploy' | null>(null);
 
@@ -66,6 +69,7 @@ export const DeploymentConfigSection: React.FC<DeploymentConfigSectionProps> = (
           </p>
         </div>
 
+        {canManageDeployments && (
         <div className="flex items-center gap-3">
           {isDeployed ? (
             <button
@@ -100,6 +104,7 @@ export const DeploymentConfigSection: React.FC<DeploymentConfigSectionProps> = (
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Confirmation Modal Dialog */}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useAuth } from '../context/AuthContext';
 import {
   RefreshCw,
   XCircle,
@@ -15,6 +16,8 @@ import { jobsApi } from '../services/api';
 import type { Job, JobMetricsResponse, JobStatus } from '../types/job';
 
 export function JobManagementPage() {
+  const { can } = useAuth();
+  const canOperate = can('ml:operate');
   const [metrics, setMetrics] = useState<JobMetricsResponse | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [total, setTotal] = useState(0);
@@ -337,7 +340,7 @@ export function JobManagementPage() {
                     </td>
                     <td className="px-5 py-3.5 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-2">
-                        {(job.status === 'queued' || job.status === 'running') && (
+                        {canOperate && (job.status === 'queued' || job.status === 'running') && (
                           <button
                             disabled={actionLoading === job.id}
                             onClick={() => handleCancel(job.id)}
@@ -346,7 +349,7 @@ export function JobManagementPage() {
                             Cancel
                           </button>
                         )}
-                        {(job.status === 'failed' || job.status === 'cancelled') && (
+                        {canOperate && (job.status === 'failed' || job.status === 'cancelled') && (
                           <button
                             disabled={actionLoading === job.id}
                             onClick={() => handleRetry(job.id)}

@@ -5,9 +5,10 @@ from fastapi.testclient import TestClient
 
 from app.database.session import get_db
 from app.main import create_app
+from tests.helpers import DEFAULT_TEST_PASSWORD as PASSWORD
+from tests.helpers import insert_account
 
 API = "/api/v1"
-PASSWORD = "Str0ngPassw0rd"
 
 
 @pytest.fixture
@@ -42,130 +43,143 @@ def _role_of(client, headers: dict, email: str) -> str:
     return next(u["role"] for u in users if u["email"] == email)
 
 
+def _create(client, headers: dict, email: str, role: str = "user"):
+    return client.post(
+        f"{API}/auth/users", json={"email": email, "password": PASSWORD, "role": role}, headers=headers
+    )
+
+
 @pytest.fixture
-def admin(client) -> dict:
-    assert _register(client, "root@x.com").json()["role"] == "admin"
+def superadmin(client, session_factory) -> dict:
+    """A superadmin created out of band, as the server-side bootstrap would."""
+    insert_account(session_factory, "root@x.com", "superadmin")
     return _bearer(client, "root@x.com")
 
 
-def test_first_user_receives_administrator(client) -> None:
+def test_first_public_registration_is_only_a_user(client) -> None:
     response = _register(client, "first@x.com")
     assert response.status_code == 201
-    assert response.json()["role"] == "admin"
+    assert response.json()["role"] == "user"
 
 
-def test_subsequent_public_registrations_receive_viewer(client, admin) -> None:
+def test_every_public_registration_receives_user(client, superadmin) -> None:
     for email in ("two@x.com", "three@x.com"):
         response = _register(client, email)
         assert response.status_code == 201
-        assert response.json()["role"] == "viewer"
+        assert response.json()["role"] == "user"
 
 
-@pytest.mark.parametrize("role", ["admin", "ml_engineer"])
-def test_public_registration_cannot_assign_elevated_roles(client, admin, role) -> None:
-    response = _register(client, "attacker@x.com", role=role)
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "permission_denied"
-    assert (
-        client.post(
-            f"{API}/auth/login", json={"email": "attacker@x.com", "password": PASSWORD}
-        ).status_code
-        == 401
-    ), "a rejected registration must not leave an account behind"
-
-
-@pytest.mark.parametrize("role", ["superuser", "ADMIN", "", None])
-def test_unknown_role_values_are_rejected(client, admin, role) -> None:
+@pytest.mark.parametrize("role", ["admin", "superadmin", "ml_engineer", "viewer", "user", "ADMIN", "", None])
+def test_registration_has_no_role_field_at_all(client, superadmin, role) -> None:
+    """Role assignment was removed from the public payload: any value, even a harmless one, is a
+    validation error, and no account is left behind."""
     assert _register(client, "odd@x.com", role=role).status_code == 422
+    assert (
+        client.post(f"{API}/auth/login", json={"email": "odd@x.com", "password": PASSWORD}).status_code == 401
+    )
 
 
 @pytest.mark.parametrize(
     "extra",
-    [{"is_active": True}, {"is_admin": True}, {"hashed_password": "x"}, {"id": "1"}],
+    [{"is_active": True}, {"is_admin": True}, {"hashed_password": "x"}, {"id": "1"}, {"permissions": ["users:manage"]}],
 )
-def test_registration_rejects_extra_payload_fields(client, admin, extra) -> None:
+def test_registration_rejects_extra_payload_fields(client, superadmin, extra) -> None:
     assert _register(client, "extra@x.com", **extra).status_code == 422
 
 
-def test_invalid_token_gets_no_elevated_rights(client, admin) -> None:
+def test_invalid_token_gets_no_elevated_rights(client, superadmin) -> None:
     forged = {"Authorization": "Bearer not.a.token"}
-    assert _register(client, "forged@x.com", headers=forged, role="admin").status_code == 403
+    assert _register(client, "forged@x.com", headers=forged, role="admin").status_code == 422
+    plain = _register(client, "forged2@x.com", headers=forged)
+    assert plain.status_code == 201 and plain.json()["role"] == "user"
 
 
-@pytest.mark.parametrize("creator_role", ["viewer", "ml_engineer"])
-def test_non_admins_cannot_create_elevated_accounts(client, admin, creator_role) -> None:
-    assert _register(client, "creator@x.com", headers=admin, role=creator_role).status_code == 201
+@pytest.mark.parametrize("creator_role", ["user", "admin"])
+def test_only_a_superadmin_can_create_accounts(client, superadmin, session_factory, creator_role) -> None:
+    insert_account(session_factory, "creator@x.com", creator_role)
     creator = _bearer(client, "creator@x.com")
-    for role in ("admin", "ml_engineer"):
-        assert _register(client, f"{role}@x.com", headers=creator, role=role).status_code == 403
+    for role in ("user", "admin"):
+        assert _create(client, creator, f"{role}@x.com", role).status_code == 403
+    assert _role_of(client, superadmin, "creator@x.com") == creator_role
 
 
-@pytest.mark.parametrize("role", ["admin", "ml_engineer", "viewer"])
-def test_administrator_can_create_users_with_any_role(client, admin, role) -> None:
-    response = _register(client, "new@x.com", headers=admin, role=role)
+@pytest.mark.parametrize("role", ["admin", "user"])
+def test_superadmin_can_create_users_with_user_or_admin_role(client, superadmin, role) -> None:
+    response = _create(client, superadmin, "new@x.com", role)
     assert response.status_code == 201, response.text
     assert response.json()["role"] == role
     assert client.get(f"{API}/auth/me", headers=_bearer(client, "new@x.com")).json()["role"] == role
 
 
-def test_administrator_can_promote_users(client, admin) -> None:
+@pytest.mark.parametrize("role", ["superadmin", "ml_engineer", "viewer", "root"])
+def test_account_creation_can_never_make_a_superadmin(client, superadmin, role) -> None:
+    assert _create(client, superadmin, "nope@x.com", role).status_code == 422
+
+
+def test_superadmin_can_promote_and_demote_between_user_and_admin(client, superadmin) -> None:
     user_id = _register(client, "user@x.com").json()["id"]
     token = _bearer(client, "user@x.com")
-    denied = client.get(f"{API}/auth/users", headers=token)
-    assert denied.status_code == 403
+    # A plain user cannot even list users.
+    assert client.get(f"{API}/auth/users", headers=token).status_code == 403
 
-    promoted = client.patch(
-        f"{API}/auth/users/{user_id}", json={"role": "admin"}, headers=admin
+    promoted = client.patch(f"{API}/auth/users/{user_id}", json={"role": "admin"}, headers=superadmin)
+    assert promoted.status_code == 200 and promoted.json()["role"] == "admin"
+    # Roles are read from the database per request, so the existing token gains admin rights at
+    # once (deployments: admin passes authorization, so the unknown model is a 404, not a 403).
+    deploy = client.post(
+        f"{API}/models/00000000-0000-0000-0000-000000000001/deploy",
+        json={"environment": "production"},
+        headers=token,
     )
-    assert promoted.status_code == 200
-    assert promoted.json()["role"] == "admin"
-    # Roles are read from the database per request, so the existing token gains access at once.
-    assert client.get(f"{API}/auth/users", headers=token).status_code == 200
+    assert deploy.status_code == 404
+    # Admin is still not a user administrator.
+    assert client.get(f"{API}/auth/users", headers=token).status_code == 403
+
+    demoted = client.patch(f"{API}/auth/users/{user_id}", json={"role": "user"}, headers=superadmin)
+    assert demoted.status_code == 200 and demoted.json()["role"] == "user"
+    assert client.post(
+        f"{API}/models/00000000-0000-0000-0000-000000000001/deploy",
+        json={"environment": "production"},
+        headers=token,
+    ).status_code == 403
 
 
-@pytest.mark.parametrize("actor_role", ["viewer", "ml_engineer"])
-def test_non_admins_cannot_promote_anyone_including_themselves(client, admin, actor_role) -> None:
-    actor_id = _register(client, "actor@x.com", headers=admin, role=actor_role).json()["id"]
+@pytest.mark.parametrize("actor_role", ["user", "admin"])
+def test_non_superadmins_cannot_change_any_role_including_their_own(
+    client, superadmin, session_factory, actor_role
+) -> None:
+    actor = insert_account(session_factory, "actor@x.com", actor_role)
     other_id = _register(client, "other@x.com").json()["id"]
-    actor = _bearer(client, "actor@x.com")
-    for target in (actor_id, other_id):
-        response = client.patch(
-            f"{API}/auth/users/{target}", json={"role": "admin"}, headers=actor
-        )
-        assert response.status_code == 403
-    assert _role_of(client, admin, "actor@x.com") == actor_role
-    assert _role_of(client, admin, "other@x.com") == "viewer"
+    token = _bearer(client, "actor@x.com")
+    for target in (str(actor.id), other_id):
+        for role in ("admin", "user", "superadmin"):
+            response = client.patch(f"{API}/auth/users/{target}", json={"role": role}, headers=token)
+            assert response.status_code in (403, 422)
+            assert response.status_code != 200
+        for suffix_call in (client.post, client.delete):
+            assert suffix_call(f"{API}/auth/users/{target}/superadmin", headers=token).status_code == 403
+    assert _role_of(client, superadmin, "actor@x.com") == actor_role
+    assert _role_of(client, superadmin, "other@x.com") == "user"
 
 
-def test_promotion_requires_authentication(client, admin) -> None:
+def test_role_changes_require_authentication(client, superadmin) -> None:
     user_id = _register(client, "anon@x.com").json()["id"]
-    response = client.patch(f"{API}/auth/users/{user_id}", json={"role": "admin"})
-    assert response.status_code == 401
-    assert _role_of(client, admin, "anon@x.com") == "viewer"
+    assert client.patch(f"{API}/auth/users/{user_id}", json={"role": "admin"}).status_code == 401
+    assert client.post(f"{API}/auth/users/{user_id}/superadmin").status_code == 401
+    assert _role_of(client, superadmin, "anon@x.com") == "user"
 
 
-def test_bootstrap_does_not_reopen_while_any_account_exists(client, admin) -> None:
-    """Deactivating the only admin must not let the next registrant become admin."""
-    other_admin = _register(client, "second@x.com", headers=admin, role="admin").json()
-    first = next(
-        u
-        for u in client.get(f"{API}/auth/users", headers=admin).json()["items"]
-        if u["email"] == "root@x.com"
+def test_deactivating_every_privileged_account_never_lets_a_registrant_become_admin(
+    client, superadmin, session_factory
+) -> None:
+    """Registration cannot create admins, whatever state the privileged accounts are in."""
+    second = insert_account(session_factory, "second@x.com", "superadmin")
+    second_token = _bearer(client, "second@x.com")
+    first_id = next(
+        u["id"] for u in client.get(f"{API}/auth/users", headers=superadmin).json()["items"] if u["email"] == "root@x.com"
     )
-    second = _bearer(client, "second@x.com")
-    assert (
-        client.patch(
-            f"{API}/auth/users/{first['id']}", json={"is_active": False}, headers=second
-        ).status_code
-        == 200
-    )
-    client.patch(f"{API}/auth/users/{other_admin['id']}", json={"role": "viewer"}, headers=second)
-    assert _register(client, "late@x.com").json()["role"] == "viewer"
-
-
-def test_logging_in_never_changes_a_role(client, admin) -> None:
-    _register(client, "stay@x.com")
-    for _ in range(2):
-        _bearer(client, "stay@x.com")
-    assert _role_of(client, admin, "stay@x.com") == "viewer"
-    assert _role_of(client, admin, "root@x.com") == "admin"
+    assert client.patch(f"{API}/auth/users/{first_id}", json={"is_active": False}, headers=second_token).status_code == 200
+    # The remaining superadmin cannot be removed either.
+    assert client.patch(f"{API}/auth/users/{second.id}", json={"is_active": False}, headers=second_token).status_code == 403
+    late = _register(client, "late@x.com")
+    assert late.json()["role"] == "user"

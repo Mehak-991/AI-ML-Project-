@@ -1,7 +1,0 @@
-# Secret-scanning rules for CI (see the secret-scan job in .github/workflows/ci.yml).
-# Default rules plus nothing weaker: add an allowlist entry only for a proven test fixture,
-# with the reason, never for a real credential.
-title = "AIProject gitleaks config"
-
-[extend]
-useDefault = true

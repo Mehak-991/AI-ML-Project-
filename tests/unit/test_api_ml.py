@@ -140,7 +140,7 @@ def test_upload_too_large(make_settings, session_factory) -> None:
         email="admin@example.com",
         full_name="Admin",
         hashed_password="mock",
-        role="admin",
+        role="super_admin",
         is_active=True,
     )
     app.dependency_overrides[get_db] = lambda: session_factory()

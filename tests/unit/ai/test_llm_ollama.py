@@ -20,7 +20,6 @@ from app.api.deps import get_chat_service
 from app.core.exceptions import (
     DataValidationError,
     ProviderError,
-    ProviderNotConfiguredError,
     ProviderRequestRejectedError,
     ProviderTimeoutError,
     ProviderUnavailableError,
@@ -310,19 +309,19 @@ def test_close_releases_http_client() -> None:
 # --- settings ------------------------------------------------------------------------------
 
 
-def test_default_provider_is_still_openai(make_settings) -> None:
+def test_ollama_is_the_only_provider(make_settings) -> None:
     settings = make_settings()
-    assert settings.LLM_PROVIDER == "openai"
-    assert settings.active_llm_model == settings.OPENAI_MODEL
+    assert settings.LLM_PROVIDER == "ollama"
+    assert settings.active_llm_model == MODEL
+    with pytest.raises(ValidationError, match="LLM_PROVIDER"):
+        make_settings(LLM_PROVIDER="openai")
+    assert not hasattr(settings, "OPENAI_API_KEY")
 
 
-def test_allowed_models_follow_provider(make_settings) -> None:
-    ollama = make_settings(LLM_PROVIDER="ollama", OLLAMA_ALLOWED_MODELS="qwen2.5:7b, mistral")
+def test_allowed_models_include_default_first(make_settings) -> None:
+    ollama = make_settings(OLLAMA_ALLOWED_MODELS="qwen2.5:7b, mistral, llama3.2:3b")
     assert ollama.active_llm_model == MODEL
     assert ollama.allowed_llm_models == [MODEL, "qwen2.5:7b", "mistral"]
-    openai = make_settings(LLM_PROVIDER="openai", OPENAI_ALLOWED_MODELS="gpt-x")
-    assert openai.allowed_llm_models == ["gpt-5.4-mini", "gpt-x"]
-    assert MODEL not in openai.allowed_llm_models
 
 
 def test_ollama_url_validation(make_settings) -> None:
@@ -359,31 +358,50 @@ def test_container_selects_ollama_without_api_key(make_settings) -> None:
     assert ai.chat_service() is not service  # recreated after shutdown
 
 
-def test_container_openai_without_key_unchanged(make_settings) -> None:
-    ai = AIServices(make_settings(LLM_PROVIDER="openai"))
-    with pytest.raises(ProviderNotConfiguredError) as exc_info:
-        ai.chat_service()
-    assert "OPENAI_API_KEY" in exc_info.value.message
-    assert "LLM_PROVIDER=ollama" in exc_info.value.message
-    status = ai.status()["llm"]
-    assert (status["provider"], status["configured"], status["requires_api_key"]) == (
-        "openai",
-        False,
-        True,
-    )
-    assert ai.token_counter.default_model == "gpt-5.4-mini"
-
-
-def test_container_openai_with_key_unchanged(make_settings) -> None:
-    pytest.importorskip("openai")
-    from app.ai.llm import OpenAIChatService
-
-    ai = AIServices(make_settings(LLM_PROVIDER="openai", OPENAI_API_KEY="sk-test-not-real"))
+def test_cpu_runtime_options_are_sent(make_settings) -> None:
+    recorder = Recorder(lambda r: httpx.Response(200, json=ollama_body()))
+    settings = make_settings(OLLAMA_NUM_CTX=2048, OLLAMA_NUM_THREAD=4, OLLAMA_KEEP_ALIVE="10m")
+    ai = AIServices(settings)
     service = ai.chat_service()
-    assert isinstance(service, OpenAIChatService)
-    assert service.allowed_models == ["gpt-5.4-mini"]
-    assert ai.status()["llm"]["configured"] is True
-    ai.shutdown()
+    service._client = httpx.Client(
+        base_url="http://ollama.test", transport=httpx.MockTransport(recorder)
+    )
+    service._token_counter = TokenCounter(MODEL, loader=lambda m: FakeEncoding())
+    service.complete(USER, max_output_tokens=32)
+    body = recorder.body()
+    assert body["options"] == {"num_predict": 32, "num_ctx": 2048, "num_thread": 4}
+    assert body["keep_alive"] == "10m"
+    assert body["stream"] is False
+
+
+@pytest.mark.parametrize(
+    ("respond", "expected"),
+    [
+        (
+            lambda r: httpx.Response(200, json={"models": [{"name": "llama3.2:3b"}]}),
+            {"reachable": True, "model_available": True},
+        ),
+        (
+            lambda r: httpx.Response(200, json={"models": [{"name": "mistral:latest"}]}),
+            {"reachable": True, "model_available": False},
+        ),
+        (lambda r: httpx.Response(500), {"reachable": False, "model_available": False}),
+        (
+            lambda r: (_ for _ in ()).throw(httpx.ConnectError("refused", request=r)),
+            {"reachable": False, "model_available": False},
+        ),
+    ],
+)
+def test_health_probe_reports_server_and_model(respond, expected) -> None:
+    service = OllamaChatService(
+        base_url="http://ollama.test",
+        default_model=MODEL,
+        allowed_models=[MODEL],
+        limits=ChatLimits(),
+        token_counter=TokenCounter(MODEL, loader=lambda m: FakeEncoding()),
+        client=httpx.Client(base_url="http://ollama.test", transport=httpx.MockTransport(respond)),
+    )
+    assert service.health() == expected
 
 
 def test_ollama_provider_needs_no_openai_package(make_settings, monkeypatch) -> None:
@@ -404,7 +422,7 @@ def ollama_app(make_settings):
 
     app = create_app(make_settings(LLM_PROVIDER="ollama"))
     app.dependency_overrides[get_current_user] = lambda: User(
-        id=uuid.uuid4(), email="ollama@example.com", role="admin", is_active=True
+        id=uuid.uuid4(), email="ollama@example.com", role="super_admin", is_active=True
     )
     app.state.ai.token_counter = TokenCounter(
         MODEL, loader=lambda m: EstimatedEncoding(FakeEncoding())
@@ -470,7 +488,7 @@ def test_real_container_wiring_hits_configured_ollama_url(make_settings) -> None
 
     app = create_app(make_settings(LLM_PROVIDER="ollama", OLLAMA_BASE_URL="http://127.0.0.1:9"))
     app.dependency_overrides[get_current_user] = lambda: User(
-        id=uuid.uuid4(), email="ollama@example.com", role="admin", is_active=True
+        id=uuid.uuid4(), email="ollama@example.com", role="super_admin", is_active=True
     )
     with TestClient(app) as client:
         status = client.get("/api/v1/ai/status").json()["llm"]

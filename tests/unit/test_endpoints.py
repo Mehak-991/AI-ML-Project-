@@ -42,7 +42,8 @@ def test_readiness_without_database(client: TestClient) -> None:
     assert response.status_code == 200
     body = ReadinessResponse.model_validate(response.json())
     assert body.status == "ok"
-    assert body.components == {"database": "not_configured"}
+    assert body.components == {"database": "not_configured", "llm": "disabled"}
+    assert body.optional_components == ["llm"]
 
 
 @pytest.mark.parametrize(
@@ -111,7 +112,10 @@ def test_openapi_error_schemas_match_real_envelope(client: TestClient) -> None:
         for method, operation in item.items():
             for status, response in operation["responses"].items():
                 # Readiness intentionally returns its health body (not an error) with 503.
-                if (path, status) == ("/api/v1/health", "503"):
+                if (path, status) in {
+                    ("/api/v1/health", "503"),
+                    ("/api/v1/health/database", "503"),
+                }:
                     continue
                 if status.startswith(("4", "5")):
                     ref = response["content"]["application/json"]["schema"]["$ref"]

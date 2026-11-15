@@ -1,4 +1,4 @@
-"""The core API must start and serve without any optional AI package or API key.
+"""The core API must start and serve without any optional AI package, API key or LLM server.
 
 Runs a fresh interpreter in which every optional AI package is made
 unimportable (even if installed in this venv), then exercises the app.
@@ -35,7 +35,7 @@ import uuid
 
 app = create_app()
 app.dependency_overrides[get_current_user] = lambda: User(
-    id=uuid.uuid4(), email="opt@example.com", role="admin", is_active=True
+    id=uuid.uuid4(), email="opt@example.com", role="super_admin", is_active=True
 )
 
 out = {}
@@ -59,9 +59,14 @@ def test_core_api_runs_without_optional_ai_packages(tmp_path) -> None:
     env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith(("OPENAI_", "DATABASE_", "AI_", "EMBEDDING_", "CLASSIFIER_"))
+        if not k.startswith(
+            ("OPENAI_", "OLLAMA_", "LLM_", "DATABASE_", "AI_", "EMBEDDING_", "CLASSIFIER_")
+        )
     }
     env["PYTHONPATH"] = str(ROOT)
+    # Nothing listens on the discard port: the chat call must fail cleanly, not hang.
+    env["OLLAMA_BASE_URL"] = "http://127.0.0.1:9"
+    env["OLLAMA_TIMEOUT_SECONDS"] = "5"
     result = subprocess.run(
         [sys.executable, "-c", SCRIPT],
         cwd=tmp_path,  # no .env here
@@ -77,17 +82,18 @@ def test_core_api_runs_without_optional_ai_packages(tmp_path) -> None:
     assert out["health"]["status"] == 200
     assert out["status"]["status"] == 200
     assert not any(out["status"]["body"]["packages"].values())
-    assert out["status"]["body"]["llm"]["configured"] is False
+    assert out["status"]["body"]["llm"]["provider"] == "ollama"
+    assert out["status"]["body"]["llm"]["requires_api_key"] is False
 
     for name in ("embeddings", "classify"):
         assert out[name]["status"] == 503
         assert out[name]["body"]["error"]["code"] == "optional_dependency_missing"
     assert out["chat"]["status"] == 503
-    assert out["chat"]["body"]["error"]["code"] == "provider_not_configured"
+    assert out["chat"]["body"]["error"]["code"] == "provider_unavailable"
 
     assert out["tokens"]["status"] == 200
     assert out["tokens"]["body"] == {
-        "model": "gpt-5.4-mini",
+        "model": "llama3.2:3b",
         "encoding": "approximate",
         "tokens": 2,
         "approximate": True,

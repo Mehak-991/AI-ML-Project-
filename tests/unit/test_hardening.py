@@ -181,7 +181,7 @@ def test_rate_limit_returns_429_with_retry_after(make_settings) -> None:
     from app.api.deps import get_current_user
     from app.database.models.user import User
     app.dependency_overrides[get_current_user] = lambda: User(
-        id=uuid.uuid4(), email="rate@example.com", role="admin", is_active=True
+        id=uuid.uuid4(), email="rate@example.com", role="super_admin", is_active=True
     )
     body = {"messages": [{"role": "user", "content": "hi"}]}
     with TestClient(app) as client:
@@ -220,7 +220,7 @@ def test_rate_limiting_can_be_disabled(make_settings) -> None:
     from app.api.deps import get_current_user
     from app.database.models.user import User
     app.dependency_overrides[get_current_user] = lambda: User(
-        id=uuid.uuid4(), email="rate@example.com", role="admin", is_active=True
+        id=uuid.uuid4(), email="rate@example.com", role="super_admin", is_active=True
     )
     with TestClient(app) as client:
         body = {"messages": [{"role": "user", "content": "x"}]}
@@ -257,7 +257,7 @@ def test_database_errors_are_mapped_without_leaking(app, exc, status, error_code
     from app.database.models.user import User
 
     app.dependency_overrides[get_current_user] = lambda: User(
-        id=uuid.uuid4(), email="db_test@example.com", role="admin", is_active=True
+        id=uuid.uuid4(), email="db_test@example.com", role="super_admin", is_active=True
     )
     app.dependency_overrides[get_db] = lambda: _failing_session(exc)
     with TestClient(app, raise_server_exceptions=False) as client:

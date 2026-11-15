@@ -45,7 +45,7 @@ def ai_client(app, chat):
         email="ai_admin@example.com",
         full_name="AI Admin",
         hashed_password="mock",
-        role="admin",
+        role="super_admin",
         is_active=True,
     )
     executor = InferenceExecutor(max_workers=1, timeout_seconds=5)
@@ -176,28 +176,45 @@ def test_chat_provider_errors(ai_client, chat, error, status, code) -> None:
         assert response.headers["retry-after"] == "7"
 
 
-def test_chat_without_api_key_is_actionable(app) -> None:
+def _unreachable_ollama(app) -> None:
+    """Point the real container at an Ollama 'server' that refuses connections."""
+    import httpx
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    service = app.state.ai.chat_service()
+    service._client = httpx.Client(
+        base_url="http://ollama.test", transport=httpx.MockTransport(refuse)
+    )
+    service._token_counter = TokenCounter("llama3.2:3b", loader=lambda m: FakeEncoding())
+
+
+def test_chat_with_ollama_down_is_actionable(app) -> None:
     import uuid
     from app.api.deps import get_current_user
     from app.database.models.user import User
 
     app.dependency_overrides[get_current_user] = lambda: User(
-        id=uuid.uuid4(), email="u@example.com", role="admin", is_active=True
+        id=uuid.uuid4(), email="u@example.com", role="super_admin", is_active=True
     )
+    _unreachable_ollama(app)
     with TestClient(app) as client:
         response = client.post(
             f"{API}/llm/chat", json={"messages": [{"role": "user", "content": "x"}]}
         )
     assert response.status_code == 503
     error = ErrorResponse.model_validate(response.json()).error
-    assert error.code == "provider_not_configured"
-    assert "OPENAI_API_KEY" in error.message
+    assert error.code == "provider_unavailable"
+    assert "OLLAMA_BASE_URL" in error.message
 
 
-def test_analyze_without_api_key(ai_client: TestClient) -> None:
+def test_analyze_with_ollama_down(ai_client: TestClient, app) -> None:
+    _unreachable_ollama(app)
     response = ai_client.post(f"{API}/nlp/analyze", json={"text": "hello"})
     assert response.status_code == 503
-    assert error_code(response) == "provider_not_configured"
+    # Without the optional workflow packages the dependency error comes first.
+    assert error_code(response) in {"provider_unavailable", "optional_dependency_missing"}
 
 
 # --- tokens --------------------------------------------------------------------------
@@ -239,19 +256,24 @@ def test_status_reports_configuration_without_secrets(make_settings) -> None:
     from app.api.deps import get_current_user
     from app.database.models.user import User
 
-    app = create_app(make_settings(OPENAI_API_KEY="sk-must-not-leak", OPENAI_ALLOWED_MODELS="a,b"))
+    app = create_app(
+        make_settings(OLLAMA_ALLOWED_MODELS="a,b", METRICS_AUTH_TOKEN="must-not-leak")
+    )
     app.dependency_overrides[get_current_user] = lambda: User(
-        id=uuid.uuid4(), email="u@example.com", role="admin", is_active=True
+        id=uuid.uuid4(), email="u@example.com", role="super_admin", is_active=True
     )
     with TestClient(app) as client:
         response = client.get(f"{API}/ai/status")
     assert response.status_code == 200
     body = AIStatusResponse.model_validate(response.json())
     assert body.llm["configured"] is True
-    assert body.llm["allowed_models"] == ["gpt-5.4-mini", "a", "b"]
+    assert body.llm["provider"] == "ollama"
+    assert body.llm["requires_api_key"] is False
+    assert body.llm["allowed_models"] == ["llama3.2:3b", "a", "b"]
     assert body.loaded_models == []
-    assert "sk-must-not-leak" not in response.text
-    assert set(body.packages) >= {"torch", "transformers", "sentence_transformers", "openai"}
+    assert "must-not-leak" not in response.text
+    assert set(body.packages) >= {"torch", "transformers", "sentence_transformers", "tiktoken"}
+    assert "openai" not in body.packages
 
 
 def test_embeddings_without_sentence_transformers(monkeypatch, make_settings) -> None:
@@ -262,7 +284,7 @@ def test_embeddings_without_sentence_transformers(monkeypatch, make_settings) ->
     monkeypatch.setitem(sys.modules, "sentence_transformers", None)
     app = create_app(make_settings(AI_DEVICE="cpu"))
     app.dependency_overrides[get_current_user] = lambda: User(
-        id=uuid.uuid4(), email="u@example.com", role="admin", is_active=True
+        id=uuid.uuid4(), email="u@example.com", role="super_admin", is_active=True
     )
     with TestClient(app) as client:
         response = client.post(f"{API}/embeddings", json={"texts": ["hello"]})
@@ -280,7 +302,7 @@ def test_classify_without_torch(monkeypatch, make_settings) -> None:
     monkeypatch.setitem(sys.modules, "torch", None)
     app = create_app(make_settings())
     app.dependency_overrides[get_current_user] = lambda: User(
-        id=uuid.uuid4(), email="u@example.com", role="admin", is_active=True
+        id=uuid.uuid4(), email="u@example.com", role="super_admin", is_active=True
     )
     with TestClient(app) as client:
         response = client.post(f"{API}/nlp/classify", json={"texts": ["hello"]})
@@ -302,7 +324,7 @@ def test_token_count_respects_configured_char_limit(make_settings) -> None:
 
     app = create_app(make_settings(TOKENIZER_MAX_TEXT_CHARS=10))
     app.dependency_overrides[get_current_user] = lambda: User(
-        id=uuid.uuid4(), email="u@example.com", role="admin", is_active=True
+        id=uuid.uuid4(), email="u@example.com", role="super_admin", is_active=True
     )
     app.state.ai.token_counter = TokenCounter("m", loader=lambda m: None)
     with TestClient(app) as client:
@@ -339,7 +361,7 @@ def test_ai_role_enforcement_for_chat_and_analyze(app) -> None:
         email="viewer@example.com",
         full_name="Viewer User",
         hashed_password="mock",
-        role="viewer",
+        role="user",
         is_active=True,
     )
     app.dependency_overrides[get_current_user] = lambda: viewer_user

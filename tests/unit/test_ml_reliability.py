@@ -85,7 +85,7 @@ def test_atomic_job_claiming_single_claim(db_session: Session) -> None:
         email=f"worker_test_{uuid.uuid4().hex[:8]}@example.com",
         hashed_password="hash",
         full_name="Worker Tester",
-        role="admin",
+        role="super_admin",
         is_active=True,
     )
     db_session.add(user)
@@ -118,7 +118,7 @@ def test_concurrent_job_claiming_no_duplicates(db_session: Session) -> None:
         email=f"concurrent_test_{uuid.uuid4().hex[:8]}@example.com",
         hashed_password="hash",
         full_name="Concurrent Tester",
-        role="admin",
+        role="super_admin",
         is_active=True,
     )
     db_session.add(user)

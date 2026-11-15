@@ -42,14 +42,17 @@ SETTINGS_ENV_VARS = [
     "MAX_DATASET_ROWS",
     "MAX_DATASET_COLUMNS",
     "MAX_PREDICTION_RECORDS",
-    "OPENAI_API_KEY",
-    "OPENAI_MODEL",
-    "OPENAI_ALLOWED_MODELS",
     "LLM_PROVIDER",
     "OLLAMA_BASE_URL",
     "OLLAMA_MODEL",
     "OLLAMA_ALLOWED_MODELS",
     "OLLAMA_TIMEOUT_SECONDS",
+    "OLLAMA_NUM_CTX",
+    "OLLAMA_NUM_THREAD",
+    "OLLAMA_KEEP_ALIVE",
+    "OLLAMA_HEALTHCHECK_ENABLED",
+    "AUTH_BOOTSTRAP_VIA_REGISTRATION",
+    "METRICS_AUTH_TOKEN",
     "JWT_SECRET_KEY",
     "JWT_ALGORITHM",
     "JWT_ACCESS_TOKEN_EXPIRE_MINUTES",
@@ -80,6 +83,11 @@ def make_settings(tmp_path: Path) -> Callable[..., Settings]:
     def _make(**overrides: object) -> Settings:
         overrides.setdefault("UPLOAD_DIR", tmp_path / "uploads")
         overrides.setdefault("MODEL_DIR", tmp_path / "models")
+        # Unit tests never probe a real Ollama server from the readiness endpoint.
+        overrides.setdefault("OLLAMA_HEALTHCHECK_ENABLED", False)
+        # A strong per-test secret so production-mode settings validate; tests about weak
+        # secrets pass JWT_SECRET_KEY explicitly.
+        overrides.setdefault("JWT_SECRET_KEY", "test-only-secret-" + "x" * 40)
         return Settings(_env_file=None, **overrides)
 
     return _make
@@ -141,7 +149,7 @@ def api_client(app: FastAPI, session_factory: sessionmaker[Session]) -> Iterator
         email="test_admin@example.com",
         full_name="Test Admin",
         hashed_password="mock",
-        role="admin",
+        role="super_admin",
         is_active=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),

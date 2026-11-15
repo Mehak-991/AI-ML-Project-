@@ -15,7 +15,9 @@ def test_defaults_are_safe(make_settings: SettingsFactory) -> None:
     assert settings.DEBUG is False
     assert settings.API_V1_PREFIX == "/api/v1"
     assert settings.DATABASE_URL is None
-    assert settings.OPENAI_API_KEY is None
+    assert settings.METRICS_AUTH_TOKEN is None
+    assert settings.LLM_PROVIDER == "ollama"
+    assert settings.OLLAMA_MODEL == "llama3.2:3b"
 
 
 def test_reads_environment_variables(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -38,11 +40,11 @@ def test_reads_dotenv_file(tmp_path, make_settings: SettingsFactory) -> None:
 
 def test_secrets_are_masked(make_settings: SettingsFactory) -> None:
     settings = make_settings(
-        OPENAI_API_KEY="sk-test-not-real",
+        METRICS_AUTH_TOKEN="metrics-secret-not-real",
         DATABASE_URL="postgresql://user:hunter2@localhost/db",
     )
     dumped = repr(settings) + str(settings.model_dump())
-    assert "sk-test-not-real" not in dumped
+    assert "metrics-secret-not-real" not in dumped
     assert "hunter2" not in dumped
 
 
@@ -52,9 +54,9 @@ def test_postgres_url_is_normalized_to_psycopg(make_settings: SettingsFactory) -
 
 
 def test_blank_secret_values_become_none(make_settings: SettingsFactory) -> None:
-    settings = make_settings(DATABASE_URL="  ", OPENAI_API_KEY="")
+    settings = make_settings(DATABASE_URL="  ", METRICS_AUTH_TOKEN="")
     assert settings.DATABASE_URL is None
-    assert settings.OPENAI_API_KEY is None
+    assert settings.METRICS_AUTH_TOKEN is None
 
 
 def test_cors_defaults_per_environment(make_settings: SettingsFactory) -> None:
@@ -84,6 +86,19 @@ def test_valid_production_settings(make_settings: SettingsFactory) -> None:
             {"APP_ENV": "production", "DATABASE_URL": "postgresql://u:p@h/db", "CORS_ORIGINS": "*"},
             "must not contain '*'",
         ),
+        (
+            {
+                "APP_ENV": "production",
+                "DATABASE_URL": "postgresql://u:p@h/db",
+                "JWT_SECRET_KEY": "insecure-dev-secret-key-change-in-production-min-32-bytes",
+            },
+            "JWT_SECRET_KEY must be set",
+        ),
+        (
+            {"APP_ENV": "production", "DATABASE_URL": "postgresql://u:p@h/db", "JWT_SECRET_KEY": "short"},
+            "JWT_SECRET_KEY must be set",
+        ),
+        ({"LLM_PROVIDER": "openai"}, "LLM_PROVIDER"),
         ({"APP_ENV": "staging"}, "APP_ENV"),
         ({"API_V1_PREFIX": "api"}, "API_V1_PREFIX must start with '/'"),
         ({"DEBUG": "not-a-bool"}, "DEBUG"),
@@ -100,10 +115,24 @@ def test_load_settings_raises_clear_configuration_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-should-not-leak")
+    monkeypatch.setenv("METRICS_AUTH_TOKEN", "metrics-should-not-leak")
     with pytest.raises(ConfigurationError) as exc_info:
         load_settings(_env_file=None)
     message = str(exc_info.value)
     assert "Invalid configuration" in message
     assert "DATABASE_URL is required when APP_ENV=production" in message
-    assert "sk-should-not-leak" not in message
+    assert "metrics-should-not-leak" not in message
+
+
+def test_registration_bootstrap_is_off_in_production_by_default(
+    make_settings: SettingsFactory,
+) -> None:
+    assert make_settings().bootstrap_via_registration is True
+    prod = make_settings(APP_ENV="production", DATABASE_URL="postgresql://u:p@h/db")
+    assert prod.bootstrap_via_registration is False
+    explicit = make_settings(
+        APP_ENV="production",
+        DATABASE_URL="postgresql://u:p@h/db",
+        AUTH_BOOTSTRAP_VIA_REGISTRATION=True,
+    )
+    assert explicit.bootstrap_via_registration is True

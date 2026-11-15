@@ -14,7 +14,14 @@ from app.core.config import Settings
 from app.core.exceptions import DataValidationError
 
 # New hashes: Argon2id (RFC 9106 low-memory profile: t=3, m=64 MiB, p=4).
-_argon2 = PasswordHasher(time_cost=3, memory_cost=64 * 1024, parallelism=4)
+ARGON2_TIME_COST = 3
+ARGON2_MEMORY_COST_KIB = 64 * 1024
+ARGON2_PARALLELISM = 4
+_argon2 = PasswordHasher(
+    time_cost=ARGON2_TIME_COST,
+    memory_cost=ARGON2_MEMORY_COST_KIB,
+    parallelism=ARGON2_PARALLELISM,
+)
 # Legacy hashes created before the Argon2id migration. Verified only, never produced;
 # a successful login re-hashes them with Argon2id (see needs_rehash).
 _legacy_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")

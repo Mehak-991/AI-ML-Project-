@@ -1,7 +1,7 @@
 """employees, audit_logs and system_settings tables
 
-Revision ID: 0013
-Revises: 0012
+Revision ID: 0013_employees_audit
+Revises: 0012_rbac_roles
 Create Date: 2026-11-15
 
 Purely additive: three new tables, no existing data is touched.
@@ -13,11 +13,12 @@ Purely additive: three new tables, no existing data is touched.
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0013"
-down_revision: str | Sequence[str] | None = "0012"
+from alembic import op
+
+revision: str = "0013_employees_audit"
+down_revision: str | Sequence[str] | None = "0012_rbac_roles"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

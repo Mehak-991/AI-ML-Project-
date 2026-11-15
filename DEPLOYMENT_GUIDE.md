@@ -61,7 +61,7 @@ The platform uses a modular container architecture orchestrated via Docker Compo
    POSTGRES_PASSWORD=<strong_random_database_password>
    POSTGRES_DB=aiproject
 
-   # JWT Auth (Phase 10)
+   # JWT Auth. Production refuses to start with the default or a < 32-byte secret.
    JWT_SECRET_KEY=<generate_with_openssl_rand_-hex_32>
    JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
    JWT_REFRESH_TOKEN_EXPIRE_DAYS=7
@@ -71,7 +71,19 @@ The platform uses a modular container architecture orchestrated via Docker Compo
    DEBUG=false
    LOG_FORMAT=json
    FRONTEND_PORT=80
+   CORS_ORIGINS=https://your-domain.example
+
+   # Optional hardening
+   METRICS_AUTH_TOKEN=<random_token_for_prometheus>
+   DOCS_ENABLED=false
+
+   # Local LLM (only with `--profile llm`); no API keys are used anywhere
+   OLLAMA_MODEL=llama3.2:3b
+   OLLAMA_NUM_CTX=4096
    ```
+
+3. Validate before starting: `python scripts/check_config.py --db` (or inside the container:
+   `docker compose run --rm app python scripts/check_config.py --db`).
 
 ---
 
@@ -218,4 +230,128 @@ If an execution host crashes, reboots, or receives an ungraceful termination sig
 - **Composite Index**: `ix_prediction_logs_model_id_created_at` on `prediction_logs(model_id, created_at)` eliminates in-memory sorting on paginated audit logs.
 - **Connection Pool Capacity**: Default `pool_size=5`, `max_overflow=10` per worker process. Accommodates up to 100 concurrent web requests across 2 ASGI workers. Introduce PgBouncer when scaling beyond 5 worker nodes.
 
+---
 
+## 11. First Super Admin (bootstrap)
+
+In production, public registration **never** grants privileges
+(`AUTH_BOOTSTRAP_VIA_REGISTRATION` defaults to off when `APP_ENV=production`). Create the first
+Super Admin from the server, after migrations:
+
+```bash
+# Prompts for the password twice; for automation set SUPER_ADMIN_PASSWORD instead.
+docker compose run --rm app python scripts/create_super_admin.py --email ops@your-domain.example --full-name "Ops"
+# Or promote an existing account (ends its sessions):
+docker compose run --rm app python scripts/create_super_admin.py --email someone@your-domain.example --promote
+```
+
+The Super Admin can then create Admin/User accounts in **User Administration**, and switch off
+self-registration in **System Settings** if accounts should only be provisioned by administrators.
+
+| Role | Purpose |
+|---|---|
+| **User** | Strictly read-only: employees (no salary/phone), dashboards, models, reports |
+| **Admin** | Employee create/update, full ML lifecycle except deployment, manages *User* accounts, employee/ML audit log |
+| **Super Admin** | Everything: roles, account deletion, employee deletion, deployments, global settings, full audit log |
+
+---
+
+## 12. Database migration procedure
+
+Migrations are applied by the one-shot `migration` service (`alembic upgrade head`) before the
+app starts. **Do not run production migrations without a verified backup and an approved change
+window.**
+
+1. **Back up** (Section 7) and verify the checksum.
+2. **Check the current revision:** `docker compose run --rm migration alembic current`.
+3. **Preview the SQL** (optional): `docker compose run --rm migration alembic upgrade head --sql`.
+4. **Upgrade:** `docker compose up migration` (or `alembic upgrade head`).
+5. **Verify:** `alembic current` shows `0014_drift_results_jsonb (head)`; `/api/v1/health` is `ok`;
+   sign in with an existing account.
+
+What `0012_rbac_roles` changes in existing data (reversible with `alembic downgrade 0011`):
+
+| Old role | New role |
+|---|---|
+| `admin` | `super_admin` |
+| `ml_engineer` | `admin` |
+| `viewer` | `user` |
+| anything else | `user` (fail closed) |
+
+Existing access tokens keep working until they expire (they carry no `ver` claim, which equals
+`token_version = 0`); clients see the new role on their next request because the server always
+reads the role from the database.
+
+**Databases created by the old migration lineage.** An earlier, since-deleted set of migrations
+also used the IDs `0012` (`datasets.owner_id`) and `0013` (`drift_reports.results` → JSONB). A
+database stamped by that lineage now fails loudly with `Can't locate revision '0013'` instead of
+silently skipping the RBAC migration. Its schema equals `0011` plus those two harmless changes,
+so re-stamp and upgrade:
+
+```bash
+alembic stamp --purge 0011
+alembic upgrade head
+```
+
+This procedure was verified on a copy of such a database: all rows were preserved and the roles
+were remapped. The leftover nullable `datasets.owner_id` column is ignored by the application.
+
+`0014_drift_results_jsonb` fixes a pre-existing drift: fresh PostgreSQL databases had
+`drift_reports.results` as `JSON` while the ORM declares `JSONB`. It converts the column only if
+it is still `JSON` (a no-op otherwise) and is reversible.
+
+---
+
+## 13. Local LLM (Ollama) deployment
+
+```bash
+docker compose --profile llm up -d ollama
+docker compose exec ollama ollama pull llama3.2:3b   # ~2 GB, once; stored in the ollama_models volume
+docker compose up -d app worker                       # OLLAMA_BASE_URL defaults to http://ollama:11434
+curl -s http://127.0.0.1/api/v1/health                # components.llm should be "ok"
+```
+
+- CPU only; no GPU is assumed. `llama3.2:3b` (Q4) needs about 3 GB RAM
+  (`OLLAMA_MEM_LIMIT`, default 4g). A short answer takes seconds to tens of seconds on CPU.
+- The service keeps one model loaded and handles one request at a time
+  (`OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_QUEUE=16`); the API also bounds input/output tokens
+  and rate-limits AI endpoints per client.
+- Without Ollama the API still serves everything else; LLM endpoints return
+  502 `provider_unavailable` and readiness reports `llm=unavailable` without failing.
+- Ollama is on the internal `backend` network plus an `egress` network used only for pulling
+  models. To run fully offline, pull the model once and remove the `egress` network.
+
+---
+
+## 14. HTTPS / TLS
+
+The `frontend` (nginx) container listens on plain HTTP and is meant to sit behind a TLS
+terminator (cloud load balancer, Caddy, Traefik, or an nginx with certificates):
+
+1. Terminate TLS in front of `frontend` and forward to it on the private network.
+2. Set `FRONTEND_PORT` to an internal port, `CORS_ORIGINS=https://your-domain`, and keep
+   `FORWARDED_ALLOW_IPS` restricted to the bundled proxy (default) so rate limits see real
+   client IPs.
+3. Once the site is HTTPS-only, uncomment the `Strict-Transport-Security` header in
+   `frontend/nginx.conf`.
+4. The nginx config already sends `Content-Security-Policy`, `X-Frame-Options: DENY`,
+   `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy`. The API adds its own
+   security headers and `Cache-Control: no-store`.
+
+Tokens are stored in `sessionStorage` (cleared when the tab closes) and sent as Bearer headers;
+no cookies are used, so CSRF does not apply. Access tokens live 30 minutes; refresh tokens are
+single-use and rotate.
+
+---
+
+## 15. Go-live checklist
+
+- [ ] `JWT_SECRET_KEY` ≥ 32 random bytes, `POSTGRES_PASSWORD` strong, `.env` is `chmod 600`
+- [ ] `APP_ENV=production`, `DEBUG=false`, `LOG_FORMAT=json`, explicit `CORS_ORIGINS`
+- [ ] `python scripts/check_config.py --db` shows no errors
+- [ ] Backup taken and restore drill done (Section 7)
+- [ ] Migrations applied (Section 12); first Super Admin created (Section 11)
+- [ ] TLS in front, HSTS enabled (Section 14); `DOCS_ENABLED=false` if the API is public
+- [ ] `METRICS_AUTH_TOKEN` set if `/metrics` is reachable
+- [ ] Optional: Ollama running and `components.llm` = `ok` (Section 13)
+- [ ] Smoke test: `SMOKE_EMAIL=... SMOKE_PASSWORD=... python scripts/smoke_test.py https://your-domain --cleanup`

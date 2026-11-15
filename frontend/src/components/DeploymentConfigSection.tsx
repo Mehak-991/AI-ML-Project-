@@ -17,6 +17,8 @@ interface DeploymentConfigSectionProps {
   onDeploy: (modelId: string, env: string) => Promise<void>;
   onUndeploy: (modelId: string) => Promise<void>;
   isActionLoading: boolean;
+  // Deploy/undeploy is reserved to Super Admins (enforced by the API).
+  canDeploy?: boolean;
 }
 
 export const DeploymentConfigSection: React.FC<DeploymentConfigSectionProps> = ({
@@ -27,6 +29,7 @@ export const DeploymentConfigSection: React.FC<DeploymentConfigSectionProps> = (
   onDeploy,
   onUndeploy,
   isActionLoading,
+  canDeploy = true,
 }) => {
   const [targetEnv, setTargetEnv] = useState<string>('production');
   const [confirmDialog, setConfirmDialog] = useState<'deploy' | 'undeploy' | null>(null);
@@ -67,7 +70,11 @@ export const DeploymentConfigSection: React.FC<DeploymentConfigSectionProps> = (
         </div>
 
         <div className="flex items-center gap-3">
-          {isDeployed ? (
+          {!canDeploy ? (
+            <span className="text-[11px] text-slate-500 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200">
+              Only Super Admins can deploy or undeploy models.
+            </span>
+          ) : isDeployed ? (
             <button
               type="button"
               onClick={() => setConfirmDialog('undeploy')}

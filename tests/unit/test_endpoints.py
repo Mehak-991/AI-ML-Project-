@@ -123,3 +123,41 @@ def test_openapi_error_schemas_match_real_envelope(client: TestClient) -> None:
                         f"{method.upper()} {path} {status}: {ref}"
                     )
     assert "HTTPValidationError" not in spec["components"]["schemas"]
+
+
+@pytest.mark.parametrize(
+    ("health", "state"),
+    [
+        ({"reachable": True, "model_available": True}, "ok"),
+        ({"reachable": True, "model_available": False}, "model_missing"),
+        ({"reachable": False, "model_available": False}, "unavailable"),
+    ],
+)
+def test_readiness_reports_ollama_without_failing(make_settings, health, state) -> None:
+    app = create_app(make_settings(OLLAMA_HEALTHCHECK_ENABLED=True))
+    app.state.ai.llm_health = lambda: health
+    with TestClient(app) as client:
+        response = client.get("/api/v1/health")
+    # The LLM is optional: an unreachable Ollama never makes the API "not ready".
+    assert response.status_code == 200
+    assert response.json()["components"]["llm"] == state
+
+
+def test_database_health_endpoint(client: TestClient, monkeypatch, make_settings) -> None:
+    response = client.get("/api/v1/health/database")
+    assert response.status_code == 503
+    assert response.json()["status"] == "not_configured"
+
+    from app.database.session import DatabaseDiagnostics
+
+    monkeypatch.setattr(
+        db_session,
+        "diagnose_database",
+        lambda: DatabaseDiagnostics(True, "ok", "Connected.", "postgresql://***", "18.0", 1.5),
+    )
+    settings = make_settings(DATABASE_URL="postgresql://u:secret@db.invalid/x")
+    with TestClient(create_app(settings)) as c:
+        ok = c.get("/api/v1/health/database")
+    assert ok.status_code == 200
+    assert ok.json() == {"status": "ok", "category": None, "latency_ms": 1.5}
+    assert "secret" not in ok.text and "18.0" not in ok.text

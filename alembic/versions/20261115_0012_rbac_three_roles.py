@@ -1,6 +1,6 @@
 """three-role RBAC: user / admin / super_admin, plus access-token versioning
 
-Revision ID: 0012
+Revision ID: 0012_rbac_roles
 Revises: 0011
 Create Date: 2026-11-15
 
@@ -15,6 +15,11 @@ Schema:
 - CHECK constraint ck_users_role_valid so the database rejects unknown roles
 - users.token_version (int, default 0): embedded in access tokens; bumping it revokes them
 
+Revision IDs are deliberately not plain "0012"/"0013": an older, deleted migration
+lineage used those IDs (dataset owner, drift JSONB). A database stamped by that lineage
+now fails loudly ("Can't locate revision") instead of silently skipping this migration.
+Fix such a database with `alembic stamp 0011 && alembic upgrade head` (see DEPLOYMENT_GUIDE).
+
 Downgrade reverses the mapping exactly (user -> viewer, admin -> ml_engineer,
 super_admin -> admin).
 """
@@ -22,9 +27,10 @@ super_admin -> admin).
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
-revision: str = "0012"
+revision: str = "0012_rbac_roles"
 down_revision: str | Sequence[str] | None = "0011"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

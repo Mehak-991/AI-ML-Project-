@@ -1,47 +1,81 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import type { User, LoginCredentials, RegisterCredentials } from '../types/auth';
-import { authApi, tokenStorage, parseApiError } from '../services/api';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import type { LoginCredentials, Permission, RegisterCredentials, User } from '../types/auth';
+import { SESSION_EXPIRED_EVENT, authApi, parseApiError, tokenStorage } from '../services/api';
 
+/**
+ * Authentication state for the UI.
+ *
+ * `can()` only decides what to *show*. Every endpoint enforces permissions on the server
+ * from the role stored in the database, so hiding a button is a convenience, never the
+ * security boundary.
+ */
 interface AuthContextType {
   user: User | null;
+  permissions: ReadonlySet<Permission>;
   loading: boolean;
   error: string | null;
+  sessionNotice: string | null;
+  can: (permission: Permission) => boolean;
   login: (creds: LoginCredentials) => Promise<void>;
   register: (creds: RegisterCredentials) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
+  clearSessionNotice: () => void;
   refreshUser: () => Promise<void>;
 }
+
+const EMPTY: ReadonlySet<Permission> = new Set();
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [permissions, setPermissions] = useState<ReadonlySet<Permission>>(EMPTY);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+
+  const resetSession = useCallback(() => {
+    tokenStorage.clear();
+    setUser(null);
+    setPermissions(EMPTY);
+  }, []);
+
+  const loadProfile = useCallback(async () => {
+    const [profile, perms] = await Promise.all([authApi.getMe(), authApi.getMyPermissions()]);
+    setUser(profile);
+    setPermissions(new Set(perms.permissions));
+  }, []);
 
   const fetchCurrentUser = useCallback(async () => {
-    const token = tokenStorage.getAccessToken();
-    if (!token) {
-      setUser(null);
+    if (!tokenStorage.getAccessToken()) {
+      resetSession();
       setLoading(false);
       return;
     }
-
     try {
-      const profile = await authApi.getMe();
-      setUser(profile);
+      await loadProfile();
     } catch {
-      tokenStorage.clear();
-      setUser(null);
+      resetSession();
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadProfile, resetSession]);
 
   useEffect(() => {
     fetchCurrentUser();
   }, [fetchCurrentUser]);
+
+  // The API client fires this when a token can no longer be refreshed (expired session,
+  // password/role change, deactivation). Drop all client-side state immediately.
+  useEffect(() => {
+    const onExpired = () => {
+      resetSession();
+      setSessionNotice('Your session has ended. Please sign in again.');
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, [resetSession]);
 
   const login = async (creds: LoginCredentials) => {
     setError(null);
@@ -49,10 +83,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const data = await authApi.login(creds);
       tokenStorage.setAccessToken(data.access_token);
       tokenStorage.setRefreshToken(data.refresh_token);
-      setUser(data.user);
+      await loadProfile();
+      setSessionNotice(null);
     } catch (err) {
-      const parsed = parseApiError(err);
-      setError(parsed.message);
+      resetSession();
+      setError(parseApiError(err).message);
       throw err;
     }
   };
@@ -60,12 +95,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (creds: RegisterCredentials) => {
     setError(null);
     try {
-      await authApi.register(creds);
-      // Auto-login after registration
+      // Public sign-up never sends a role: the server always creates a 'user' account.
+      await authApi.register({ email: creds.email, password: creds.password, full_name: creds.full_name });
       await login({ email: creds.email, password: creds.password });
     } catch (err) {
-      const parsed = parseApiError(err);
-      setError(parsed.message);
+      setError(parseApiError(err).message);
       throw err;
     }
   };
@@ -76,25 +110,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         await authApi.logout(refresh);
       } catch {
-        // Ignore logout errors
+        // The local session is cleared regardless.
       }
     }
-    tokenStorage.clear();
-    setUser(null);
+    resetSession();
   };
 
-  const clearError = () => setError(null);
+  const can = useCallback((permission: Permission) => permissions.has(permission), [permissions]);
 
   return (
     <AuthContext.Provider
       value={{
         user,
+        permissions,
         loading,
         error,
+        sessionNotice,
+        can,
         login,
         register,
         logout,
-        clearError,
+        clearError: () => setError(null),
+        clearSessionNotice: () => setSessionNotice(null),
         refreshUser: fetchCurrentUser,
       }}
     >

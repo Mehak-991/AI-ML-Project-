@@ -56,7 +56,9 @@ class _EmployeeFieldChecks(BaseModel):
 class EmployeeCreate(_EmployeeFieldChecks):
     model_config = ConfigDict(extra="forbid")
 
-    employee_code: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=32)]
+    employee_code: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=32)
+    ]
     first_name: Name
     last_name: Name
     email: EmailStr

@@ -2,7 +2,7 @@
 #
 # Production image for the AIProject API.
 #   docker build -t aiproject:latest .
-#   docker build --build-arg INSTALL_LLM=true -t aiproject:llm .              # + OpenAI/LangGraph
+#   docker build --build-arg INSTALL_LLM=true -t aiproject:llm .              # + LangGraph workflow extras
 #   docker build --build-arg INSTALL_LLM=true --build-arg INSTALL_NLP=true .  # + CPU PyTorch NLP
 #
 # No secrets are copied or baked in: configuration comes from environment variables

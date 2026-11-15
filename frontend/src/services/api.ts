@@ -8,8 +8,10 @@ import type {
 } from '../types/dataset';
 
 // Base API instance with /api/v1 prefix
+const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+
 export const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
+  baseURL: API_BASE_URL,
   headers: {
     Accept: 'application/json',
   },
@@ -37,6 +39,18 @@ apiClient.interceptors.request.use((config) => {
   }
   return config;
 });
+
+/**
+ * Fired when the session can no longer be renewed (refresh token missing, expired or
+ * revoked — e.g. after a password change, role change or deactivation). AuthContext
+ * listens and signs the user out so the UI never shows a stale "logged in" state.
+ */
+export const SESSION_EXPIRED_EVENT = 'auth:session-expired';
+
+const expireSession = () => {
+  tokenStorage.clear();
+  window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+};
 
 // Response interceptor: handle 401 with refresh attempt
 let isRefreshing = false;
@@ -77,13 +91,14 @@ apiClient.interceptors.response.use(
 
       const currentRefresh = tokenStorage.getRefreshToken();
       if (!currentRefresh) {
-        tokenStorage.clear();
         isRefreshing = false;
+        expireSession();
         return Promise.reject(error);
       }
 
       try {
-        const refreshRes = await axios.post('/api/v1/auth/refresh', {
+        // Plain axios (no interceptors) so a failing refresh cannot recurse.
+        const refreshRes = await axios.post(`${API_BASE_URL}/auth/refresh`, {
           refresh_token: currentRefresh,
         });
         const { access_token, refresh_token: newRefresh } = refreshRes.data;
@@ -96,7 +111,7 @@ apiClient.interceptors.response.use(
         return apiClient(originalRequest);
       } catch (refreshErr) {
         processQueue(refreshErr, null);
-        tokenStorage.clear();
+        expireSession();
         return Promise.reject(refreshErr);
       } finally {
         isRefreshing = false;
@@ -550,8 +565,34 @@ export const authApi = {
     return response.data;
   },
 
+  /** Permissions granted to the current role (UI hints; the server re-checks everything). */
+  async getMyPermissions(): Promise<import('../types/auth').UserPermissions> {
+    const response = await apiClient.get<import('../types/auth').UserPermissions>('/auth/me/permissions');
+    return response.data;
+  },
+
+  /** Whether public sign-up is open. Unauthenticated. */
+  async getRegistrationStatus(): Promise<{ allow_self_registration: boolean }> {
+    const response = await apiClient.get<{ allow_self_registration: boolean }>(
+      '/auth/registration-status'
+    );
+    return response.data;
+  },
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    await apiClient.post('/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    });
+  },
+
+  /** Permanently delete an account (Super Admin only). */
+  async deleteUser(userId: string): Promise<void> {
+    await apiClient.delete(`/auth/users/${userId}`);
+  },
+
   /**
-   * Update user status or role (Admin only).
+   * Update user status, name or role (role changes: Super Admin only).
    * PATCH /api/v1/auth/users/{user_id}
    */
   async updateUser(
@@ -868,3 +909,56 @@ export const jobsApi = {
 };
 
 
+
+export const employeeApi = {
+  async list(params?: import('../types/employee').EmployeeQuery): Promise<import('../types/employee').EmployeeList> {
+    const response = await apiClient.get<import('../types/employee').EmployeeList>('/employees', { params });
+    return response.data;
+  },
+
+  async stats(): Promise<import('../types/employee').EmployeeStats> {
+    const response = await apiClient.get<import('../types/employee').EmployeeStats>('/employees/stats');
+    return response.data;
+  },
+
+  async get(id: string): Promise<import('../types/employee').Employee> {
+    const response = await apiClient.get<import('../types/employee').Employee>(`/employees/${id}`);
+    return response.data;
+  },
+
+  async create(data: import('../types/employee').EmployeeInput): Promise<import('../types/employee').Employee> {
+    const response = await apiClient.post<import('../types/employee').Employee>('/employees', data);
+    return response.data;
+  },
+
+  async update(
+    id: string,
+    data: Partial<import('../types/employee').EmployeeInput>
+  ): Promise<import('../types/employee').Employee> {
+    const response = await apiClient.patch<import('../types/employee').Employee>(`/employees/${id}`, data);
+    return response.data;
+  },
+
+  async remove(id: string): Promise<void> {
+    await apiClient.delete(`/employees/${id}`);
+  },
+};
+
+export const adminApi = {
+  async listAuditLogs(params?: import('../types/admin').AuditQuery): Promise<import('../types/admin').AuditLogList> {
+    const response = await apiClient.get<import('../types/admin').AuditLogList>('/audit-logs', { params });
+    return response.data;
+  },
+
+  async getSettings(): Promise<import('../types/admin').SystemSettings> {
+    const response = await apiClient.get<import('../types/admin').SystemSettings>('/settings');
+    return response.data;
+  },
+
+  async updateSettings(
+    changes: Partial<import('../types/admin').SystemSettings>
+  ): Promise<import('../types/admin').SystemSettings> {
+    const response = await apiClient.patch<import('../types/admin').SystemSettings>('/settings', changes);
+    return response.data;
+  },
+};

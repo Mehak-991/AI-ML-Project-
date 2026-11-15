@@ -18,7 +18,15 @@ from app.services import audit_service
 # Never written to audit details by value (only "changed").
 SENSITIVE_FIELDS = frozenset({"phone", "salary"})
 REQUIRED_FIELDS = frozenset(
-    {"first_name", "last_name", "email", "department", "job_title", "employment_status", "hire_date"}
+    {
+        "first_name",
+        "last_name",
+        "email",
+        "department",
+        "job_title",
+        "employment_status",
+        "hire_date",
+    }
 )
 MAX_MANAGER_CHAIN = 100
 

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Lock, Mail, User, ShieldAlert, ArrowRight, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { authApi } from '../services/api';
 
 
 export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
@@ -12,9 +13,17 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
-  const [role, setRole] = useState<'admin' | 'ml_engineer' | 'viewer'>('viewer');
+  const [registrationOpen, setRegistrationOpen] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    authApi
+      .getRegistrationStatus()
+      .then((s) => setRegistrationOpen(s.allow_self_registration))
+      .catch(() => setRegistrationOpen(true)); // the server still enforces the setting
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -40,7 +49,6 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
           email: email.trim(),
           password,
           full_name: fullName.trim(),
-          role,
         });
       } else {
         await login({ email: email.trim(), password });
@@ -148,22 +156,10 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
             </div>
 
             {isRegisterMode && (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Role</label>
-                <select
-                  value={role}
-                  onChange={(e) => setRole(e.target.value as 'admin' | 'ml_engineer' | 'viewer')}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                >
-                  <option value="viewer">Viewer (Read-only Dashboards)</option>
-                  <option value="ml_engineer">ML Engineer (Upload, Train, Inference)</option>
-                  <option value="admin">Administrator (Full Control, Deployments, Users)</option>
-                </select>
-                <p className="text-[10px] text-slate-500 mt-1">
-                  Note: The very first registered user is automatically granted Administrator privileges.
-                  Elevated roles otherwise require an administrator.
-                </p>
-              </div>
+              <p className="text-[10px] text-slate-500">
+                New accounts get the read-only <strong>User</strong> role. A Super Admin can grant
+                more access later.
+              </p>
             )}
 
             <button
@@ -196,6 +192,10 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
                 >
                   Sign In
                 </button>
+              </p>
+            ) : !registrationOpen ? (
+              <p className="text-xs text-slate-500">
+                Self-registration is disabled. Ask an administrator to create your account.
               </p>
             ) : (
               <p className="text-xs text-slate-600">

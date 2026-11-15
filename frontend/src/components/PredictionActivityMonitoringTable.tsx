@@ -19,6 +19,8 @@ interface PredictionActivityMonitoringTableProps {
   limit: number;
   onPageChange: (newOffset: number) => void;
   onSubmitGroundTruth: (logId: string, truthVal: unknown) => Promise<void>;
+  // Ground-truth annotation changes data: Admin / Super Admin only.
+  canAnnotate?: boolean;
   statusFilter: string;
   onStatusFilterChange: (status: string) => void;
   modelFilter: string;
@@ -36,6 +38,7 @@ export const PredictionActivityMonitoringTable: React.FC<
   limit,
   onPageChange,
   onSubmitGroundTruth,
+  canAnnotate = true,
   statusFilter,
   onStatusFilterChange,
   modelFilter,
@@ -261,6 +264,7 @@ export const PredictionActivityMonitoringTable: React.FC<
                                   </p>
                                 </div>
                                 <div className="flex items-center gap-2">
+                                  {canAnnotate ? (<>
                                   <input
                                     type="text"
                                     placeholder="e.g. 1 or 0"
@@ -281,6 +285,9 @@ export const PredictionActivityMonitoringTable: React.FC<
                                   >
                                     {submittingTruth === log.id ? 'Saving...' : 'Submit'}
                                   </button>
+                                  </>) : (
+                                    <span className="text-[11px] text-indigo-800/70">Read-only access</span>
+                                  )}
                                 </div>
                               </div>
                             </div>

@@ -7,13 +7,18 @@ A modular AI/ML platform API built with FastAPI. It provides:
 - **Classical ML:** a leakage-safe scikit-learn pipeline for training, versioned persistence and
   prediction.
 - **Optional AI services:** Sentence Transformers embeddings, transformer sentiment
-  classification, OpenAI chat, token counting, and a LangGraph long-text analysis workflow.
+  classification, **local LLM chat through Ollama** (default `llama3.2:3b`, no API keys),
+  token counting, and a LangGraph long-text analysis workflow.
+- **Access control:** JWT authentication (Argon2id passwords, rotating refresh tokens) and
+  backend-enforced RBAC with three roles — **User** (read-only), **Admin**, **Super Admin** —
+  plus an employee directory, an audit log and global settings.
 - **Operational hardening:** structured logs, request IDs, body limits, rate limiting, security
   headers, and Docker deployment files.
 
 > **Status.** See [FINAL_AUDIT_REPORT.md](FINAL_AUDIT_REPORT.md) and [Verification status](#verification-status) for what has and hasn't been run.
-> The project is **not** production-ready as-is. In particular it has **no authentication**; see
-> [Security considerations](#security-considerations).
+> Deployment steps, the first-Super-Admin bootstrap and the migration procedure are in
+> [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md). Read [Security considerations](#security-considerations)
+> before exposing the service.
 
 ---
 
@@ -29,15 +34,16 @@ A modular AI/ML platform API built with FastAPI. It provides:
 8. [Database migrations](#database-migrations)
 9. [API](#api)
 10. [Training → prediction workflow](#training--prediction-workflow)
-11. [AI / LLM services and cost](#ai--llm-services-and-cost)
-12. [Testing and quality checks](#testing-and-quality-checks)
-13. [Docker](#docker)
-14. [Production deployment](#production-deployment)
-15. [Persistent vs runtime files](#persistent-vs-runtime-files)
-16. [Security considerations](#security-considerations)
-17. [Troubleshooting](#troubleshooting)
-18. [Known limitations](#known-limitations)
-19. [Verification status](#verification-status)
+11. [AI / LLM services (local, via Ollama)](#ai--llm-services-local-via-ollama)
+12. [Access control (RBAC)](#access-control-rbac)
+13. [Testing and quality checks](#testing-and-quality-checks)
+14. [Docker](#docker)
+15. [Production deployment](#production-deployment)
+16. [Persistent vs runtime files](#persistent-vs-runtime-files)
+17. [Security considerations](#security-considerations)
+18. [Troubleshooting](#troubleshooting)
+19. [Known limitations](#known-limitations)
+20. [Verification status](#verification-status)
 
 ---
 
@@ -54,7 +60,7 @@ A modular AI/ML platform API built with FastAPI. It provides:
                  │      │             └──▶ storage  (validated uploads)            ──▶ UPLOAD_DIR│
                  │      └──▶ app/ai container (lazy, per app)                                    │
                  │             ├── embeddings / classification ──▶ torch + HF models (optional) │
-                 │             ├── LLM chat ──▶ OpenAI Responses API (optional, needs key)      │
+                 │             ├── LLM chat ──▶ local Ollama server (llama3.2:3b, no key)       │
                  │             ├── token counter (tiktoken, falls back to an estimate)          │
                  │             └── LangGraph workflow + LangChain splitter (optional)           │
                  │  core/error_handlers: every error → {"error": {code, message, details}}      │
@@ -114,7 +120,8 @@ pyproject.toml, requirements*.txt, alembic.ini, .env.example
 | Git | any | cloning |
 | PostgreSQL | 14+ (tested DDL targets 17) | dataset/model endpoints; required in production |
 | Docker + Compose | Docker 24+, Compose v2.24+ | container deployment (optional for development) |
-| OpenAI API key | — | `/llm/chat`, `/nlp/analyze` only |
+| Ollama + `llama3.2:3b` (~2 GB) | 0.12+ | `/llm/chat`, `/nlp/analyze` only (optional) |
+| Node.js | 22 | building/testing the frontend |
 | ~1–3 GB disk | — | only with local NLP models (PyTorch + models) |
 
 ## Local development setup
@@ -155,7 +162,7 @@ token-count endpoints work, and the dataset/model endpoints return 503
 |---|---|---|---|
 | Core runtime | `pip install -r requirements.txt` | FastAPI, Uvicorn, Pydantic, SQLAlchemy, psycopg, Alembic, NumPy, pandas, scikit-learn, joblib, openpyxl, Matplotlib, seaborn | ~150 MB |
 | Dev & test | `pip install -r requirements-dev.txt` | core + pytest, pytest-cov, HTTPX, Ruff | small |
-| LLM + workflows | `pip install -r requirements-llm.txt` (or `.[llm,agents]`) | openai (2.x/3.x), tiktoken, langgraph, langchain-core, langchain-text-splitters | ~15 MB |
+| LLM workflows | `pip install -r requirements-llm.txt` (or `.[llm,agents]`) | tiktoken, langgraph, langchain-core, langchain-text-splitters | ~15 MB |
 | PyTorch | see below. **Install first, matching your hardware** | torch, torchvision | CPU ~200 MB; CUDA 2+ GB |
 | Local NLP | `pip install -r requirements-nlp.txt` (or `.[nlp]`) | transformers (v4/v5), sentence-transformers, datasets, evaluate | + models ~360 MB |
 | RAG (reserved) | `pip install -e ".[rag]"` | llama-index-core; no code uses it yet | — |
@@ -211,15 +218,17 @@ every variable with safe defaults and empty placeholders. Invalid values stop st
 |---|---|
 | App | `APP_ENV` (development/testing/production), `DEBUG` (verbose logs only; tracebacks are never returned to clients), `API_V1_PREFIX`, `DOCS_ENABLED` |
 | Logging | `LOG_LEVEL`, `LOG_FORMAT` (`text` / `json`) |
-| HTTP hardening | `CORS_ORIGINS`, `MAX_REQUEST_BODY_MB`, `RATE_LIMIT_ENABLED`, `RATE_LIMIT_{DEFAULT,AI,TRAINING}_PER_MINUTE` |
+| HTTP hardening | `CORS_ORIGINS`, `MAX_REQUEST_BODY_MB`, `RATE_LIMIT_ENABLED`, `RATE_LIMIT_{DEFAULT,AI,TRAINING,AUTH}_PER_MINUTE` |
+| Auth | `JWT_SECRET_KEY` (≥ 32 bytes, required in production), `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`, `JWT_REFRESH_TOKEN_EXPIRE_DAYS`, `AUTH_BOOTSTRAP_VIA_REGISTRATION`, `METRICS_AUTH_TOKEN` |
 | Database | `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT`, `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW` |
 | Storage / ML | `UPLOAD_DIR`, `MODEL_DIR`, `MAX_UPLOAD_SIZE_MB`, `MAX_DATASET_ROWS/COLUMNS`, `MAX_PREDICTION_RECORDS`, `MODEL_COMPATIBILITY_CHECK` |
-| LLM | `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_ALLOWED_MODELS`, `OPENAI_TIMEOUT_SECONDS`, `OPENAI_MAX_RETRIES`, `LLM_MAX_*`, `LLM_LOG_CONTENT` |
+| LLM (Ollama) | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_ALLOWED_MODELS`, `OLLAMA_TIMEOUT_SECONDS`, `OLLAMA_NUM_CTX`, `OLLAMA_NUM_THREAD`, `OLLAMA_KEEP_ALIVE`, `OLLAMA_HEALTHCHECK_ENABLED`, `LLM_MAX_*`, `LLM_LOG_CONTENT` |
 | Local models | `AI_DEVICE`, `AI_MODEL_CACHE_DIR`, `AI_ALLOW_MODEL_DOWNLOADS`, `AI_INFERENCE_TIMEOUT_SECONDS`, `AI_MAX_CONCURRENT_INFERENCES`, `EMBEDDING_*`, `CLASSIFIER_*` |
 | Docker Compose | `POSTGRES_USER/PASSWORD/DB`, `APP_PORT`, `INSTALL_LLM`, `INSTALL_NLP`, `FORWARDED_ALLOW_IPS` |
 
 **Production rules, enforced at startup:** `DATABASE_URL` must be set and must be PostgreSQL,
-`DEBUG=false`, and `CORS_ORIGINS` must not contain `*`. In production CORS defaults to *no*
+`DEBUG=false`, `CORS_ORIGINS` must not contain `*`, and `JWT_SECRET_KEY` must be at least 32
+bytes and not the shipped default. In production CORS defaults to *no*
 origins. Run `python scripts/check_config.py` for further warnings, such as docs enabled or
 text logs in production.
 
@@ -229,6 +238,14 @@ text logs in production.
 |---|---|
 | `0001` | `datasets`, `ml_models` (UUID keys, JSONB on PostgreSQL, named constraints) |
 | `0002` | `ml_models.version`, unique per `name`. Existing rows are backfilled 1, 2, 3… by creation time |
+| `0003`–`0011` | deployments, prediction logs, users/refresh tokens, drift, experiments, jobs, ownership, indexes |
+| `0012_rbac_roles` | Three roles. Data migration `admin→super_admin`, `ml_engineer→admin`, `viewer→user` (unknown → `user`); `CHECK` constraint on `users.role`; `users.token_version`. Fully reversible |
+| `0013_employees_audit` | `employees`, `audit_logs`, `system_settings` (additive) |
+| `0014_drift_results_jsonb` | `drift_reports.results` JSON → JSONB on PostgreSQL when still JSON (fixes pre-existing drift; no-op otherwise) |
+
+> A database stamped `0012`/`0013` by the **old, deleted** migration lineage (dataset owner /
+> drift JSONB) must be re-stamped first: `alembic stamp --purge 0011 && alembic upgrade head`.
+> Back up before migrating. See [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md#database-migration-procedure).
 
 ```bash
 alembic upgrade head          # apply
@@ -355,43 +372,55 @@ are checked. `null` is rejected unless `"allow_missing": true`.
 
 Offline (no API or DB): `python scripts/train_model.py datasets/examples/synthetic_classification.csv --target label`.
 
-## AI / LLM services and cost
+## AI / LLM services (local, via Ollama)
 
-- **Installed extras and status.** Check `GET /api/v1/ai/status`.
-- **Missing pieces.** A missing extra gives a 503 with the exact install command; a missing key
-  gives 503 `provider_not_configured`.
-- **Local models.** Models are never downloaded at startup; they load lazily on first use and are
-  cached (an LRU of `AI_MAX_LOADED_MODELS`), loading only once even when requests arrive
-  concurrently. Pre-download them with `python scripts/download_models.py` (~360 MB), then set
-  `AI_ALLOW_MODEL_DOWNLOADS=false` for offline use.
-- **Devices and model safety.** `AI_DEVICE=auto` picks CUDA, then MPS, then CPU.
-  `trust_remote_code` is always off. Model names come from server settings only; API requests
-  can't choose a model path or repository.
-- **Local NLP demo** (no key): `python scripts/nlp_demo.py`. To evaluate the classifier:
-  `python scripts/evaluate_classifier.py` (uses HF `datasets` + `evaluate`).
+- **No hosted provider, no API key.** Chat (`/llm/chat`) and the long-text workflow
+  (`/nlp/analyze`) call a local [Ollama](https://ollama.com) server. Default model:
+  `llama3.2:3b` (Q4, ~2 GB on disk, ~3 GB RAM on CPU). Install Ollama, run
+  `ollama pull llama3.2:3b`, and keep `OLLAMA_BASE_URL` pointing at it.
+- **Pluggable.** Routes depend on the `ChatService` protocol (`app/ai/llm.py`); add another local
+  backend there and select it in `app/ai/container.py`. Other pulled models can be allowed per
+  request with `OLLAMA_ALLOWED_MODELS`.
+- **Failure handling.** Server down → 502 `provider_unavailable`; model not pulled → 502
+  `provider_model_not_found` with the exact `ollama pull` command; slow CPU → 504
+  `provider_timeout` after `OLLAMA_TIMEOUT_SECONDS`. `/api/v1/health` reports
+  `components.llm` = `ok` / `model_missing` / `unavailable` but never fails readiness, because
+  the rest of the API works without the LLM.
+- **CPU efficiency.** `OLLAMA_NUM_CTX` (default 4096) bounds RAM and prompt time;
+  `OLLAMA_NUM_THREAD` pins threads; `OLLAMA_KEEP_ALIVE` controls how long the model stays
+  loaded. The compose `ollama` service keeps one model loaded and one request in flight.
+- **Limits** (`LLM_MAX_INPUT_TOKENS`, `LLM_MAX_OUTPUT_TOKENS`, `LLM_MAX_MESSAGES`) are enforced
+  **before** any call, and `RATE_LIMIT_AI_PER_MINUTE` throttles each client. Token counts for
+  Llama models are estimates (`approximate: true`).
+- **Who can use it.** LLM endpoints need the Admin or Super Admin role.
+- **Local transformer models** (embeddings/classification) load lazily on first use; pre-download
+  with `python scripts/download_models.py` and set `AI_ALLOW_MODEL_DOWNLOADS=false` for offline use.
+- **Privacy.** Prompts and completions are never logged unless `LLM_LOG_CONTENT=true`.
 
-**Controlling LLM cost:**
+## Access control (RBAC)
 
-- `OPENAI_MODEL` (default `gpt-5.4-mini`) and the allow-list `OPENAI_ALLOWED_MODELS` decide
-  which models a request may use.
-- `LLM_MAX_INPUT_TOKENS`, `LLM_MAX_OUTPUT_TOKENS`, `LLM_DEFAULT_OUTPUT_TOKENS` and
-  `LLM_MAX_MESSAGES` are enforced **before** any call. `RATE_LIMIT_AI_PER_MINUTE` limits how
-  often each client can call.
-- Every chat response includes token `usage`, and the server logs token counts per call (never
-  the content), so spend can be estimated from the logs.
-- `/nlp/analyze` makes one LLM call per chunk plus one to combine them: up to
-  `max_chunks` (10) + 1 calls for long text.
-- Reasoning models (GPT-5 family) also spend output tokens on reasoning. If `finish_reason` is
-  `max_output_tokens`, raise the budget deliberately.
-- Retries: the SDK retries connection errors, 429 and 5xx up to `OPENAI_MAX_RETRIES` (default 2)
-  times with backoff, which can multiply cost on flaky networks. Each call times out after
-  `OPENAI_TIMEOUT_SECONDS`.
-- Automated tests never call paid APIs. `scripts/smoke_test.py --with-llm` makes exactly one
-  short paid call.
+Every protected endpoint declares a *permission*; [app/core/permissions.py](app/core/permissions.py)
+maps the three roles to permissions. The role is always read from the database row of the
+authenticated user, never from the token or the request.
 
-**Privacy:** the API key is never logged or returned. Prompts and completions aren't logged
-(even the SDK's DEBUG request logs are muted) unless `LLM_LOG_CONTENT=true`. Requests are sent
-with `store=false`.
+| Capability | User | Admin | Super Admin |
+|---|:-:|:-:|:-:|
+| Read employees (no salary/phone), datasets, models, monitoring, drift, settings | ✅ | ✅ | ✅ |
+| See employee salary/phone | — | ✅ | ✅ |
+| Create / update employees | — | ✅ | ✅ |
+| Delete employees | — | — | ✅ |
+| Upload, train, predict, experiments, jobs, drift analysis, LLM | — | ✅ | ✅ |
+| Deploy / undeploy models | — | — | ✅ |
+| List accounts; activate/deactivate/create **User** accounts | — | ✅ | ✅ |
+| Change roles, manage Admin/Super Admin accounts, delete accounts | — | — | ✅ |
+| Audit log | — | employee + ML events | everything |
+| Change global settings (self-registration, maintenance mode, banner) | — | — | ✅ |
+
+Additional rules: self-registration always creates a `user`; nobody can change their own role
+or deactivate/delete themselves; the last active Super Admin cannot be removed; role changes,
+deactivation and password changes revoke existing access *and* refresh tokens immediately
+(`token_version`); maintenance mode blocks every write except a Super Admin's. Object-level
+ownership still applies to models, prediction logs and jobs (Super Admins see all).
 
 ## Testing and quality checks
 
@@ -406,10 +435,16 @@ python scripts/check_config.py      # configuration + storage + optional extras
 
 - **Database.** Unit/API tests use an in-memory SQLite database as a stand-in. The application
   itself never falls back to SQLite.
-- **AI.** AI tests use deterministic fakes. OpenAI tests run the real SDK against an in-memory
-  HTTP transport, so no network is used and nothing is billed.
-- **Migrations.** `tests/integration/test_migrations.py` runs `0001 → 0002` with data, checks
-  that migrations match the models exactly, then downgrades.
+- **AI.** AI tests use deterministic fakes; Ollama tests use an in-memory `httpx` transport, so
+  no server or model is needed.
+- **RBAC.** `tests/unit/test_rbac_roles.py` exercises the permission matrix, employee CRUD,
+  privilege-escalation and mass-assignment attempts, token revocation, audit logs and settings
+  through the real API.
+- **Migrations.** `tests/integration/test_migrations.py` runs every revision with data (including
+  the role remap and its downgrade), checks that migrations match the models exactly, then
+  downgrades.
+- **Frontend.** `cd frontend && npm test` (Vitest + Testing Library): role-based navigation,
+  route guards, per-role controls and session expiry.
 - **No AI extras.** `tests/integration/test_optional_dependencies.py` starts the app in a process
   where every AI package is blocked.
 
@@ -423,15 +458,19 @@ $env:TEST_DATABASE_URL = "postgresql+psycopg://aiproject:<password>@localhost:54
 TEST_DATABASE_URL=postgresql+psycopg://aiproject:<password>@localhost:5432/aiproject_test pytest -m integration
 ```
 
-To smoke-test a running instance end to end: `python scripts/smoke_test.py <base-url>`.
+To smoke-test a running instance end to end (admin or super admin account):
+`SMOKE_EMAIL=... SMOKE_PASSWORD=... python scripts/smoke_test.py <base-url> [--with-llm] [--cleanup]`.
 
 Static type checking (mypy/pyright) is **not configured** in this repository.
 
 ## Docker
 
 ```bash
-cp .env.example .env               # set POSTGRES_PASSWORD; optionally OPENAI_API_KEY
-docker compose up -d --build       # db + app; the app waits for db to be healthy, then migrates
+cp .env.example .env               # set POSTGRES_PASSWORD and JWT_SECRET_KEY (openssl rand -hex 32)
+docker compose up -d --build       # db + migration + app + worker + frontend
+docker compose --profile llm up -d # optional: local Ollama; then
+docker compose exec ollama ollama pull llama3.2:3b
+docker compose run --rm app python scripts/create_super_admin.py --email you@example.com
 docker compose ps                  # both should become "healthy"
 python scripts/smoke_test.py http://127.0.0.1:8000
 docker compose logs -f app         # JSON logs
@@ -442,7 +481,7 @@ docker compose down                # keeps volumes; `down -v` DELETES the databa
 
 - Multi-stage `python:3.12-slim` build that runs as non-root user `app` (uid 10001).
 - No secrets are copied in; `.env*` is excluded by [.dockerignore](.dockerignore).
-- Optional extras are build arguments: `INSTALL_LLM=true` adds OpenAI and LangGraph;
+- Optional extras are build arguments: `INSTALL_LLM=true` adds the LangGraph/tiktoken workflow extras;
   `INSTALL_NLP=true` adds CPU PyTorch and transformers, which makes a much larger image.
 - `HEALTHCHECK` probes `/health`.
 - Startup goes through `scripts/docker_entrypoint.py`: validate config, migrate with retries, then
@@ -463,27 +502,19 @@ docker compose down                # keeps volumes; `down -v` DELETES the databa
 
 ## Production deployment
 
-Local development (above) uses `uvicorn --reload`, text logs and an optional DB. For production:
+Follow [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md). In short:
 
-1. **Secrets.** Provide `POSTGRES_PASSWORD`, `DATABASE_URL` and `OPENAI_API_KEY` through your
-   platform's secret manager, or a `chmod 600` `.env` on the host. Never put them in the image,
-   the compose file or git.
-2. **TLS reverse proxy.** Put Nginx, Caddy, Traefik or a cloud load balancer in front, terminating
-   TLS. Keep the app bound to 127.0.0.1 or a private network. Set `FORWARDED_ALLOW_IPS` to the
-   proxy's address so rate limiting and logs see real client IPs; otherwise every client shares
-   the proxy's rate-limit bucket.
-3. **Authentication.** Add it at the proxy or gateway (OAuth2/OIDC, API keys) **before exposing
-   the API**. The app has none.
-4. **Settings:** `APP_ENV=production`, `LOG_FORMAT=json`, explicit `CORS_ORIGINS`, and consider
-   `DOCS_ENABLED=false`. Run `python scripts/check_config.py --db` inside the container.
-5. **Database.** Use managed PostgreSQL or the compose service with backups (`pg_dump`, volume
-   snapshots). Migrations run on start; for several replicas, run them once as a separate job
-   (`RUN_MIGRATIONS=false` on the replicas).
-6. **Scaling.** Rate limits and the model cache are per process. Use a gateway or Redis-based
-   limiter for global limits. Size `--workers` to CPU and RAM, since each worker loads its own
-   models.
-7. **Monitoring.** Ship the JSON logs; alert on 5xx, `database_unavailable` and
-   `provider_*` codes. Use `/health` for liveness and `/api/v1/health` for readiness.
+1. **Secrets** (`POSTGRES_PASSWORD`, `JWT_SECRET_KEY`, optional `METRICS_AUTH_TOKEN`) come from a
+   secret manager or a `chmod 600` `.env`; never from the image or git. No API keys are needed.
+2. **TLS** is terminated by a reverse proxy or load balancer in front of the `frontend` container;
+   set `FORWARDED_ALLOW_IPS` to it and enable HSTS in `frontend/nginx.conf` once HTTPS-only.
+3. **First Super Admin:** `python scripts/create_super_admin.py --email ...` (public registration
+   never grants privileges in production).
+4. **Back up, then migrate** (`alembic upgrade head`, run once by the `migration` service).
+5. **Settings:** `APP_ENV=production`, `LOG_FORMAT=json`, explicit `CORS_ORIGINS`, consider
+   `DOCS_ENABLED=false`; then `python scripts/check_config.py --db`.
+6. **Monitoring:** `/health` (liveness), `/api/v1/health` (readiness), `/api/v1/health/database`,
+   `/metrics` (protect with `METRICS_AUTH_TOKEN`), JSON logs, and the audit log.
 
 ## Persistent vs runtime files
 
@@ -523,14 +554,19 @@ Back up the database **together with** `UPLOAD_DIR` and `MODEL_DIR`: the rows po
 - **Containers:** non-root, read-only filesystem, no capabilities, database not published,
   secrets supplied only at runtime.
 
-**Not implemented. You must address these before exposing the service:**
+- **Authentication & RBAC:** JWT access tokens (HS256, 30 min) with rotating single-use refresh
+  tokens; Argon2id password hashing (legacy PBKDF2/bcrypt hashes upgraded at login);
+  timing-equalised logins; backend permission checks on every endpoint; token revocation on
+  password/role change and deactivation; strict request schemas (`extra="forbid"`) against mass
+  assignment; `CHECK` constraint on roles; audit log of sensitive operations.
 
-- **Authentication and authorization.** Anyone who can reach the API can upload data, train
-  models and spend LLM budget.
-- **Global (cross-process) rate limiting, per-user quotas and LLM spend caps.**
+**Not implemented. Address these as needed:**
+
+- **Global (cross-process) rate limiting and per-user quotas.** Limits are per process.
+- **MFA, account lockout and password-reset e-mail.** Login is rate limited, not locked out.
 - **Pickle trust.** joblib/pickle artifacts are code. Anyone with write access to `MODEL_DIR` and
   the database can execute code. Protect both.
-- **Malware scanning** of uploads, data retention and deletion, and an audit trail.
+- **Malware scanning** of uploads, and dataset/model deletion through the API.
 - **TLS.** Must be provided by a reverse proxy.
 
 ## Troubleshooting
@@ -546,8 +582,13 @@ Back up the database **together with** `UPLOAD_DIR` and `MODEL_DIR`: the rows po
 | 429 `rate_limited` | Wait `Retry-After` seconds, or raise the `RATE_LIMIT_*` values |
 | 409 `model_incompatible` | Retrain with the current scikit-learn version |
 | 503 `optional_dependency_missing` | Run the command in `error.details.install` (PyTorch first for local models) |
-| 503 `provider_not_configured` / 502 `provider_authentication_failed` | Set or replace `OPENAI_API_KEY` |
-| 429 `provider_quota_exceeded` | Add billing or credits to the OpenAI account |
+| 502 `provider_unavailable` on `/llm/chat` | Start Ollama (`ollama serve`) and check `OLLAMA_BASE_URL` |
+| 502 `provider_model_not_found` | `ollama pull llama3.2:3b` (or the configured `OLLAMA_MODEL`) |
+| 504 `provider_timeout` | CPU too slow for the request: lower `max_output_tokens`/`OLLAMA_NUM_CTX` or raise `OLLAMA_TIMEOUT_SECONDS` |
+| 403 `permission_denied` | The role lacks the permission named in `error.details.required_permission` |
+| 401 "Session is no longer valid" | Password or role changed, or account deactivated: sign in again |
+| 503 `maintenance_mode` | A Super Admin enabled maintenance mode in System Settings |
+| Alembic `Can't locate revision '0013'` | DB stamped by the old lineage: `alembic stamp --purge 0011 && alembic upgrade head` |
 | `AI_DEVICE=cuda but CUDA is not available` | Install a CUDA build of PyTorch or set `AI_DEVICE=cpu` |
 | First embedding/classify call is slow | It's downloading and loading the model; use `scripts/download_models.py` |
 | `tokens/count` returns `approximate: true` | tiktoken is missing or offline; set `TIKTOKEN_CACHE_DIR` to a filled cache |
@@ -557,7 +598,6 @@ Back up the database **together with** `UPLOAD_DIR` and `MODEL_DIR`: the rows po
 
 ## Known limitations
 
-- **No authentication or authorization.** See [Security considerations](#security-considerations).
 - **Synchronous heavy work.** Training and AI inference run in the request threadpool, with no
   job queue. A timed-out local inference keeps computing in the background.
 - **Per-process state.** Rate limits and caches aren't shared between workers or replicas.
@@ -571,23 +611,20 @@ Back up the database **together with** `UPLOAD_DIR` and `MODEL_DIR`: the rows po
 
 ## Verification status
 
-Results of the final verification run on Windows 11, Python 3.12, against this repository:
+Final verification run (Windows 11, Python 3.12, PostgreSQL 18, Ollama with `llama3.2:3b`):
 
 | Area | Status |
 |---|---|
-| pytest (unit + integration without external services) | ✅ run and passing (see the final report for counts) |
-| Ruff lint + format check | ✅ passing |
-| `pip check` | ✅ no broken requirements |
-| App startup, `/health`, `/api/v1/health`, `/docs` | ✅ verified on a live uvicorn server |
-| Upload → train → predict → versioning over HTTP | ✅ verified live with `scripts/smoke_test.py`, using **SQLite as a stand-in database** |
-| Request IDs, JSON logs, security headers, 413 body limit, 429 rate limit | ✅ verified live |
-| Alembic `0001`/`0002` upgrade, data backfill, `alembic check`, downgrade | ✅ verified on SQLite; PostgreSQL DDL rendered offline and reviewed |
-| Startup without any AI extras or API key | ✅ verified (subprocess test + live) |
-| OpenAI error mapping (401/403/429/quota/400/404/5xx/timeout/network) | ✅ real SDK with an in-memory transport (openai 2.54 and 3.40) |
-| Token counting with real tiktoken | ✅ verified live |
-| Docker Compose files | ✅ validated with `docker compose config` |
-| **Real PostgreSQL** migrations and integration tests | ❌ **not run** (no credentials available); run them with `TEST_DATABASE_URL` |
-| **Docker image build and `docker compose up`** | ❌ **not run** (Docker daemon not running) |
-| **Embeddings / classification with real models** | ❌ **not run** (PyTorch and models not installed); covered by fakes only |
-| **Real OpenAI calls** | ❌ **not run** (no key; tests must not make paid calls) |
-| Static type checking | ➖ not configured |
+| Backend pytest (unit + integration without external services) | ✅ passing |
+| PostgreSQL: full migration chain on an empty DB; schema identical to the ORM | ✅ run |
+| PostgreSQL: role-remap migration on a **copy** of a real dev DB, data preserved, downgrade/upgrade round trip | ✅ run |
+| PostgreSQL integration tests (`TEST_DATABASE_URL`) | ⚠️ 10/11 pass; `test_api_workflow_against_postgres` fails in its test harness (pre-existing, also fails on the original commit) |
+| Live production-mode server on PostgreSQL: smoke test incl. login, upload → train → predict, employee CRUD, audit log | ✅ verified |
+| Live RBAC checks per role over HTTP on PostgreSQL | ✅ verified |
+| Real Ollama chat call (`llama3.2:3b`, CPU) | ✅ verified |
+| Frontend: `tsc` + production build, Vitest RBAC tests | ✅ passing |
+| Docker Compose files | ✅ validated with `docker compose config` (with and without the `llm` profile) |
+| **Docker image build and `docker compose up`** | ❌ not run (Docker daemon not running) |
+| **Embeddings / classification with real models** | ❌ not run (PyTorch not installed); covered by fakes |
+| Static type checking (Python) | ➖ not configured |
+

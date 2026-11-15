@@ -110,7 +110,7 @@ def record_standalone(session: Session, **kwargs: Any) -> None:
     try:
         record(session, **kwargs)
         session.commit()
-    except Exception:  # noqa: BLE001 - auditing must never break the request it describes
+    except Exception:
         session.rollback()
         logger.exception("Failed to write audit entry for action=%s", kwargs.get("action"))
 

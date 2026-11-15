@@ -76,6 +76,18 @@ def isolated_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     clear_artifact_cache()
 
 
+@pytest.fixture(autouse=True)
+def fast_password_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Argon2id with test-sized cost. Production parameters live in app.core.security."""
+    from argon2 import PasswordHasher
+
+    from app.core import security
+
+    monkeypatch.setattr(
+        security, "_argon2", PasswordHasher(time_cost=1, memory_cost=8 * 1024, parallelism=1)
+    )
+
+
 @pytest.fixture
 def make_settings(tmp_path: Path) -> Callable[..., Settings]:
     """Settings isolated from .env, with storage directories under tmp_path."""

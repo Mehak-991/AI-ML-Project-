@@ -163,6 +163,21 @@ def test_passwords_are_hashed_with_argon2id(client, roles, session_factory) -> N
     assert PASSWORD not in stored
 
 
+def test_production_argon2_parameters() -> None:
+    from argon2 import PasswordHasher, Type
+
+    # Tests swap in a cheap hasher (conftest); the shipped parameters must stay strong.
+    assert security.ARGON2_TIME_COST >= 3
+    assert security.ARGON2_MEMORY_COST_KIB >= 64 * 1024
+    real = PasswordHasher(
+        time_cost=security.ARGON2_TIME_COST,
+        memory_cost=security.ARGON2_MEMORY_COST_KIB,
+        parallelism=security.ARGON2_PARALLELISM,
+    )
+    assert real.type is Type.ID
+    assert real.hash("x").startswith("$argon2id$v=19$m=65536,t=3,p=4$")
+
+
 def test_legacy_pbkdf2_hash_is_upgraded_on_login(client, session_factory) -> None:
     from passlib.hash import pbkdf2_sha256
 

@@ -1,4 +1,29 @@
-export type UserRole = 'admin' | 'ml_engineer' | 'viewer';
+// Must match the backend (app/core/permissions.py and the users.role CHECK constraint).
+export type UserRole = 'user' | 'admin' | 'super_admin';
+
+export type Permission =
+  | 'employees:read'
+  | 'employees:read_sensitive'
+  | 'employees:write'
+  | 'employees:delete'
+  | 'ml:read'
+  | 'ml:write'
+  | 'ml:deploy'
+  | 'users:read'
+  | 'users:manage'
+  | 'users:administer'
+  | 'audit:read'
+  | 'audit:read_all'
+  | 'settings:read'
+  | 'settings:write';
+
+export const ROLE_LABELS: Record<UserRole, string> = {
+  user: 'User',
+  admin: 'Admin',
+  super_admin: 'Super Admin',
+};
+
+export const ROLE_RANK: Record<UserRole, number> = { user: 1, admin: 2, super_admin: 3 };
 
 export interface User {
   id: string;
@@ -8,6 +33,11 @@ export interface User {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface UserPermissions {
+  role: UserRole;
+  permissions: Permission[];
 }
 
 export interface TokenResponse {
@@ -34,6 +64,7 @@ export interface RegisterCredentials {
   email: string;
   password: string;
   full_name?: string;
+  // Only honoured by the server when an admin (role 'user') or super admin creates the account.
   role?: UserRole;
 }
 

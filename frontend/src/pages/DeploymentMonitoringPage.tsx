@@ -27,6 +27,7 @@ import type {
   MonitoringOverviewResponse,
 } from '../types/deployment';
 import { ModelSelector } from '../components/ModelSelector';
+import { useAuth } from '../context/AuthContext';
 import { DeploymentReadinessChecklist } from '../components/DeploymentReadinessChecklist';
 import { MonitoringKpiCards } from '../components/MonitoringKpiCards';
 import { DeploymentConfigSection } from '../components/DeploymentConfigSection';
@@ -34,6 +35,8 @@ import { PredictionActivityMonitoringTable } from '../components/PredictionActiv
 import { ModelPerformanceMonitoringSection } from '../components/ModelPerformanceMonitoringSection';
 
 export const DeploymentMonitoringPage: React.FC = () => {
+  const { can } = useAuth();
+  const canWrite = can('ml:write');
   const [models, setModels] = useState<ModelRead[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelRead | null>(null);
   const [totalModels, setTotalModels] = useState<number>(0);
@@ -244,12 +247,13 @@ export const DeploymentMonitoringPage: React.FC = () => {
     }
   };
 
-  // Run initial probe when selected model changes
+  // Run initial probe when selected model changes. The probe is a real prediction (it is
+  // recorded in the prediction log), so it only runs for roles allowed to predict.
   useEffect(() => {
-    if (selectedModel) {
+    if (selectedModel && canWrite) {
       probeInferenceEndpoint();
     }
-  }, [selectedModel?.id]);
+  }, [selectedModel?.id, canWrite]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Build the 6 strict Deployment Readiness checklist items based on empirical evidence
   const evaluateReadiness = (model: ModelRead | null): ReadinessCheckItem[] => {
@@ -478,7 +482,7 @@ export const DeploymentMonitoringPage: React.FC = () => {
               modelName={selectedModel.name}
               version={selectedModel.version}
               overallReady={overallReady}
-              onProbeInference={probeInferenceEndpoint}
+              onProbeInference={canWrite ? probeInferenceEndpoint : undefined}
               isProbing={isProbing}
             />
           )}
@@ -491,6 +495,7 @@ export const DeploymentMonitoringPage: React.FC = () => {
               deploymentHistory={deploymentHistory}
               onDeploy={handleDeploy}
               onUndeploy={handleUndeploy}
+              canDeploy={can('ml:deploy')}
               isActionLoading={isActionLoading}
             />
           )}
@@ -505,6 +510,7 @@ export const DeploymentMonitoringPage: React.FC = () => {
               limit={logLimit}
               onPageChange={(newOffset) => fetchPredictionLogs(newOffset)}
               onSubmitGroundTruth={handleSubmitGroundTruth}
+              canAnnotate={canWrite}
               statusFilter={statusFilter}
               onStatusFilterChange={setStatusFilter}
               modelFilter={modelFilter}

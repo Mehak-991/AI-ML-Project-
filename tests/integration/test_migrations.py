@@ -86,3 +86,52 @@ def test_upgrade_backfill_check_and_downgrade(alembic_config) -> None:
     command.downgrade(config, "base")
     assert set(inspect(engine).get_table_names()) <= {"alembic_version"}
     engine.dispose()
+
+
+def test_rbac_role_migration_maps_and_reverses(alembic_config) -> None:
+    """0012 remaps legacy roles without losing capability and is exactly reversible."""
+    config, url = alembic_config
+    command.upgrade(config, "0011")
+    engine = create_engine(url)
+    legacy = {
+        "a@x.com": "admin",
+        "m@x.com": "ml_engineer",
+        "v@x.com": "viewer",
+        "odd@x.com": "something_unexpected",
+    }
+    with engine.begin() as conn:
+        for email, role in legacy.items():
+            conn.execute(
+                text(
+                    "INSERT INTO users (id, email, hashed_password, full_name, role, is_active,"
+                    " created_at, updated_at) VALUES (:id, :e, 'x', '', :r, 1,"
+                    " '2026-01-01', '2026-01-01')"
+                ),
+                {"id": uuid.uuid4().hex, "e": email, "r": role},
+            )
+
+    command.upgrade(config, "head")
+    with engine.connect() as conn:
+        roles = dict(conn.execute(text("SELECT email, role FROM users")).fetchall())
+        versions = {v for (v,) in conn.execute(text("SELECT token_version FROM users"))}
+    assert roles == {
+        "a@x.com": "super_admin",
+        "m@x.com": "admin",
+        "v@x.com": "user",
+        "odd@x.com": "user",  # unknown roles fail closed
+    }
+    assert versions == {0}
+    # The database itself now rejects unknown roles.
+    with pytest.raises(Exception, match="(?i)check"), engine.begin() as conn:
+        conn.execute(text("UPDATE users SET role = 'root' WHERE email = 'v@x.com'"))
+
+    command.downgrade(config, "0011")
+    with engine.connect() as conn:
+        roles = dict(conn.execute(text("SELECT email, role FROM users")).fetchall())
+    assert roles == {
+        "a@x.com": "admin",
+        "m@x.com": "ml_engineer",
+        "v@x.com": "viewer",
+        "odd@x.com": "viewer",
+    }
+    engine.dispose()

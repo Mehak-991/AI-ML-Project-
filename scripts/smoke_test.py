@@ -1,12 +1,19 @@
 """End-to-end smoke test against a RUNNING server (local, Docker or deployed).
 
-Usage: python scripts/smoke_test.py [http://127.0.0.1:8000] [--with-llm]
+Usage:
+    SMOKE_EMAIL=admin@example.com SMOKE_PASSWORD=...         python scripts/smoke_test.py [http://127.0.0.1:8000] [--with-llm] [--cleanup]
 
-Steps: health -> readiness -> AI status -> token count -> (if the DB is up)
-upload synthetic CSV -> train -> model metadata -> predict -> (if local NLP extras
-are installed) embeddings -> (only with --with-llm, which costs money) one short
-chat completion. Uses only the standard library. Exit code 1 if any step FAILs.
+The account must be an admin or super_admin (the API is authenticated and role-checked).
+Steps: health -> readiness -> database health -> login -> permissions -> AI status ->
+token count -> (if the DB is up) upload synthetic CSV -> train -> model metadata ->
+predict -> employee create/read/update (+ delete with --cleanup, super_admin only) ->
+(if local NLP extras are installed) embeddings -> (with --with-llm) one short chat
+completion on the local Ollama model (free, but slow on CPU). Uses only the standard
+library. Exit code 1 if any step FAILs. Passwords are read from the environment, never
+from the command line, and never printed.
 """
+
+import os
 
 import argparse
 import csv
@@ -22,10 +29,15 @@ from typing import Any
 results: list[tuple[str, str, str]] = []
 
 
+TOKEN: dict[str, str] = {}
+
+
 def request(
     method: str, url: str, body: Any = None, *, files: dict | None = None, timeout: float = 120
 ) -> tuple[int, Any]:
     headers = {"Accept": "application/json"}
+    if "access" in TOKEN:
+        headers["Authorization"] = f"Bearer {TOKEN['access']}"
     data = None
     if files:
         boundary = uuid.uuid4().hex
@@ -73,7 +85,12 @@ def synthetic_csv(rows: int = 150) -> bytes:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("base_url", nargs="?", default="http://127.0.0.1:8000")
-    parser.add_argument("--with-llm", action="store_true", help="make one real (paid) LLM call")
+    parser.add_argument(
+        "--with-llm", action="store_true", help="make one real chat call to the local Ollama model"
+    )
+    parser.add_argument(
+        "--cleanup", action="store_true", help="delete the smoke-test employee (super_admin)"
+    )
     args = parser.parse_args()
     base = args.base_url.rstrip("/")
     api = f"{base}/api/v1"
@@ -84,8 +101,31 @@ def main() -> int:
         return 1
 
     status, body = request("GET", f"{api}/health")
-    db_state = (body or {}).get("components", {}).get("database")
-    record("readiness", "PASS" if status in (200, 503) else "FAIL", f"database={db_state}")
+    components = (body or {}).get("components", {})
+    db_state = components.get("database")
+    record(
+        "readiness",
+        "PASS" if status in (200, 503) else "FAIL",
+        f"database={db_state} llm={components.get('llm')}",
+    )
+    status, body = request("GET", f"{api}/health/database")
+    record("database health", "PASS" if status in (200, 503) else "FAIL",
+           f"status={(body or {}).get('status')} latency_ms={(body or {}).get('latency_ms')}")
+
+    email, password = os.environ.get("SMOKE_EMAIL"), os.environ.get("SMOKE_PASSWORD")
+    if not (email and password):
+        record("login", "FAIL", "set SMOKE_EMAIL and SMOKE_PASSWORD (admin or super_admin)")
+        return 1
+    status, body = request("POST", f"{api}/auth/login", {"email": email, "password": password})
+    if status != 200:
+        record("login", "FAIL", f"HTTP {status}")
+        return 1
+    TOKEN["access"] = body["access_token"]
+    role = body["user"]["role"]
+    record("login", "PASS", f"role={role}")
+    status, body = request("GET", f"{api}/auth/me/permissions")
+    record("permissions", "PASS" if status == 200 else "FAIL",
+           f"{len((body or {}).get('permissions', []))} permissions")
 
     status, ai = request("GET", f"{api}/ai/status")
     record("ai status", "PASS" if status == 200 else "FAIL", f"HTTP {status}")
@@ -131,6 +171,29 @@ def main() -> int:
     else:
         record("dataset/train/predict", "SKIP", "database not ready")
 
+    if db_state == "ok":
+        code = f"SMOKE-{uuid.uuid4().hex[:8].upper()}"
+        status, emp = request("POST", f"{api}/employees", {
+            "employee_code": code, "first_name": "Smoke", "last_name": "Test",
+            "email": f"{code.lower()}@example.com", "department": "QA",
+            "job_title": "Smoke tester", "hire_date": "2025-01-01", "salary": "1000.00",
+        })
+        record("employee create", "PASS" if status == 201 else "FAIL", f"HTTP {status}")
+        if status == 201:
+            status, _ = request("PATCH", f"{api}/employees/{emp['id']}", {"job_title": "Updated"})
+            record("employee update", "PASS" if status == 200 else "FAIL", f"HTTP {status}")
+            status, body = request("GET", f"{api}/employees", None)
+            record("employee list", "PASS" if status == 200 else "FAIL",
+                   f"total={(body or {}).get('total')}")
+            if args.cleanup:
+                status, _ = request("DELETE", f"{api}/employees/{emp['id']}")
+                expected = 204 if role == "super_admin" else 403
+                record("employee delete", "PASS" if status == expected else "FAIL",
+                       f"HTTP {status} (role={role})")
+        status, body = request("GET", f"{api}/audit-logs?limit=5")
+        record("audit log", "PASS" if status == 200 else "FAIL",
+               f"total={(body or {}).get('total')}")
+
     packages = ai.get("packages", {})
     if packages.get("torch") and packages.get("sentence_transformers"):
         status, body = request(
@@ -154,9 +217,9 @@ def main() -> int:
         detail = f"HTTP {status} finish={(body or {}).get('finish_reason')}"
         if status != 200:
             detail += f" error={(body or {}).get('error', {}).get('code')}"
-        record("llm chat (paid)", "PASS" if status == 200 else "FAIL", detail)
+        record("llm chat (ollama)", "PASS" if status == 200 else "FAIL", detail)
     else:
-        reason = "not configured" if not configured else "pass --with-llm to make a paid call"
+        reason = "not configured" if not configured else "pass --with-llm to call Ollama"
         record("llm chat", "SKIP", reason)
 
     failed = [r for r in results if r[1] == "FAIL"]

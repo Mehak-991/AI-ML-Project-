@@ -4,7 +4,7 @@ from typing import Annotated
 
 import hmac
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
@@ -55,9 +55,9 @@ def liveness(settings: SettingsDep) -> HealthResponse:
     },
 )
 def get_metrics(
+    request: Request,
     db: Annotated[Session, Depends(get_db)],
     settings: SettingsDep,
-    authorization: Annotated[str | None, Header()] = None,
 ) -> PlainTextResponse:
     """Exposes OpenMetrics / Prometheus formatted text metrics for scraper targets.
 
@@ -65,7 +65,7 @@ def get_metrics(
     """
     expected = settings.METRICS_AUTH_TOKEN
     if expected is not None:
-        supplied = (authorization or "").removeprefix("Bearer ").strip()
+        supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         if not hmac.compare_digest(supplied.encode(), expected.get_secret_value().encode()):
             raise AuthenticationError("A valid metrics token is required.")
     from app.core.metrics import collect_prometheus_metrics

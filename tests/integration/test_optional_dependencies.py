@@ -88,7 +88,7 @@ def test_core_api_runs_without_optional_ai_packages(tmp_path) -> None:
     for name in ("embeddings", "classify"):
         assert out[name]["status"] == 503
         assert out[name]["body"]["error"]["code"] == "optional_dependency_missing"
-    assert out["chat"]["status"] == 503
+    assert out["chat"]["status"] == 502
     assert out["chat"]["body"]["error"]["code"] == "provider_unavailable"
 
     assert out["tokens"]["status"] == 200

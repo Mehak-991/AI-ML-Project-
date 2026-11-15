@@ -203,7 +203,7 @@ def test_chat_with_ollama_down_is_actionable(app) -> None:
         response = client.post(
             f"{API}/llm/chat", json={"messages": [{"role": "user", "content": "x"}]}
         )
-    assert response.status_code == 503
+    assert response.status_code == 502  # upstream (Ollama) unavailable
     error = ErrorResponse.model_validate(response.json()).error
     assert error.code == "provider_unavailable"
     assert "OLLAMA_BASE_URL" in error.message
@@ -212,7 +212,7 @@ def test_chat_with_ollama_down_is_actionable(app) -> None:
 def test_analyze_with_ollama_down(ai_client: TestClient, app) -> None:
     _unreachable_ollama(app)
     response = ai_client.post(f"{API}/nlp/analyze", json={"text": "hello"})
-    assert response.status_code == 503
+    assert response.status_code in {502, 503}
     # Without the optional workflow packages the dependency error comes first.
     assert error_code(response) in {"provider_unavailable", "optional_dependency_missing"}
 

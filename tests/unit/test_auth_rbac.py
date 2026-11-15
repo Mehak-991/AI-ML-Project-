@@ -5,7 +5,7 @@ API = "/api/v1"
 
 
 def test_auth_registration_and_login(api_client: TestClient) -> None:
-    # 1. First registered user automatically becomes admin
+    # 1. First registered user automatically becomes super_admin (bootstrap, non-production)
     reg_admin = api_client.post(
         f"{API}/auth/register",
         json={
@@ -16,7 +16,7 @@ def test_auth_registration_and_login(api_client: TestClient) -> None:
     )
     assert reg_admin.status_code == 201, reg_admin.text
     data = reg_admin.json()
-    assert data["role"] == "admin"
+    assert data["role"] == "super_admin"
     assert data["email"] == "admin@example.com"
     assert "password" not in data
 
@@ -59,7 +59,7 @@ def test_auth_registration_and_login(api_client: TestClient) -> None:
     assert "access_token" in tokens
     assert "refresh_token" in tokens
     assert tokens["token_type"] == "bearer"
-    assert tokens["user"]["role"] == "admin"
+    assert tokens["user"]["role"] == "super_admin"
 
     access_token = tokens["access_token"]
     refresh_token = tokens["refresh_token"]
@@ -98,88 +98,47 @@ def test_auth_registration_and_login(api_client: TestClient) -> None:
     assert logout_res.status_code == 200
 
 
-def test_rbac_permissions_and_last_admin_protection(api_client: TestClient) -> None:
-    # Register Admin
-    api_client.post(
-        f"{API}/auth/register",
-        json={"email": "admin2@example.com", "password": "Password123!", "full_name": "Admin 2"},
-    )
-    admin_login = api_client.post(
-        f"{API}/auth/login",
-        json={"email": "admin2@example.com", "password": "Password123!"},
+def _register_and_login(client: TestClient, email: str, role: str | None = None) -> dict:
+    body = {"email": email, "password": "Password123!", "full_name": email.split("@")[0]}
+    if role:
+        body["role"] = role
+    # api_client treats token-less calls as a mock super admin, so elevated roles are allowed.
+    assert client.post(f"{API}/auth/register", json=body).status_code == 201
+    return client.post(
+        f"{API}/auth/login", json={"email": email, "password": "Password123!"}
     ).json()
-    admin_token = admin_login["access_token"]
-    admin_id = admin_login["user"]["id"]
 
-    # Register ML Engineer
-    api_client.post(
-        f"{API}/auth/register",
-        json={
-            "email": "mle@example.com",
-            "password": "Password123!",
-            "full_name": "ML Engineer",
-            "role": "ml_engineer",
-        },
-    )
-    mle_login = api_client.post(
-        f"{API}/auth/login",
-        json={"email": "mle@example.com", "password": "Password123!"},
-    ).json()
-    mle_token = mle_login["access_token"]
 
-    # Register Viewer
-    api_client.post(
-        f"{API}/auth/register",
-        json={
-            "email": "viewer@example.com",
-            "password": "Password123!",
-            "full_name": "Viewer",
-            "role": "viewer",
-        },
-    )
-    viewer_login = api_client.post(
-        f"{API}/auth/login",
-        json={"email": "viewer@example.com", "password": "Password123!"},
-    ).json()
-    viewer_token = viewer_login["access_token"]
+def test_rbac_permissions_and_self_protection(api_client: TestClient) -> None:
+    root = _register_and_login(api_client, "root@example.com")
+    assert root["user"]["role"] == "super_admin"
+    admin = _register_and_login(api_client, "admin@example.com", "admin")
+    user = _register_and_login(api_client, "user@example.com", "user")
+    auth = lambda t: {"Authorization": f"Bearer {t['access_token']}"}  # noqa: E731
 
-    # Test 1: Only admin can access user list
-    res_viewer_users = api_client.get(
-        f"{API}/auth/users",
-        headers={"Authorization": f"Bearer {viewer_token}"},
-    )
-    assert res_viewer_users.status_code == 403
+    # User list: admin and super admin yes, user no.
+    assert api_client.get(f"{API}/auth/users", headers=auth(user)).status_code == 403
+    listing = api_client.get(f"{API}/auth/users", headers=auth(admin))
+    assert listing.status_code == 200
+    assert listing.json()["total"] >= 3
 
-    res_admin_users = api_client.get(
-        f"{API}/auth/users",
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert res_admin_users.status_code == 200
-    assert len(res_admin_users.json()["items"]) >= 3
-
-    # Test 2: Deployment endpoint requires admin (MLE is 403)
+    # Deployment requires super_admin.
     fake_model_id = "00000000-0000-0000-0000-000000000001"
-    deploy_mle = api_client.post(
-        f"{API}/models/{fake_model_id}/deploy",
-        json={"environment": "production"},
-        headers={"Authorization": f"Bearer {mle_token}"},
-    )
-    assert deploy_mle.status_code == 403
+    for tokens in (admin, user):
+        response = api_client.post(
+            f"{API}/models/{fake_model_id}/deploy",
+            json={"environment": "production"},
+            headers=auth(tokens),
+        )
+        assert response.status_code == 403
 
-    # Deploy viewer is 403
-    deploy_viewer = api_client.post(
-        f"{API}/models/{fake_model_id}/deploy",
-        json={"environment": "production"},
-        headers={"Authorization": f"Bearer {viewer_token}"},
+    # Nobody can change their own role, not even the (only) super admin.
+    demote_self = api_client.patch(
+        f"{API}/auth/users/{root['user']['id']}", json={"role": "user"}, headers=auth(root)
     )
-    assert deploy_viewer.status_code == 403
-
-    # Test 3: Last active admin protection
-    demote_res = api_client.patch(
-        f"{API}/auth/users/{admin_id}",
-        json={"role": "viewer"},
-        headers={"Authorization": f"Bearer {admin_token}"},
+    assert demote_self.status_code == 403
+    assert "own role" in demote_self.text
+    deactivate_self = api_client.patch(
+        f"{API}/auth/users/{root['user']['id']}", json={"is_active": False}, headers=auth(root)
     )
-    assert demote_res.status_code == 422
-    assert "last active administrator" in demote_res.text.lower()
-
+    assert deactivate_self.status_code == 403

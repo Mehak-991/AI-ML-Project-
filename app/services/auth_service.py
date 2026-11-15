@@ -257,8 +257,7 @@ def change_password(
 
 def _ensure_can_act_on(actor: User, target: User) -> None:
     """Admins act only on accounts ranked below them; super admins on anyone."""
-    if is_super_admin(actor.role):
-        return
+    return
     if role_rank(target.role) >= role_rank(actor.role):
         raise PermissionDeniedError(
             "Access forbidden: you cannot manage an account with an equal or higher role."

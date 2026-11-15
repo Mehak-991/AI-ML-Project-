@@ -16,6 +16,7 @@ from app.database.session import get_db
 from app.main import create_app
 from app.ml.synthetic import make_classification_frame
 from app.utils.logging import JsonFormatter, RequestIdFilter, request_id_var
+from tests.ai_fakes import FakeChat
 from tests.helpers import to_csv_bytes
 
 API = "/api/v1"
@@ -144,8 +145,16 @@ def test_invalid_content_length(client: TestClient) -> None:
 
 def test_uploads_get_the_larger_upload_limit(make_settings, session_factory) -> None:
     """A ~10 KB CSV passes even though plain JSON bodies are capped at ~1 KB."""
+    import uuid
+
+    from app.api.deps import get_current_user
+    from app.database.models.user import User
+
     app = create_app(make_settings(MAX_REQUEST_BODY_MB=0.001, MAX_UPLOAD_SIZE_MB=1))
     app.dependency_overrides[get_db] = lambda: session_factory()
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=uuid.uuid4(), email="up@example.com", role="admin", is_active=True
+    )
     with TestClient(app) as client:
         response = client.post(
             f"{API}/datasets/validate",
@@ -183,6 +192,9 @@ def test_rate_limit_returns_429_with_retry_after(make_settings) -> None:
     app.dependency_overrides[get_current_user] = lambda: User(
         id=uuid.uuid4(), email="rate@example.com", role="super_admin", is_active=True
     )
+    from app.api.deps import get_chat_service
+
+    app.dependency_overrides[get_chat_service] = lambda: FakeChat()
     body = {"messages": [{"role": "user", "content": "hi"}]}
     with TestClient(app) as client:
         statuses = [client.post(f"{API}/llm/chat", json=body).status_code for _ in range(3)]
@@ -190,7 +202,7 @@ def test_rate_limit_returns_429_with_retry_after(make_settings) -> None:
         # Other buckets and health checks are unaffected.
         assert client.post(f"{API}/tokens/count", json={"text": "a"}).status_code == 200
         assert all(client.get("/health").status_code == 200 for _ in range(5))
-    assert statuses == [503, 503, 429]  # 503 = no API key configured, but still counted
+    assert statuses == [200, 200, 429]
     assert limited.status_code == 429
     assert code(limited) == "rate_limited"
     assert int(limited.headers["retry-after"]) >= 1
@@ -222,9 +234,12 @@ def test_rate_limiting_can_be_disabled(make_settings) -> None:
     app.dependency_overrides[get_current_user] = lambda: User(
         id=uuid.uuid4(), email="rate@example.com", role="super_admin", is_active=True
     )
+    from app.api.deps import get_chat_service
+
+    app.dependency_overrides[get_chat_service] = lambda: FakeChat()
     with TestClient(app) as client:
         body = {"messages": [{"role": "user", "content": "x"}]}
-        assert all(client.post(f"{API}/llm/chat", json=body).status_code == 503 for _ in range(3))
+        assert all(client.post(f"{API}/llm/chat", json=body).status_code == 200 for _ in range(3))
 
 
 # --- database failures ---------------------------------------------------------------------
@@ -401,15 +416,15 @@ def _bearer(tokens: dict) -> dict:
 
 @pytest.fixture
 def actors(secure_client) -> dict:
-    """admin (bootstrap), two ML engineers created by the admin, and a viewer."""
+    """'admin' = bootstrap super_admin, mle1/mle2 = 'admin' role, 'viewer' = 'user' role."""
     c = secure_client
     bootstrap = c.post(f"{API}/auth/register", json={"email": "root@x.com", "password": PASSWORD})
     assert bootstrap.status_code == 201
     admin = _login(c, "root@x.com")
     for email, role in (
-        ("mle1@x.com", "ml_engineer"),
-        ("mle2@x.com", "ml_engineer"),
-        ("view@x.com", "viewer"),
+        ("mle1@x.com", "admin"),
+        ("mle2@x.com", "admin"),
+        ("view@x.com", "user"),
     ):
         r = c.post(
             f"{API}/auth/register",
@@ -561,11 +576,16 @@ def test_legacy_models_without_owner_stay_usable(
     with session_factory() as session:
         session.get(MLModel, _uuid.UUID(owned_model["id"])).owner_id = None
         session.commit()
-    response = _predict(secure_client, owned_model["id"], _bearer(actors["viewer"]))
+    # Read-only users can see the legacy model but never run it (no write access).
+    model_url = f"{API}/models/{owned_model['id']}"
+    assert secure_client.get(model_url, headers=_bearer(actors["viewer"])).status_code == 200
+    assert _predict(secure_client, owned_model["id"], _bearer(actors["viewer"])).status_code == 403
+    # Any admin may use it; each sees only their own requests.
+    response = _predict(secure_client, owned_model["id"], _bearer(actors["mle2"]))
     assert response.status_code == 200, response.text
-    # The viewer sees only their own request; other non-admin users do not.
-    assert _history_total(secure_client, actors["viewer"]) == 1
+    assert _history_total(secure_client, actors["mle2"]) == 1
     assert _history_total(secure_client, actors["mle1"]) == 0
+    assert _history_total(secure_client, actors["viewer"]) == 0
 
 
 @pytest.mark.parametrize(
@@ -643,14 +663,14 @@ def test_deactivation_revokes_refresh_tokens(secure_client, actors) -> None:
 
 def test_self_registration_cannot_grant_elevated_roles(secure_client, actors) -> None:
     c = secure_client
-    for role in ("admin", "ml_engineer"):
+    for role in ("admin", "super_admin"):
         r = c.post(
             f"{API}/auth/register",
             json={"email": f"{role}-self@x.com", "password": PASSWORD, "role": role},
         )
         assert r.status_code == 403, role
         assert code(r) == "permission_denied"
-    # Non-admins cannot grant elevated roles either.
+    # Admins cannot grant elevated roles either; only super admins can.
     r = c.post(
         f"{API}/auth/register",
         json={"email": "esc@x.com", "password": PASSWORD, "role": "admin"},
@@ -658,14 +678,15 @@ def test_self_registration_cannot_grant_elevated_roles(secure_client, actors) ->
     )
     assert r.status_code == 403
     r = c.post(f"{API}/auth/register", json={"email": "plain@x.com", "password": PASSWORD})
-    assert r.status_code == 201 and r.json()["role"] == "viewer"
+    assert r.status_code == 201 and r.json()["role"] == "user"
 
 
 def test_rbac_role_gates_still_apply(secure_client, actors) -> None:
     payload = {"dataset_id": "00000000-0000-0000-0000-000000000001", "target_column": "label"}
     train = secure_client.post(f"{API}/models/train", json=payload, headers=_bearer(actors["viewer"]))
     assert train.status_code == 403
-    assert secure_client.get(f"{API}/auth/users", headers=_bearer(actors["mle1"])).status_code == 403
+    assert secure_client.get(f"{API}/auth/users", headers=_bearer(actors["viewer"])).status_code == 403
+    assert secure_client.get(f"{API}/auth/users", headers=_bearer(actors["mle1"])).status_code == 200
     assert secure_client.get(f"{API}/auth/users", headers=_bearer(actors["admin"])).status_code == 200
 
 
@@ -691,8 +712,15 @@ def test_auth_rate_limit_enforced(make_settings) -> None:
     assert statuses[2] == 429
 
 
-def test_weak_jwt_secret_flagged_in_production(make_settings) -> None:
+def test_weak_jwt_secret_rejected_in_production(make_settings) -> None:
+    from pydantic import ValidationError
+
+    from app.core.config import DEFAULT_JWT_SECRET
+
+    assert make_settings(JWT_SECRET_KEY=DEFAULT_JWT_SECRET).jwt_secret_is_weak
+    assert make_settings(JWT_SECRET_KEY="short").jwt_secret_is_weak
     base = {"APP_ENV": "production", "DATABASE_URL": "postgresql+psycopg://u:p@h/d"}
-    assert make_settings(**base).jwt_secret_is_weak
-    assert make_settings(**base, JWT_SECRET_KEY="short").jwt_secret_is_weak
+    for weak in (DEFAULT_JWT_SECRET, "short"):
+        with pytest.raises(ValidationError, match="JWT_SECRET_KEY"):
+            make_settings(**base, JWT_SECRET_KEY=weak)
     assert not make_settings(**base, JWT_SECRET_KEY="x" * 48).jwt_secret_is_weak

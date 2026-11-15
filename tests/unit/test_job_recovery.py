@@ -305,9 +305,9 @@ def test_job_timeout_settings_validated() -> None:
 def test_job_list_total_and_metrics_are_aggregated_in_sql(db_session) -> None:
     from app.database.models.user import User
 
-    owner = User(email="o@x.com", hashed_password="x", role="ml_engineer")
-    other = User(email="p@x.com", hashed_password="x", role="ml_engineer")
-    admin = User(email="a@x.com", hashed_password="x", role="admin")
+    owner = User(email="o@x.com", hashed_password="x", role="admin")
+    other = User(email="p@x.com", hashed_password="x", role="admin")
+    admin = User(email="a@x.com", hashed_password="x", role="super_admin")
     db_session.add_all([owner, other, admin])
     db_session.commit()
     for status in ["queued", "queued", "running", "completed", "failed", "cancelled", "retry_pending"]:

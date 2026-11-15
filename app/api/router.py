@@ -3,11 +3,13 @@
 from fastapi import APIRouter
 
 from app.api.routes import (
+    admin,
     ai,
     auth,
     datasets,
     deployments,
     drift,
+    employees,
     experiments,
     explainability,
     health,
@@ -42,4 +44,6 @@ api_v1_router.include_router(experiments.router)
 api_v1_router.include_router(explainability.router)
 api_v1_router.include_router(jobs.router)
 api_v1_router.include_router(ai.router)
+api_v1_router.include_router(employees.router)
+api_v1_router.include_router(admin.router)
 

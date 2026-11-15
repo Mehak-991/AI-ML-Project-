@@ -54,10 +54,15 @@ def check_settings(s: Settings, r: Report) -> None:
     r.info(f"CORS origins: {s.cors_origins or 'none (browser cross-origin calls blocked)'}")
     if s.DATABASE_URL is None:
         r.warn("DATABASE_URL not set: dataset/model endpoints will return 503")
-    if s.OPENAI_API_KEY is None:
-        r.info("OPENAI_API_KEY not set: /llm/chat and /nlp/analyze will return 503")
-    else:
-        r.ok(f"OpenAI key configured; model={s.OPENAI_MODEL}; allowed={s.allowed_llm_models}")
+    r.ok(
+        f"LLM: Ollama at {s.OLLAMA_BASE_URL}; model={s.OLLAMA_MODEL}; "
+        f"allowed={s.allowed_llm_models}; num_ctx={s.OLLAMA_NUM_CTX}"
+    )
+    if prod and s.bootstrap_via_registration:
+        r.warn("AUTH_BOOTSTRAP_VIA_REGISTRATION=true in production: the first registrant "
+               "becomes super_admin. Use scripts/create_super_admin.py instead.")
+    if prod and s.METRICS_AUTH_TOKEN is None:
+        r.warn("METRICS_AUTH_TOKEN not set: GET /metrics is public")
 
 
 def check_directories(s: Settings, r: Report) -> None:

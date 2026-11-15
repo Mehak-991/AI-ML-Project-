@@ -1,13 +1,13 @@
 """LLM chat completion behind a provider-neutral interface (`ChatService`), implemented for
-the OpenAI Responses API and for a local Ollama server (`/api/chat`).
+a local Ollama server (`/api/chat`). No hosted provider and no API key is involved.
 
-Privacy defaults: prompts and completions are never logged unless
-LLM_LOG_CONTENT=true, the API key is never logged, and OpenAI requests are sent with
-`store=False` so the provider does not retain them for later retrieval.
+To add another local backend later, implement `ChatService.complete` and select it in
+`app.ai.container.AIServices.chat_service`; routes and workflows depend only on the protocol.
+
+Privacy default: prompts and completions are never logged unless LLM_LOG_CONTENT=true.
 """
 
 import logging
-import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -15,15 +15,11 @@ from typing import Any, Literal, Protocol
 
 import httpx
 
-from app.ai.optional import require
 from app.ai.tokens import TokenCounter
 from app.core.exceptions import (
     AppError,
     DataValidationError,
-    ProviderAuthenticationError,
     ProviderError,
-    ProviderQuotaExceededError,
-    ProviderRateLimitError,
     ProviderRequestRejectedError,
     ProviderTimeoutError,
     ProviderUnavailableError,
@@ -126,178 +122,7 @@ def validate_chat_request(
     return budget
 
 
-def _retry_after_header(exc: Any) -> dict[str, str] | None:
-    response = getattr(exc, "response", None)
-    if response is None:
-        return None
-    raw = response.headers.get("retry-after")
-    if raw is None and (ms := response.headers.get("retry-after-ms")):
-        try:
-            raw = str(float(ms) / 1000)
-        except ValueError:
-            raw = None
-    try:
-        seconds = math.ceil(float(raw)) if raw is not None else None
-    except ValueError:
-        seconds = None
-    return {"Retry-After": str(max(seconds, 1))} if seconds is not None else None
-
-
-def map_openai_error(exc: Exception, *, model: str) -> AppError:
-    """Translate OpenAI SDK exceptions into client-safe application errors."""
-    import openai
-
-    status = getattr(exc, "status_code", None)
-    code = getattr(exc, "code", None)
-    logger.warning(
-        "OpenAI request failed: %s status=%s code=%s request_id=%s",
-        type(exc).__name__,
-        status,
-        code,
-        getattr(exc, "request_id", None),
-    )
-    # APITimeoutError subclasses APIConnectionError, so it must be checked first.
-    if isinstance(exc, openai.APITimeoutError):
-        return ProviderTimeoutError()
-    if isinstance(exc, openai.APIConnectionError):
-        return ProviderUnavailableError()
-    if isinstance(exc, openai.AuthenticationError | openai.PermissionDeniedError):
-        return ProviderAuthenticationError()
-    if isinstance(exc, openai.RateLimitError):
-        if code == "insufficient_quota":
-            return ProviderQuotaExceededError()
-        return ProviderRateLimitError(headers=_retry_after_header(exc))
-    if isinstance(exc, openai.NotFoundError):
-        return ProviderError(
-            f"The provider does not recognise model '{model}'. Check OPENAI_MODEL.",
-            code="provider_model_not_found",
-        )
-    if isinstance(
-        exc, openai.BadRequestError | openai.UnprocessableEntityError | openai.ConflictError
-    ):
-        return ProviderRequestRejectedError(
-            details={"provider_code": code, "param": getattr(exc, "param", None)}
-        )
-    if isinstance(exc, openai.APIStatusError) and (status or 0) >= 500:
-        return ProviderUnavailableError()
-    return ProviderError()
-
-
-class OpenAIChatService:
-    """Chat completion using the official `openai` SDK (Responses API)."""
-
-    def __init__(
-        self,
-        *,
-        api_key: str,
-        default_model: str,
-        allowed_models: list[str],
-        limits: ChatLimits,
-        token_counter: TokenCounter,
-        timeout_seconds: float = 30.0,
-        max_retries: int = 2,
-        base_url: str | None = None,
-        organization: str | None = None,
-        log_content: bool = False,
-        client: Any = None,
-    ) -> None:
-        self.default_model = default_model
-        self.allowed_models = allowed_models
-        self.limits = limits
-        self._token_counter = token_counter
-        self._log_content = log_content
-        if not log_content:
-            # The SDK logs full request bodies (prompts) at DEBUG on the "openai" logger.
-            # Keep that out of the logs even when the app runs with LOG_LEVEL=DEBUG.
-            sdk_logger = logging.getLogger("openai")
-            if sdk_logger.getEffectiveLevel() < logging.INFO:
-                sdk_logger.setLevel(logging.INFO)
-        if client is None:
-            openai = require("openai", "LLM chat completion")
-            # The SDK retries connection errors, 408/409/429 and 5xx with exponential backoff.
-            client = openai.OpenAI(
-                api_key=api_key,
-                base_url=base_url,
-                organization=organization,
-                timeout=timeout_seconds,
-                max_retries=max_retries,
-            )
-        self._client = client
-
-    def complete(
-        self,
-        messages: list[ChatMessage],
-        *,
-        model: str | None = None,
-        max_output_tokens: int | None = None,
-        temperature: float | None = None,
-    ) -> ChatResult:
-        import openai
-
-        model = model or self.default_model
-        budget = validate_chat_request(
-            messages,
-            model=model,
-            allowed_models=self.allowed_models,
-            max_output_tokens=max_output_tokens,
-            limits=self.limits,
-            token_counter=self._token_counter,
-        )
-        params: dict[str, Any] = {
-            "model": model,
-            "input": [{"role": m.role, "content": m.content} for m in messages],
-            "max_output_tokens": budget,
-            "store": False,
-        }
-        if temperature is not None:  # some reasoning models reject temperature entirely
-            params["temperature"] = temperature
-        if self._log_content:
-            logger.debug("LLM request messages=%s", params["input"])
-
-        started = time.perf_counter()
-        try:
-            response = self._client.responses.create(**params)
-        except openai.OpenAIError as exc:
-            raise map_openai_error(exc, model=model) from exc
-
-        result = self._to_result(response, model)
-        logger.info(
-            "LLM call model=%s finish=%s input_tokens=%s output_tokens=%s duration_ms=%d",
-            result.model,
-            result.finish_reason,
-            result.usage.input_tokens if result.usage else None,
-            result.usage.output_tokens if result.usage else None,
-            (time.perf_counter() - started) * 1000,
-        )
-        if self._log_content:
-            logger.debug("LLM response content=%s", result.content)
-        return result
-
-    @staticmethod
-    def _to_result(response: Any, requested_model: str) -> ChatResult:
-        if getattr(response, "status", None) == "failed":
-            raise ProviderError("The LLM provider reported a failed response.")
-        finish_reason = "stop"
-        if getattr(response, "status", None) == "incomplete":
-            details = getattr(response, "incomplete_details", None)
-            finish_reason = getattr(details, "reason", None) or "incomplete"
-        usage = getattr(response, "usage", None)
-        return ChatResult(
-            id=str(getattr(response, "id", "")),
-            model=str(getattr(response, "model", None) or requested_model),
-            content=getattr(response, "output_text", "") or "",
-            finish_reason=finish_reason,
-            usage=ChatUsage(
-                input_tokens=int(usage.input_tokens),
-                output_tokens=int(usage.output_tokens),
-                total_tokens=int(usage.total_tokens),
-            )
-            if usage
-            else None,
-        )
-
-
-# Ollama "done_reason" -> this API's finish_reason vocabulary (shared with OpenAI).
+# Ollama "done_reason" -> this API's finish_reason vocabulary.
 _OLLAMA_FINISH_REASONS = {"stop": "stop", "length": "max_output_tokens"}
 
 
@@ -310,9 +135,9 @@ def _non_negative_int(value: Any) -> int | None:
 class OllamaChatService:
     """Chat completion against a local Ollama server (`POST /api/chat`, non-streaming).
 
-    No API key is involved. The same request validation (allow-list, message, character
-    and token limits) runs before any call, and failures map to the same provider error
-    codes as the OpenAI service. Prompt/response text is never logged unless log_content.
+    No API key is involved. Request validation (allow-list, message, character and token
+    limits) runs before any call, and failures map to client-safe provider error codes.
+    Prompt/response text is never logged unless log_content.
     """
 
     def __init__(
@@ -325,9 +150,15 @@ class OllamaChatService:
         token_counter: TokenCounter,
         timeout_seconds: float = 180.0,
         log_content: bool = False,
+        num_ctx: int | None = None,
+        num_thread: int | None = None,
+        keep_alive: str | None = None,
         client: httpx.Client | None = None,
     ) -> None:
         self.default_model = default_model
+        self._num_ctx = num_ctx
+        self._num_thread = num_thread
+        self._keep_alive = keep_alive
         self.allowed_models = allowed_models
         self.limits = limits
         self._token_counter = token_counter
@@ -340,6 +171,28 @@ class OllamaChatService:
 
     def close(self) -> None:
         self._client.close()
+
+    def health(self, timeout_seconds: float = 2.0) -> dict[str, Any]:
+        """Is the server reachable, and is the default model pulled? Never raises."""
+        try:
+            response = self._client.get("/api/tags", timeout=timeout_seconds)
+        except (httpx.HTTPError, RuntimeError) as exc:
+            logger.info("Ollama health check failed: %s", type(exc).__name__)
+            return {"reachable": False, "model_available": False}
+        if response.status_code != 200:
+            return {"reachable": False, "model_available": False}
+        try:
+            names = {
+                str(m.get("name") or m.get("model"))
+                for m in response.json().get("models", [])
+                if isinstance(m, dict)
+            }
+        except (ValueError, AttributeError):
+            names = set()
+        wanted = self.default_model
+        # "llama3.2" and "llama3.2:latest" name the same model.
+        available = wanted in names or (":" not in wanted and f"{wanted}:latest" in names)
+        return {"reachable": True, "model_available": available}
 
     def complete(
         self,
@@ -361,12 +214,18 @@ class OllamaChatService:
         options: dict[str, Any] = {"num_predict": budget}
         if temperature is not None:
             options["temperature"] = temperature
-        payload = {
+        if self._num_ctx is not None:
+            options["num_ctx"] = self._num_ctx
+        if self._num_thread is not None:
+            options["num_thread"] = self._num_thread
+        payload: dict[str, Any] = {
             "model": model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "stream": False,
             "options": options,
         }
+        if self._keep_alive is not None:
+            payload["keep_alive"] = self._keep_alive
         if self._log_content:
             logger.debug("Ollama request messages=%s", payload["messages"])
 

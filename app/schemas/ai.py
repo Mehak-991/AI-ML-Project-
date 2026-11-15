@@ -77,8 +77,7 @@ class ChatRequest(StrictModel):
     model: ModelName | None = Field(
         default=None,
         description=(
-            "Defaults to the selected provider's model (OLLAMA_MODEL or OPENAI_MODEL). Other "
-            "values must be in OLLAMA_ALLOWED_MODELS / OPENAI_ALLOWED_MODELS."
+            "Defaults to OLLAMA_MODEL. Other values must be listed in OLLAMA_ALLOWED_MODELS."
         ),
     )
     max_output_tokens: int | None = Field(default=None, ge=16, le=32_768)
@@ -86,7 +85,7 @@ class ChatRequest(StrictModel):
         default=None,
         ge=0,
         le=2,
-        description="Omit to use the model default (OpenAI reasoning models reject it).",
+        description="Omit to use the model default.",
     )
 
 

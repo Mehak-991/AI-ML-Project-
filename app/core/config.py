@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = Field(default="HS256")
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, ge=1)
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7, ge=1)
+    # Lets the very first account created through POST /auth/register become super_admin.
+    # None = allowed outside production only. In production create the first super admin
+    # with `python scripts/create_super_admin.py` instead.
+    AUTH_BOOTSTRAP_VIA_REGISTRATION: bool | None = None
+
+    # Optional bearer token required by GET /metrics (Prometheus). Unset = public endpoint.
+    METRICS_AUTH_TOKEN: SecretStr | None = None
 
     # Comma-separated in the environment, e.g. "https://a.com,https://b.com".
     # None means "use the environment's default" (empty list in production).
@@ -86,27 +93,26 @@ class Settings(BaseSettings):
     # (pickles are not guaranteed compatible); warn: load anyway and log a warning.
     MODEL_COMPATIBILITY_CHECK: Literal["strict", "warn"] = "strict"
 
-    # --- LLM provider. "openai" (hosted, needs OPENAI_API_KEY) or "ollama" (local, free). ---
-    # Default stays "openai" so deployments without this setting behave exactly as before.
-    LLM_PROVIDER: Literal["openai", "ollama"] = "openai"
+    # --- LLM provider: local inference through Ollama (no API keys, no hosted provider). ---
+    # Kept as a setting so another local backend can be added behind the ChatService
+    # interface (app.ai.llm) without changing callers.
+    LLM_PROVIDER: Literal["ollama"] = "ollama"
 
-    # Ollama (used when LLM_PROVIDER=ollama). No API key involved.
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
     OLLAMA_MODEL: str = "llama3.2:3b"
     # Other locally pulled models a request may select (comma-separated).
     OLLAMA_ALLOWED_MODELS: Annotated[list[str], NoDecode] = Field(default_factory=list)
     # Local CPU inference is slow; this bounds one whole /api/chat call (incl. model load).
     OLLAMA_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0, le=3600)
-
-    # OpenAI (used when LLM_PROVIDER=openai). Optional: the app starts without a key.
-    OPENAI_API_KEY: SecretStr | None = None
-    OPENAI_MODEL: str = "gpt-5.4-mini"
-    # Models a request may select; empty means only OPENAI_MODEL.
-    OPENAI_ALLOWED_MODELS: Annotated[list[str], NoDecode] = Field(default_factory=list)
-    OPENAI_BASE_URL: str | None = None
-    OPENAI_ORGANIZATION: str | None = None
-    OPENAI_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, le=600)
-    OPENAI_MAX_RETRIES: int = Field(default=2, ge=0, le=10)
+    # CPU-friendly runtime options sent with every request.
+    # Context window: smaller = less RAM and faster prompt processing on CPU.
+    OLLAMA_NUM_CTX: int = Field(default=4096, ge=256, le=131_072)
+    # CPU threads for inference; None lets Ollama decide (usually physical cores).
+    OLLAMA_NUM_THREAD: int | None = Field(default=None, ge=1, le=256)
+    # How long Ollama keeps the model in memory after a request ("5m", "0" = unload now).
+    OLLAMA_KEEP_ALIVE: str = "5m"
+    # Readiness probe: also report whether Ollama is reachable (never fails readiness).
+    OLLAMA_HEALTHCHECK_ENABLED: bool = True
     LLM_MAX_MESSAGES: int = Field(default=50, ge=1, le=500)
     LLM_MAX_INPUT_CHARS: int = Field(default=32_000, ge=1)
     LLM_MAX_INPUT_TOKENS: int = Field(default=8_000, ge=1)
@@ -159,7 +165,7 @@ class Settings(BaseSettings):
             raise ValueError("OLLAMA_BASE_URL must start with http:// or https://")
         return value
 
-    @field_validator("OPENAI_ALLOWED_MODELS", "OLLAMA_ALLOWED_MODELS", mode="before")
+    @field_validator("OLLAMA_ALLOWED_MODELS", mode="before")
     @classmethod
     def _split_models(cls, value: object) -> object:
         if isinstance(value, str):
@@ -168,9 +174,9 @@ class Settings(BaseSettings):
 
     @field_validator(
         "DATABASE_URL",
-        "OPENAI_API_KEY",
-        "OPENAI_BASE_URL",
-        "OPENAI_ORGANIZATION",
+        "METRICS_AUTH_TOKEN",
+        "OLLAMA_NUM_THREAD",
+        "AUTH_BOOTSTRAP_VIA_REGISTRATION",
         "EMBEDDING_DIMENSION",
         "AI_MODEL_CACHE_DIR",
         mode="before",
@@ -217,6 +223,11 @@ class Settings(BaseSettings):
             problems.append("DEBUG must be false when APP_ENV=production")
         if self.CORS_ORIGINS and "*" in self.CORS_ORIGINS:
             problems.append("CORS_ORIGINS must not contain '*' when APP_ENV=production")
+        if self.jwt_secret_is_weak:
+            problems.append(
+                "JWT_SECRET_KEY must be set to at least 32 random bytes (not the shipped "
+                "default) when APP_ENV=production; generate one with: openssl rand -hex 32"
+            )
         if problems:
             raise ValueError("; ".join(problems))
         return self
@@ -241,18 +252,19 @@ class Settings(BaseSettings):
 
     @property
     def active_llm_model(self) -> str:
-        """Default chat model of the selected provider."""
-        return self.OLLAMA_MODEL if self.LLM_PROVIDER == "ollama" else self.OPENAI_MODEL
+        """Default chat model."""
+        return self.OLLAMA_MODEL
 
     @property
     def allowed_llm_models(self) -> list[str]:
-        """Models a chat request may select, for the selected provider only."""
-        extra = (
-            self.OLLAMA_ALLOWED_MODELS
-            if self.LLM_PROVIDER == "ollama"
-            else self.OPENAI_ALLOWED_MODELS
-        )
-        return list(dict.fromkeys([self.active_llm_model, *extra]))
+        """Models a chat request may select."""
+        return list(dict.fromkeys([self.OLLAMA_MODEL, *self.OLLAMA_ALLOWED_MODELS]))
+
+    @property
+    def bootstrap_via_registration(self) -> bool:
+        if self.AUTH_BOOTSTRAP_VIA_REGISTRATION is not None:
+            return self.AUTH_BOOTSTRAP_VIA_REGISTRATION
+        return not self.is_production
 
     @property
     def cors_origins(self) -> list[str]:

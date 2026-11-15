@@ -46,9 +46,21 @@ import uuid
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.core import security
 from collections.abc import Generator
-from app.core.exceptions import DatabaseNotConfiguredError
+
+from app.core import security
+from app.core.exceptions import (
+    DatabaseNotConfiguredError,
+    PermissionDeniedError,
+    ServiceUnavailableError,
+)
+from app.core.permissions import (
+    ROLE_VALUES,
+    WRITE_PERMISSIONS,
+    Permission,
+    has_permission,
+    is_super_admin,
+)
 from app.database.models.user import User
 from app.repositories.users import UserRepository
 
@@ -82,6 +94,11 @@ def get_db_optional(request: Request) -> Generator[Session | None, None, None]:
 DbOptionalSession = Annotated[Session | None, Depends(get_db_optional)]
 
 
+def _token_version_matches(payload: dict, user: User) -> bool:
+    # Tokens issued before token versioning carry no "ver"; they match version 0 only.
+    return payload.get("ver", 0) == user.token_version
+
+
 def get_current_user_optional(
     auth: Annotated[HTTPAuthorizationCredentials | None, Security(security_bearer)],
     db: DbOptionalSession,
@@ -98,7 +115,7 @@ def get_current_user_optional(
         if db is None:
             return None
         user = UserRepository(db).get(user_id)
-        if not user or not user.is_active:
+        if not user or not user.is_active or not _token_version_matches(payload, user):
             return None
         return user
     except Exception:
@@ -141,6 +158,13 @@ def get_current_user(
                 detail="User account is deactivated.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        if not _token_version_matches(payload, user):
+            # Password/role changed or account deactivated since this token was issued.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session is no longer valid. Please sign in again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         return user
     except HTTPException:
         raise
@@ -162,15 +186,66 @@ CurrentUserDep = Annotated[User, Depends(get_current_user)]
 CurrentUserOptionalDep = Annotated[User | None, Depends(get_current_user_optional)]
 
 
+class MaintenanceModeError(ServiceUnavailableError):
+    code = "maintenance_mode"
+    message = "The application is in maintenance mode; changes are temporarily disabled."
+
+
+def _ensure_not_in_maintenance(db: Session | None, user: User) -> None:
+    from app.services import settings_service
+
+    if is_super_admin(user.role) or db is None:
+        return
+    if settings_service.get_value(db, "maintenance_mode"):
+        raise MaintenanceModeError()
+
+
+def require_permission(permission: Permission):
+    """Dependency factory: the authenticated user's *stored* role must grant `permission`.
+
+    The role comes from the database row loaded in get_current_user, never from the token
+    or the request. Write permissions are additionally blocked in maintenance mode for
+    everyone except super admins.
+    """
+
+    def _permission_checker(current_user: CurrentUserDep, db: DbOptionalSession) -> User:
+        if not has_permission(current_user.role, permission):
+            auth_logger.info(
+                "Permission denied",
+                extra={"permission": permission.value, "role": current_user.role},
+            )
+            raise PermissionDeniedError(
+                "Access forbidden: your role does not permit this action.",
+                details={"required_permission": permission.value},
+            )
+        if permission in WRITE_PERMISSIONS:
+            _ensure_not_in_maintenance(db, current_user)
+        return current_user
+
+    _permission_checker.__name__ = f"require_{permission.name.lower()}"
+    return _permission_checker
+
+
 def require_role(*allowed_roles: str):
-    """Factory dependency enforcing RBAC roles: 'admin', 'ml_engineer', 'viewer'."""
+    """Dependency factory restricting an endpoint to explicit roles.
+
+    Prefer require_permission; this exists for the rare endpoint tied to a role itself.
+    """
+    unknown = set(allowed_roles) - set(ROLE_VALUES)
+    if unknown:
+        raise ValueError(f"Unknown roles: {sorted(unknown)}")
 
     def _role_checker(current_user: CurrentUserDep) -> User:
         if current_user.role not in allowed_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access forbidden: role '{current_user.role}' lacks permission for this action. Required: {', '.join(allowed_roles)}.",
+            raise PermissionDeniedError(
+                "Access forbidden: your role does not permit this action.",
             )
         return current_user
 
     return _role_checker
+
+
+# Ready-made annotated dependencies for route signatures.
+MLReader = Annotated[User, Depends(require_permission(Permission.ML_READ))]
+MLWriter = Annotated[User, Depends(require_permission(Permission.ML_WRITE))]
+MLDeployer = Annotated[User, Depends(require_permission(Permission.ML_DEPLOY))]

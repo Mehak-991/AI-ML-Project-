@@ -11,15 +11,14 @@ from typing import Any
 
 from app.ai.classification import TextClassificationService
 from app.ai.embeddings import EmbeddingService, SentenceTransformerBackend
-from app.ai.llm import ChatLimits, ChatService, OllamaChatService, OpenAIChatService
+from app.ai.llm import ChatLimits, ChatService, OllamaChatService
 from app.ai.model_cache import ModelCache
-from app.ai.optional import EXTRA_FOR_MODULE, is_available, require
+from app.ai.optional import EXTRA_FOR_MODULE, is_available
 from app.ai.runtime import InferenceExecutor, configure_hf_environment, resolve_device
 from app.ai.tokens import TokenCounter
 from app.ai.transformer_inference import TransformerInferenceService
 from app.ai.workflows.text_analysis import TextAnalysisWorkflow
 from app.core.config import Settings
-from app.core.exceptions import ProviderNotConfiguredError
 
 
 class AIServices:
@@ -30,7 +29,7 @@ class AIServices:
         self.executor = InferenceExecutor(
             settings.AI_MAX_CONCURRENT_INFERENCES, settings.AI_INFERENCE_TIMEOUT_SECONDS
         )
-        # Default model = the selected provider's model (exact for OpenAI, estimated for Ollama).
+        # Token counts for local Llama-family models are estimates (see app.ai.tokens).
         self.token_counter = TokenCounter(settings.active_llm_model)
         self._lock = threading.Lock()
         self._chat: ChatService | None = None
@@ -82,48 +81,37 @@ class AIServices:
         )
 
     def chat_service(self) -> ChatService:
-        """The LLM selected by LLM_PROVIDER (built once, reused across requests).
+        """The configured local LLM (built once, reused across requests).
 
-        ollama: local server, no API key needed. openai: raises a clear 503 if no key is set.
+        Only Ollama is supported; no API key is needed. Whether the server is up shows on
+        first use (503 provider_unavailable) and in the readiness probe.
         """
         if self._chat is not None:
             return self._chat
         s = self.settings
-        if s.LLM_PROVIDER == "ollama":
-            with self._lock:
-                if self._chat is None:
-                    self._chat = OllamaChatService(
-                        base_url=s.OLLAMA_BASE_URL,
-                        default_model=s.OLLAMA_MODEL,
-                        allowed_models=s.allowed_llm_models,
-                        limits=self._chat_limits(),
-                        token_counter=self.token_counter,
-                        timeout_seconds=s.OLLAMA_TIMEOUT_SECONDS,
-                        log_content=s.LLM_LOG_CONTENT,
-                    )
-            return self._chat
-        if s.OPENAI_API_KEY is None:
-            raise ProviderNotConfiguredError(
-                "No LLM provider is configured. Set OPENAI_API_KEY in .env (see .env.example), "
-                "or use a local model with LLM_PROVIDER=ollama, and restart the server.",
-                details={"setting": "OPENAI_API_KEY"},
-            )
-        require("openai", "LLM chat completion")
         with self._lock:
             if self._chat is None:
-                self._chat = OpenAIChatService(
-                    api_key=s.OPENAI_API_KEY.get_secret_value(),
-                    default_model=s.OPENAI_MODEL,
+                self._chat = OllamaChatService(
+                    base_url=s.OLLAMA_BASE_URL,
+                    default_model=s.OLLAMA_MODEL,
                     allowed_models=s.allowed_llm_models,
                     limits=self._chat_limits(),
                     token_counter=self.token_counter,
-                    timeout_seconds=s.OPENAI_TIMEOUT_SECONDS,
-                    max_retries=s.OPENAI_MAX_RETRIES,
-                    base_url=s.OPENAI_BASE_URL,
-                    organization=s.OPENAI_ORGANIZATION,
+                    timeout_seconds=s.OLLAMA_TIMEOUT_SECONDS,
                     log_content=s.LLM_LOG_CONTENT,
+                    num_ctx=s.OLLAMA_NUM_CTX,
+                    num_thread=s.OLLAMA_NUM_THREAD,
+                    keep_alive=s.OLLAMA_KEEP_ALIVE,
                 )
         return self._chat
+
+    def llm_health(self) -> dict[str, Any]:
+        """Reachability of the local LLM server and its default model. Never raises."""
+        chat = self.chat_service()
+        health = getattr(chat, "health", None)
+        if not callable(health):
+            return {"reachable": None, "model_available": None}
+        return health()
 
     def text_analysis(self, *, include_sentiment: bool) -> TextAnalysisWorkflow:
         chat = self.chat_service()
@@ -139,9 +127,9 @@ class AIServices:
             "packages": {module: is_available(module) for module in sorted(EXTRA_FOR_MODULE)},
             "llm": {
                 "provider": s.LLM_PROVIDER,
-                # ollama needs no key; whether the local server is up shows on first use.
-                "configured": s.LLM_PROVIDER == "ollama" or s.OPENAI_API_KEY is not None,
-                "requires_api_key": s.LLM_PROVIDER == "openai",
+                # Local Ollama needs no key; whether the server is up shows on first use.
+                "configured": True,
+                "requires_api_key": False,
                 "default_model": s.active_llm_model,
                 "allowed_models": s.allowed_llm_models,
             },

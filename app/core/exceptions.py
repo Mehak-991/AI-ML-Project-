@@ -143,7 +143,7 @@ class ProviderError(AppError):
 
 class ProviderAuthenticationError(ProviderError):
     code = "provider_authentication_failed"
-    message = "The LLM provider rejected the configured credentials. Check OPENAI_API_KEY."
+    message = "The LLM provider rejected the request credentials."
 
 
 class ProviderRateLimitError(ProviderError):

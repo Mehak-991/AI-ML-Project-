@@ -1,12 +1,10 @@
 """API routes for Phase 12 Automated ML Pipelines and Experiment Tracking."""
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, Query, status
 
-from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
-from app.database.models.user import User
+from app.api.deps import DbSession, MLReader, MLWriter, SettingsDep
 from app.schemas.common import ErrorResponse
 from app.schemas.experiment import (
     ExperimentComparisonResponse,
@@ -22,7 +20,7 @@ router = APIRouter(prefix="/experiments", tags=["experiments"])
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Experiment not found"}}
 UNPROCESSABLE = {422: {"model": ErrorResponse, "description": "Validation or Pipeline execution error"}}
 
-MLEngineerRole = Annotated[User, Depends(require_role("admin", "ml_engineer"))]
+MLEngineerRole = MLWriter
 
 
 @router.post(
@@ -65,7 +63,7 @@ def create_experiment(
 )
 def list_experiments(
     db: DbSession,
-    _user: CurrentUserDep,
+    _user: MLReader,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     status: str | None = Query(default=None),
@@ -89,7 +87,7 @@ def list_experiments(
 def compare_experiments(
     experiment_ids: list[uuid.UUID] = Query(...),
     db: DbSession = None,
-    _user: CurrentUserDep = None,
+    _user: MLReader = None,
 ) -> ExperimentComparisonResponse:
     res = experiment_service.compare_experiments(db, experiment_ids)
     return ExperimentComparisonResponse.model_validate(res)
@@ -104,7 +102,7 @@ def compare_experiments(
 def get_experiment(
     experiment_id: uuid.UUID,
     db: DbSession,
-    _user: CurrentUserDep,
+    _user: MLReader,
 ) -> ExperimentRead:
     exp = experiment_service.get_experiment(db, experiment_id)
     return ExperimentRead.model_validate(exp)

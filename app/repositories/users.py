@@ -15,12 +15,19 @@ class UserRepository(BaseRepository[User]):
         stmt = select(User).where(func.lower(User.email) == email.lower().strip())
         return self.session.scalars(stmt).first()
 
-    def count_active_admins(self) -> int:
+    def count_active_super_admins(self) -> int:
         stmt = (
             select(func.count())
             .select_from(User)
-            .where(User.role == "admin", User.is_active == True)
+            .where(User.role == "super_admin", User.is_active.is_(True))
         )
+        # Lock the counted rows on PostgreSQL so two concurrent demotions cannot both see
+        # "2 left" and remove the last super admin together.
+        if self.session.get_bind().dialect.name == "postgresql":
+            ids = select(User.id).where(
+                User.role == "super_admin", User.is_active.is_(True)
+            ).with_for_update()
+            return len(self.session.scalars(ids).all())
         return self.session.scalar(stmt) or 0
 
     def list_filtered(
@@ -71,6 +78,8 @@ class RefreshTokenRepository(BaseRepository[RefreshToken]):
         return self.session.scalars(stmt).first()
 
     def revoke_all_for_user(self, user_id: uuid.UUID) -> None:
-        stmt = select(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked == False)
+        stmt = select(RefreshToken).where(
+            RefreshToken.user_id == user_id, RefreshToken.revoked.is_(False)
+        )
         for token in self.session.scalars(stmt).all():
             token.revoked = True

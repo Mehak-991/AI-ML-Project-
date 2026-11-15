@@ -2,52 +2,63 @@ import time
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Query, status
 
-from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
-from app.database.models.user import User
+from app.api.deps import DbSession, MLReader, MLWriter, SettingsDep
 from app.repositories.ml_models import MLModelRepository
 from app.schemas.common import ErrorResponse
 from app.schemas.models import ModelList, ModelRead, PredictRequest, PredictResponse, TrainRequest
-from app.services import authorization, deployment_service, model_service
+from app.services import audit_service, authorization, deployment_service, model_service
 
 router = APIRouter(prefix="/models", tags=["models"])
 
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Not found"}}
 UNPROCESSABLE = {422: {"model": ErrorResponse, "description": "Invalid input or data"}}
 UNAUTHORIZED = {401: {"model": ErrorResponse, "description": "Authentication required"}}
-FORBIDDEN = {403: {"model": ErrorResponse, "description": "Admin or ML Engineer privileges required"}}
-MODEL_FORBIDDEN = {403: {"model": ErrorResponse, "description": "Not permitted to use this model"}}
+FORBIDDEN = {403: {"model": ErrorResponse, "description": "Admin or Super Admin role required"}}
+MODEL_FORBIDDEN = {
+    403: {"model": ErrorResponse, "description": "Role or model ownership does not permit this"}
+}
 
 
 @router.post(
     "/train",
     response_model=ModelRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Train a baseline model on a stored dataset (Admin & ML Engineer only)",
+    summary="Train a baseline model on a stored dataset (Admin, Super Admin)",
     responses=NOT_FOUND | UNPROCESSABLE | UNAUTHORIZED | FORBIDDEN,
 )
 def train_model(
     request: TrainRequest,
     db: DbSession,
     settings: SettingsDep,
-    user: Annotated[User, Depends(require_role("admin", "ml_engineer"))],
+    user: MLWriter,
 ) -> ModelRead:
     # Synchronous: runs in FastAPI's threadpool. Fine for small datasets; see README limits.
-    return ModelRead.model_validate(model_service.train(db, settings, request, owner_id=user.id))
+    model = model_service.train(db, settings, request, owner_id=user.id)
+    audit_service.record_standalone(
+        db,
+        actor=user,
+        action="model.train",
+        category="ml",
+        target_type="model",
+        target_id=model.id,
+        details={"name": model.name, "version": model.version, "algorithm": model.algorithm},
+    )
+    return ModelRead.model_validate(model)
 
 
 @router.get("", response_model=ModelList, summary="List trained models",
     responses={401: {"model": ErrorResponse, "description": "Authentication required"}})
 def list_models(
-    user: CurrentUserDep,
+    user: MLReader,
     db: DbSession,
     dataset_id: uuid.UUID | None = None,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> ModelList:
     repo = MLModelRepository(db)
-    # Non-admins see only their own models or legacy unowned models.
+    # Only super admins see every model; others see their own and legacy unowned models.
     owner_filter = None if authorization.is_admin(user) else user.id
     if dataset_id is not None:
         models = repo.list_for_dataset(dataset_id, owner_id=owner_filter)
@@ -70,7 +81,7 @@ def list_models(
     summary="Model metadata, feature schema and metrics",
     responses=NOT_FOUND | {401: {"model": ErrorResponse, "description": "Authentication required"}},
 )
-def get_model(model_id: uuid.UUID, user: CurrentUserDep, db: DbSession) -> ModelRead:
+def get_model(model_id: uuid.UUID, user: MLReader, db: DbSession) -> ModelRead:
     model = model_service.get_model(db, model_id)
     authorization.ensure_model_access(user, model)
     return ModelRead.model_validate(model)
@@ -79,15 +90,15 @@ def get_model(model_id: uuid.UUID, user: CurrentUserDep, db: DbSession) -> Model
 @router.post(
     "/{model_id}/predict",
     response_model=PredictResponse,
-    summary="Predict with a saved model",
-    responses=NOT_FOUND | UNPROCESSABLE | UNAUTHORIZED | MODEL_FORBIDDEN,
+    summary="Predict with a saved model (Admin, Super Admin; records an audit entry)",
+    responses=NOT_FOUND | UNPROCESSABLE | UNAUTHORIZED | MODEL_FORBIDDEN | FORBIDDEN,
 )
 def predict(
     model_id: uuid.UUID,
     request: PredictRequest,
     db: DbSession,
     settings: SettingsDep,
-    user: CurrentUserDep,
+    user: MLWriter,
 ) -> PredictResponse:
     # Authorize before any inference work so denied callers consume no model resources.
     authorization.ensure_model_access(user, model_service.get_model(db, model_id))

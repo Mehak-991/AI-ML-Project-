@@ -4,7 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-UserRole = Literal["admin", "ml_engineer", "viewer"]
+# Must match app.core.permissions.Role and the users.role CHECK constraint.
+UserRole = Literal["user", "admin", "super_admin"]
 
 
 class UserRegisterRequest(BaseModel):
@@ -13,34 +14,34 @@ class UserRegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     full_name: str = Field(default="", max_length=255)
-    role: UserRole = Field(default="viewer")
+    role: UserRole = Field(default="user")
 
 
 class UserLoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=128)
 
 
 class ChangePasswordRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    current_password: str
+    current_password: str = Field(max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
 
 
 class RefreshTokenRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    refresh_token: str
+    refresh_token: str = Field(min_length=1, max_length=256)
 
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
-    refresh_token: str
+    refresh_token: str = Field(min_length=1, max_length=256)
     user: "UserRead"
 
 
@@ -62,6 +63,11 @@ class UserUpdateRequest(BaseModel):
     role: UserRole | None = None
     is_active: bool | None = None
     full_name: str | None = Field(default=None, max_length=255)
+
+
+class UserPermissions(BaseModel):
+    role: UserRole
+    permissions: list[str]
 
 
 class UserList(BaseModel):

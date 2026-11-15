@@ -94,7 +94,7 @@ def get_job(session: Session, job_id: uuid.UUID, user: User) -> Job:
     job = session.get(Job, job_id)
     if not job:
         raise NotFoundError(f"Job {job_id} not found.")
-    if user.role != "admin" and job.created_by_id != user.id:
+    if not authorization.is_admin(user) and job.created_by_id != user.id:
         raise PermissionDeniedError("Access forbidden: you do not have permission to view this job.")
     return job
 
@@ -108,7 +108,7 @@ def list_jobs(
     job_type: str | None = None,
 ) -> tuple[list[Job], int]:
     stmt = select(Job).order_by(desc(Job.created_at))
-    if user.role != "admin":
+    if not authorization.is_admin(user):
         stmt = stmt.where(Job.created_by_id == user.id)
     if status:
         stmt = stmt.where(Job.status == status)
@@ -123,7 +123,7 @@ def list_jobs(
 def get_job_metrics(session: Session, user: User) -> JobMetricsResponse:
     # Aggregate in the database instead of loading every job row.
     stmt = select(Job.status, func.count()).group_by(Job.status)
-    if user.role != "admin":
+    if not authorization.is_admin(user):
         stmt = stmt.where(Job.created_by_id == user.id)
 
     counts = dict(session.execute(stmt).all())

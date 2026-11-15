@@ -6,7 +6,7 @@ Concrete use: summarise text of any length and (optionally) score its sentiment.
                                       \--(n chunks)--> combine -> [classify] -> END
 
 LangGraph supplies the explicit, testable control flow (conditional routing,
-typed state). The nodes call this project's own services (OpenAI chat, local
+typed state). The nodes call this project's own services (Ollama chat, local
 classifier, token counter, LangChain splitter), so there is no second LLM
 client abstraction.
 """

@@ -1,24 +1,30 @@
 """Object-level authorization for models and prediction audit logs.
 
 Policy (mirrors job ownership in job_service):
-- admin: every model and prediction log.
-- other roles: models they own; prediction logs they requested or that were made
-  against a model they own.
+- super_admin: every model and prediction log.
+- admin and user: models they own; prediction logs they requested or that were made
+  against a model they own. (Users cannot create models or predictions, so in practice
+  they see legacy unowned models only.)
 - Models with no owner (created before ownership tracking) remain usable by every
   authenticated user so existing deployments keep working; an admin can assign an
   owner to restrict them.
+
+Role-level checks (may this role write at all?) live in app.core.permissions; this module
+only answers object-level questions (may this user touch *this* object?).
 """
 
 import uuid
 
 from app.core.exceptions import PermissionDeniedError
+from app.core.permissions import is_super_admin
 from app.database.models.deployment import PredictionLog
 from app.database.models.ml_model import MLModel
 from app.database.models.user import User
 
 
 def is_admin(user: User) -> bool:
-    return user.role == "admin"
+    """Unrestricted object access (all models, logs and jobs)."""
+    return is_super_admin(user.role)
 
 
 def can_access_model(user: User, model: MLModel) -> bool:

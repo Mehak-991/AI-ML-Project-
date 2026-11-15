@@ -6,9 +6,9 @@ Datasets are only ever referenced by ID; clients cannot supply filesystem paths.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, File, Form, Query, UploadFile, status
 
-from app.api.deps import CurrentUserDep, DbSession, SettingsDep, require_role
+from app.api.deps import DbSession, MLReader, MLWriter, SettingsDep
 from app.repositories.datasets import DatasetRepository
 from app.schemas.common import ErrorResponse
 from app.schemas.datasets import (
@@ -17,14 +17,14 @@ from app.schemas.datasets import (
     DatasetRead,
     DatasetValidationResponse,
 )
-from app.services import dataset_service
+from app.services import audit_service, dataset_service
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 UPLOAD_ERRORS = {
     400: {"model": ErrorResponse, "description": "Invalid or unparseable file"},
     401: {"model": ErrorResponse, "description": "Authentication required"},
-    403: {"model": ErrorResponse, "description": "Admin or ML Engineer privileges required"},
+    403: {"model": ErrorResponse, "description": "Admin or Super Admin role required"},
     413: {"model": ErrorResponse, "description": "File too large"},
     415: {"model": ErrorResponse, "description": "Unsupported file type"},
     422: {"model": ErrorResponse, "description": "Data validation failed"},
@@ -38,10 +38,11 @@ UploadedFile = Annotated[UploadFile, File(description="A .csv (UTF-8) or .xlsx f
 @router.post(
     "/validate",
     response_model=DatasetValidationResponse,
-    summary="Validate and summarize a file without storing it",
+    summary="Validate and summarize a file without storing it (Admin, Super Admin)",
     responses=UPLOAD_ERRORS,
 )
 def validate_dataset_file(
+    _user: MLWriter,
     settings: SettingsDep,
     file: UploadedFile,
     target_column: Annotated[str | None, Form(max_length=255)] = None,
@@ -62,17 +63,26 @@ def validate_dataset_file(
     "",
     response_model=DatasetCreateResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Upload and register a dataset (Admin & ML Engineer only)",
+    summary="Upload and register a dataset (Admin, Super Admin)",
     responses=UPLOAD_ERRORS,
-    dependencies=[Depends(require_role("admin", "ml_engineer"))],
 )
 def upload_dataset(
+    user: MLWriter,
     settings: SettingsDep,
     db: DbSession,
     file: UploadedFile,
     name: Annotated[str | None, Form(max_length=255)] = None,
 ) -> DatasetCreateResponse:
     dataset, report = dataset_service.create_dataset(db, settings, file.file, file.filename, name)
+    audit_service.record_standalone(
+        db,
+        actor=user,
+        action="dataset.upload",
+        category="ml",
+        target_type="dataset",
+        target_id=dataset.id,
+        details={"name": dataset.name, "rows": dataset.n_rows, "columns": dataset.n_columns},
+    )
     return DatasetCreateResponse(
         dataset=DatasetRead.model_validate(dataset), validation=report.to_dict()
     )
@@ -81,7 +91,7 @@ def upload_dataset(
 @router.get("", response_model=DatasetList, summary="List datasets",
     responses=UNAUTHORIZED)
 def list_datasets(
-    _user: CurrentUserDep,
+    _user: MLReader,
     db: DbSession,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -93,7 +103,7 @@ def list_datasets(
 
 @router.get("/{dataset_id}", response_model=DatasetRead,
     responses=NOT_FOUND | UNAUTHORIZED)
-def get_dataset(dataset_id: uuid.UUID, _user: CurrentUserDep, db: DbSession) -> DatasetRead:
+def get_dataset(dataset_id: uuid.UUID, _user: MLReader, db: DbSession) -> DatasetRead:
     return DatasetRead.model_validate(dataset_service.get_dataset(db, dataset_id))
 
 
@@ -105,7 +115,7 @@ def get_dataset(dataset_id: uuid.UUID, _user: CurrentUserDep, db: DbSession) -> 
 )
 def get_dataset_summary(
     dataset_id: uuid.UUID,
-    _user: CurrentUserDep,
+    _user: MLReader,
     db: DbSession,
     settings: SettingsDep,
     target_column: Annotated[str | None, Query(max_length=255)] = None,

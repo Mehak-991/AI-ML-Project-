@@ -21,7 +21,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.exceptions import RequestTooLargeError
-from app.utils.logging import request_id_var
+from app.utils.logging import client_ip_var, request_id_var
 
 access_logger = logging.getLogger("app.access")
 
@@ -62,6 +62,7 @@ class RequestContextMiddleware:
             incoming if incoming and _VALID_REQUEST_ID.match(incoming) else uuid.uuid4().hex
         )
         token = request_id_var.set(request_id)
+        ip_token = client_ip_var.set(_client_ip(scope))
         status = {"code": 500}
         started = time.perf_counter()
 
@@ -90,6 +91,7 @@ class RequestContextMiddleware:
                 },
             )
             request_id_var.reset(token)
+            client_ip_var.reset(ip_token)
 
 
 SECURITY_HEADERS: dict[str, str] = {
@@ -248,6 +250,8 @@ class RateLimitMiddleware:
             ("POST", f"{api_prefix}/auth/{p}")
             for p in ("login", "register", "refresh", "change-password")
         }
+        # Account administration and settings changes share the small "auth" budget.
+        self.sensitive_prefixes = (f"{api_prefix}/auth/users", f"{api_prefix}/settings")
         self.exempt = {"/health", f"{api_prefix}/health", "/docs", "/redoc", "/openapi.json"}
         self.ai_prefixes = tuple(f"{api_prefix}{p}" for p in ("/llm", "/nlp", "/embeddings"))
         self.training_routes = {
@@ -264,6 +268,12 @@ class RateLimitMiddleware:
         if (method, path.rstrip("/")) in self.training_routes:
             return self.training
         if self.auth is not None and (method, path.rstrip("/")) in self.auth_routes:
+            return self.auth
+        if (
+            self.auth is not None
+            and method in ("POST", "PUT", "PATCH", "DELETE")
+            and path.startswith(self.sensitive_prefixes)
+        ):
             return self.auth
         return self.default
 

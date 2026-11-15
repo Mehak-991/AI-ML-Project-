@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 TEXT_FORMAT = "%(asctime)s %(levelname)s [%(name)s] [req=%(request_id)s] %(message)s"
 
 request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
+# Client address of the current request (after trusted proxy rewriting), for audit logs.
+client_ip_var: ContextVar[str | None] = ContextVar("client_ip", default=None)
 
 # Attributes every LogRecord has; anything else was passed via `extra=` and is emitted.
 _STANDARD_ATTRS = set(logging.makeLogRecord({}).__dict__) | {

@@ -5,11 +5,10 @@ to admin and ml_engineer roles.
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 
-from app.api.deps import DbSession, SettingsDep, require_role
+from app.api.deps import DbSession, MLReader, MLWriter, SettingsDep
 from app.schemas.common import ErrorResponse
 from app.schemas.drift import (
     AnalyzeDriftRequest,
@@ -20,14 +19,13 @@ from app.schemas.drift import (
     DriftReportRead,
 )
 from app.services import drift_service
-from app.database.models.user import User
 
 router = APIRouter(prefix="/drift", tags=["drift"])
 
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Resource not found"}}
 
 # Roles that can trigger analysis
-AnalystRole = Annotated[User, Depends(require_role("admin", "ml_engineer"))]
+AnalystRole = MLWriter
 
 
 @router.get(
@@ -35,7 +33,7 @@ AnalystRole = Annotated[User, Depends(require_role("admin", "ml_engineer"))]
     response_model=DriftOverviewResponse,
     summary="Cross-model drift & data-quality overview",
 )
-def get_drift_overview(db: DbSession) -> DriftOverviewResponse:
+def get_drift_overview(_user: MLReader, db: DbSession) -> DriftOverviewResponse:
     """Aggregated drift status and alert counts for all models."""
     return drift_service.get_drift_overview(db)
 
@@ -48,6 +46,7 @@ def get_drift_overview(db: DbSession) -> DriftOverviewResponse:
 )
 def list_drift_reports(
     model_id: uuid.UUID,
+    _user: MLReader,
     db: DbSession,
     report_type: str | None = Query(default=None, description="Filter: data_quality | feature_drift | performance"),
     offset: int = Query(default=0, ge=0),
@@ -64,6 +63,7 @@ def list_drift_reports(
 )
 def list_model_alerts(
     model_id: uuid.UUID,
+    _user: MLReader,
     db: DbSession,
     severity: str | None = Query(default=None, description="Filter: warning | critical"),
     resolved: bool | None = Query(default=None, description="Filter by resolved status"),
@@ -81,6 +81,7 @@ def list_model_alerts(
     summary="List all drift alerts (platform-wide)",
 )
 def list_all_alerts(
+    _user: MLReader,
     db: DbSession,
     severity: str | None = Query(default=None),
     resolved: bool | None = Query(default=None),

@@ -2,7 +2,7 @@
 
 Handlers are sync (`def`) so blocking model and provider calls run in FastAPI's
 threadpool; local inference is additionally bounded by AI_INFERENCE_TIMEOUT_SECONDS
-and provider calls by OPENAI_TIMEOUT_SECONDS.
+and Ollama calls by OLLAMA_TIMEOUT_SECONDS.
 """
 
 from typing import Annotated
@@ -15,13 +15,13 @@ from app.ai.llm import ChatMessage, ChatService
 from app.ai.tokens import TokenCounter
 from app.api.deps import (
     AIServicesDep,
-    CurrentUserDep,
     SettingsDep,
     get_chat_service,
     get_embedding_service,
     get_text_classifier,
     get_token_counter,
-    require_role,
+    MLReader,
+    MLWriter,
 )
 from app.core.exceptions import DataValidationError
 from app.schemas.ai import (
@@ -48,7 +48,7 @@ router = APIRouter()
 def _errors(*codes: int) -> dict:
     descriptions = {
         401: "Authentication required",
-        403: "Admin or ML Engineer role required",
+        403: "Admin or Super Admin role required",
         422: "Invalid input or limits exceeded",
         429: "Provider rate limit / quota (see Retry-After)",
         502: "Provider error",
@@ -64,7 +64,7 @@ def _errors(*codes: int) -> dict:
     tags=["ai"],
     responses=_errors(401),
 )
-def ai_status(ai: AIServicesDep, _user: CurrentUserDep) -> AIStatusResponse:
+def ai_status(ai: AIServicesDep, _user: MLReader) -> AIStatusResponse:
     """Which optional AI packages are installed, provider configuration (never the key)."""
     return AIStatusResponse(**ai.status())
 
@@ -79,7 +79,7 @@ def ai_status(ai: AIServicesDep, _user: CurrentUserDep) -> AIStatusResponse:
 def create_embeddings(
     request: EmbeddingRequest,
     service: Annotated[EmbeddingService, Depends(get_embedding_service)],
-    _user: CurrentUserDep,
+    _user: MLReader,
 ) -> EmbeddingResponse:
     result = service.embed(request.texts, normalize=request.normalize)
     return EmbeddingResponse(
@@ -100,7 +100,7 @@ def create_embeddings(
 def classify_texts(
     request: ClassificationRequest,
     service: Annotated[TextClassificationService, Depends(get_text_classifier)],
-    _user: CurrentUserDep,
+    _user: MLReader,
 ) -> ClassificationResponse:
     result = service.classify(request.texts, top_k=request.top_k)
     return ClassificationResponse(
@@ -125,7 +125,7 @@ def classify_texts(
 )
 def chat(
     request: ChatRequest,
-    _user: Annotated[object, Depends(require_role("admin", "ml_engineer"))],
+    _user: MLWriter,
     service: Annotated[ChatService, Depends(get_chat_service)],
 ) -> ChatResponse:
     result = service.complete(
@@ -152,7 +152,7 @@ def chat(
 )
 def count_tokens(
     request: TokenCountRequest,
-    _user: CurrentUserDep,
+    _user: MLReader,
     counter: Annotated[TokenCounter, Depends(get_token_counter)],
     settings: SettingsDep,
 ) -> TokenCountResponse:
@@ -181,7 +181,7 @@ def count_tokens(
 )
 def analyze_text(
     request: TextAnalysisRequest,
-    _user: Annotated[object, Depends(require_role("admin", "ml_engineer"))],
+    _user: MLWriter,
     ai: AIServicesDep,
 ) -> TextAnalysisResponse:
     workflow = ai.text_analysis(include_sentiment=request.include_sentiment)

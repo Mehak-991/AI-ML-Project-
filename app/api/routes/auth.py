@@ -5,7 +5,15 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.deps import CurrentUserDep, CurrentUserOptionalDep, DbSession, SettingsDep, require_role
+from app.api.deps import (
+    CurrentUserDep,
+    CurrentUserOptionalDep,
+    DbSession,
+    SettingsDep,
+    require_permission,
+)
+from app.core.permissions import Permission, permissions_for
+from app.database.models.user import User
 from app.repositories.users import UserRepository
 from app.schemas.auth import (
     ChangePasswordRequest,
@@ -13,8 +21,10 @@ from app.schemas.auth import (
     TokenResponse,
     UserList,
     UserLoginRequest,
+    UserPermissions,
     UserRead,
     UserRegisterRequest,
+    UserRole,
     UserUpdateRequest,
 )
 from app.schemas.common import ErrorResponse
@@ -35,9 +45,17 @@ CONFLICT = {409: {"model": ErrorResponse, "description": "User already exists"}}
     responses=CONFLICT | FORBIDDEN,
 )
 def register(
-    request: UserRegisterRequest, db: DbSession, current_user: CurrentUserOptionalDep
+    request: UserRegisterRequest,
+    db: DbSession,
+    settings: SettingsDep,
+    current_user: CurrentUserOptionalDep,
 ) -> UserRead:
-    user = auth_service.register_user(db, request, requested_by=current_user)
+    """Public sign-up always creates a 'user' account (unless disabled by a super admin).
+
+    Called with an admin's token it creates a managed account; only super admins may
+    request the 'admin' or 'super_admin' role.
+    """
+    user = auth_service.register_user(db, request, requested_by=current_user, settings=settings)
     return UserRead.model_validate(user)
 
 
@@ -97,21 +115,42 @@ def get_me(current_user: CurrentUserDep) -> UserRead:
     return UserRead.model_validate(current_user)
 
 
-# --- User Administration Endpoints (Admin role only) ---
+@router.get(
+    "/me/permissions",
+    response_model=UserPermissions,
+    summary="Permissions granted to the current user's role",
+    responses=UNAUTHORIZED,
+)
+def get_my_permissions(current_user: CurrentUserDep) -> UserPermissions:
+    """For UI decisions only; every endpoint re-checks permissions server-side."""
+    return UserPermissions(
+        role=current_user.role,
+        permissions=sorted(p.value for p in permissions_for(current_user.role)),
+    )
+
+
+# --- User administration ---------------------------------------------------------
+# Admins: list users, activate/deactivate/rename 'user' accounts.
+# Super admins: everything, including role changes and deletion.
+
+UsersReader = Annotated[User, Depends(require_permission(Permission.USERS_READ))]
+UsersManager = Annotated[User, Depends(require_permission(Permission.USERS_MANAGE))]
+UsersAdministrator = Annotated[User, Depends(require_permission(Permission.USERS_ADMINISTER))]
+NOT_FOUND = {404: {"model": ErrorResponse, "description": "User not found"}}
 
 
 @router.get(
     "/users",
     response_model=UserList,
-    summary="List and filter users (Admin only)",
+    summary="List and filter users (Admin, Super Admin)",
     responses=UNAUTHORIZED | FORBIDDEN,
-    dependencies=[Depends(require_role("admin"))],
 )
 def list_users(
+    _actor: UsersReader,
     db: DbSession,
-    role: str | None = None,
+    role: UserRole | None = None,
     is_active: bool | None = None,
-    search: str | None = None,
+    search: Annotated[str | None, Query(max_length=255)] = None,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> UserList:
@@ -131,15 +170,24 @@ def list_users(
 @router.patch(
     "/users/{user_id}",
     response_model=UserRead,
-    summary="Update user role or status (Admin only)",
-    responses=UNAUTHORIZED | FORBIDDEN,
-    dependencies=[Depends(require_role("admin"))],
+    summary="Update a user's status, name or role (role: Super Admin only)",
+    responses=UNAUTHORIZED | FORBIDDEN | NOT_FOUND,
 )
 def update_user(
     user_id: uuid.UUID,
     request: UserUpdateRequest,
-    current_user: CurrentUserDep,
+    actor: UsersManager,
     db: DbSession,
 ) -> UserRead:
-    updated = auth_service.update_user_by_admin(db, current_user.id, user_id, request)
+    updated = auth_service.update_user(db, actor, user_id, request)
     return UserRead.model_validate(updated)
+
+
+@router.delete(
+    "/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Permanently delete a user account (Super Admin only)",
+    responses=UNAUTHORIZED | FORBIDDEN | NOT_FOUND,
+)
+def delete_user(user_id: uuid.UUID, actor: UsersAdministrator, db: DbSession) -> None:
+    auth_service.delete_user(db, actor, user_id)

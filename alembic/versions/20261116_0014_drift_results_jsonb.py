@@ -14,7 +14,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 
-from alembic import op
+from alembic import context, op
 
 revision: str = "0014_drift_results_jsonb"
 down_revision: str | Sequence[str] | None = "0013_employees_audit"
@@ -33,11 +33,15 @@ def _current_type(bind) -> str | None:
 
 
 def _alter(target: str) -> None:
-    bind = op.get_bind()
-    if bind.dialect.name != "postgresql":
-        return
-    if _current_type(bind) == target:
-        return
+    if context.is_offline_mode():
+        # `alembic upgrade --sql` has no connection to inspect; emit the (idempotent)
+        # conversion unconditionally. Casting jsonb -> jsonb is valid, just a table rewrite.
+        if context.get_context().dialect.name != "postgresql":
+            return
+    else:
+        bind = op.get_bind()
+        if bind.dialect.name != "postgresql" or _current_type(bind) == target:
+            return
     column = "ALTER TABLE drift_reports ALTER COLUMN results"
     op.execute(sa.text(f"{column} DROP DEFAULT"))
     op.execute(sa.text(f"{column} TYPE {target} USING results::{target}"))

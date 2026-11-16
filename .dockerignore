@@ -38,3 +38,9 @@ notebooks
 # Not needed at runtime
 tests
 README.md
+
+# Database dumps and volume archives must never enter a build context.
+backups
+*.dump
+*.sql.gz
+*.log

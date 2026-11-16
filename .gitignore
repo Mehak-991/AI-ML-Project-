@@ -61,3 +61,15 @@ model_cache/
 *.tmp
 *.part
 compose.override.yaml
+
+# Never commit database dumps, build logs or key material (security audit 2026-11-16).
+# NOTE: ignoring does not untrack files that are already committed; see the audit report.
+*.dump
+*.sql
+*.sql.gz
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt

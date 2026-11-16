@@ -51,7 +51,7 @@ services:
       db:
         condition: service_healthy
     env_file:
-      - path: .env
+      - path: ${APP_ENV_FILE:-.env}
         required: false
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aiproject}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-aiproject}
@@ -86,7 +86,7 @@ services:
       migration:
         condition: service_completed_successfully
     env_file:
-      - path: .env
+      - path: ${APP_ENV_FILE:-.env}
         required: false
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aiproject}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-aiproject}
@@ -129,7 +129,7 @@ services:
       migration:
         condition: service_completed_successfully
     env_file:
-      - path: .env
+      - path: ${APP_ENV_FILE:-.env}
         required: false
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aiproject}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-aiproject}

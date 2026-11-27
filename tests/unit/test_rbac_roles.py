@@ -264,7 +264,8 @@ def test_public_endpoints_stay_public(client) -> None:
     assert client.get("/health").status_code == 200
     assert client.get(f"{API}/health").status_code == 200
     assert client.get(f"{API}/auth/registration-status").json() == {
-        "allow_self_registration": True
+        "allow_self_registration": True,
+        "available_roles": ["user", "admin", "super_admin"],  # empty database
     }
 
 
@@ -821,9 +822,9 @@ def test_disabling_self_registration(client, roles) -> None:
     assert client.patch(
         f"{API}/settings", json={"allow_self_registration": False}, headers=h(roles["super"])
     ).status_code == 200
-    assert client.get(f"{API}/auth/registration-status").json() == {
-        "allow_self_registration": False
-    }
+    assert client.get(f"{API}/auth/registration-status").json()[
+        "allow_self_registration"
+    ] is False
     blocked = client.post(f"{API}/auth/register", json={"email": "z@x.com", "password": PASSWORD})
     assert blocked.status_code == 403
     # Administrators can still provision accounts.
@@ -861,3 +862,108 @@ def test_metrics_token_when_configured(make_settings, session_factory) -> None:
         assert c.get("/metrics", headers={"Authorization": "Bearer wrong"}).status_code == 401
         ok = c.get("/metrics", headers={"Authorization": "Bearer scrape-secret-0123456789"})
         assert ok.status_code == 200
+
+
+# --- one-time sign-up slots for admin / super_admin -------------------------------------------
+
+
+@pytest.fixture
+def one_super(client) -> dict:
+    """A database with exactly one account: the bootstrap super admin."""
+    assert client.post(
+        f"{API}/auth/register", json={"email": "owner@x.com", "password": PASSWORD}
+    ).json()["role"] == "super_admin"
+    return _login(client, "owner@x.com")
+
+
+def _signup(client, email: str, role: str):
+    return client.post(
+        f"{API}/auth/register", json={"email": email, "password": PASSWORD, "role": role}
+    )
+
+
+def test_admin_account_can_be_registered_only_once(client, one_super) -> None:
+    status = client.get(f"{API}/auth/registration-status").json()
+    assert status["available_roles"] == ["user", "admin"]  # super_admin slot used by bootstrap
+
+    first = _signup(client, "first-admin@x.com", "admin")
+    assert first.status_code == 201 and first.json()["role"] == "admin"
+    assert _login(client, "first-admin@x.com")["user"]["role"] == "admin"  # permanent login
+
+    second = _signup(client, "second-admin@x.com", "admin")
+    assert second.status_code == 403
+    assert "only once" in second.json()["error"]["message"]
+    assert client.get(f"{API}/auth/registration-status").json()["available_roles"] == ["user"]
+
+
+def test_super_admin_slot_is_closed_after_first_account(client, one_super) -> None:
+    r = _signup(client, "another-super@x.com", "super_admin")
+    assert r.status_code == 403
+
+
+def test_users_can_register_any_number_of_times(client, one_super) -> None:
+    for i in range(5):
+        r = _signup(client, f"u{i}@x.com", "user")
+        assert r.status_code == 201 and r.json()["role"] == "user"
+
+
+def test_slot_stays_closed_after_the_account_is_deactivated(client, one_super) -> None:
+    admin = _signup(client, "admin@x.com", "admin").json()
+    assert client.patch(
+        f"{API}/auth/users/{admin['id']}", json={"is_active": False}, headers=h(one_super)
+    ).status_code == 200
+    assert _signup(client, "replacement@x.com", "admin").status_code == 403
+
+
+def test_super_admin_can_still_grant_privileged_roles(client, one_super) -> None:
+    _signup(client, "admin@x.com", "admin")
+    made = client.post(
+        f"{API}/auth/register",
+        json={"email": "admin2@x.com", "password": PASSWORD, "role": "admin"},
+        headers=h(one_super),
+    )
+    assert made.status_code == 201 and made.json()["role"] == "admin"
+
+
+def test_admin_cannot_use_the_slot_to_create_privileged_accounts(client, one_super) -> None:
+    # The admin slot is still open, but an *admin* creating accounts may only create users.
+    admin = _signup(client, "admin@x.com", "admin")
+    assert admin.status_code == 201
+    r = client.post(
+        f"{API}/auth/register",
+        json={"email": "s@x.com", "password": PASSWORD, "role": "super_admin"},
+        headers=h(_login(client, "admin@x.com")),
+    )
+    assert r.status_code == 403
+
+
+def test_promotion_also_uses_the_slot(client, one_super) -> None:
+    user = _signup(client, "u@x.com", "user").json()
+    assert client.patch(
+        f"{API}/auth/users/{user['id']}", json={"role": "admin"}, headers=h(one_super)
+    ).status_code == 200
+    assert _signup(client, "late-admin@x.com", "admin").status_code == 403
+
+
+def test_existing_privileged_account_closes_slot_without_marker(client, session_factory) -> None:
+    """Databases from before slot tracking: an existing admin already used the slot."""
+    from app.services import role_slots
+
+    with session_factory() as session:
+        session.add(User(email="legacy-admin@x.com", hashed_password="x", role="admin",
+                         is_active=True))
+        session.commit()
+        assert role_slots.is_open(session, "admin") is False
+        assert role_slots.is_open(session, "super_admin") is True
+
+
+def test_slot_stays_closed_after_the_account_is_deleted_or_demoted(client, one_super) -> None:
+    """The permanent marker, not the account's existence, keeps the slot closed."""
+    admin = _signup(client, "admin@x.com", "admin").json()
+    assert client.patch(
+        f"{API}/auth/users/{admin['id']}", json={"role": "user"}, headers=h(one_super)
+    ).status_code == 200
+    assert _signup(client, "after-demotion@x.com", "admin").status_code == 403
+    assert client.delete(f"{API}/auth/users/{admin['id']}", headers=h(one_super)).status_code == 204
+    assert _signup(client, "after-delete@x.com", "admin").status_code == 403
+    assert client.get(f"{API}/auth/registration-status").json()["available_roles"] == ["user"]

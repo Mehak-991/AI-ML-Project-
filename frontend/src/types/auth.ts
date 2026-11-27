@@ -69,6 +69,12 @@ export interface RegisterCredentials {
   role?: UserRole;
 }
 
+export interface RegistrationStatus {
+  allow_self_registration: boolean;
+  // 'user' always; 'admin' / 'super_admin' only until their one-time account exists.
+  available_roles: UserRole[];
+}
+
 export interface UserUpdatePayload {
   role?: UserRole;
   is_active?: boolean;

@@ -2,6 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { Lock, Mail, User, ShieldAlert, ArrowRight, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { authApi } from '../services/api';
+import type { UserRole } from '../types/auth';
+import { ROLE_LABELS } from '../types/auth';
+
+const SIGNUP_ROLES: UserRole[] = ['user', 'admin', 'super_admin'];
 
 
 export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
@@ -14,6 +18,8 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [registrationOpen, setRegistrationOpen] = useState(true);
+  const [availableRoles, setAvailableRoles] = useState<UserRole[]>(['user']);
+  const [role, setRole] = useState<UserRole>('user');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -21,8 +27,16 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
     if (!isOpen) return;
     authApi
       .getRegistrationStatus()
-      .then((s) => setRegistrationOpen(s.allow_self_registration))
-      .catch(() => setRegistrationOpen(true)); // the server still enforces the setting
+      .then((s) => {
+        setRegistrationOpen(s.allow_self_registration);
+        setAvailableRoles(s.available_roles);
+        setRole((current) => (s.available_roles.includes(current) ? current : 'user'));
+      })
+      .catch(() => {
+        // The server still enforces both the setting and the one-time slots.
+        setRegistrationOpen(true);
+        setAvailableRoles(['user']);
+      });
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -49,6 +63,7 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
           email: email.trim(),
           password,
           full_name: fullName.trim(),
+          role,
         });
       } else {
         await login({ email: email.trim(), password });
@@ -156,10 +171,32 @@ export const AuthModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
             </div>
 
             {isRegisterMode && (
-              <p className="text-[10px] text-slate-500">
-                New accounts get the read-only <strong>User</strong> role. A Super Admin can grant
-                more access later.
-              </p>
+              <div>
+                <label htmlFor="signup-role" className="block text-xs font-semibold text-slate-700 mb-1">
+                  Account type
+                </label>
+                <select
+                  id="signup-role"
+                  value={role}
+                  onChange={(e) => setRole(e.target.value as UserRole)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                >
+                  {SIGNUP_ROLES.map((r) => {
+                    const open = availableRoles.includes(r);
+                    return (
+                      <option key={r} value={r} disabled={!open}>
+                        {ROLE_LABELS[r]}
+                        {r === 'user' ? ' (read-only)' : open ? ' (one-time registration)' : ' (already registered)'}
+                      </option>
+                    );
+                  })}
+                </select>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  {role === 'user'
+                    ? 'Any number of User accounts can be created. Users can view data but not change it.'
+                    : `The ${ROLE_LABELS[role]} account can be created only once. Keep these credentials safe: you will sign in with them every time.`}
+                </p>
+              </div>
             )}
 
             <button

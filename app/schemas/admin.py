@@ -46,3 +46,6 @@ class SystemSettingsUpdate(BaseModel):
 
 class RegistrationStatus(BaseModel):
     allow_self_registration: bool
+    # Roles a public sign-up may choose right now. 'admin'/'super_admin' appear only until
+    # their one-time account has been created.
+    available_roles: list[str]

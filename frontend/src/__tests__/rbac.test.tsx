@@ -27,7 +27,7 @@ const EMPLOYEE = {
   created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:00:00Z',
 };
 
-const state: { role: UserRole } = { role: 'user' };
+const state: { role: UserRole; signupRoles: UserRole[] } = { role: 'user', signupRoles: ['user'] };
 const token = { access: 'token' as string | null };
 
 const userFor = (role: UserRole): User => ({
@@ -50,7 +50,10 @@ vi.mock('../services/api', () => {
     authApi: {
       getMe: vi.fn(async () => userFor(state.role)),
       getMyPermissions: vi.fn(async () => ({ role: state.role, permissions: PERMISSIONS[state.role] })),
-      getRegistrationStatus: vi.fn(async () => ({ allow_self_registration: true })),
+      getRegistrationStatus: vi.fn(async () => ({
+        allow_self_registration: true,
+        available_roles: state.signupRoles,
+      })),
       listUsers: vi.fn(async () => page),
       logout: vi.fn(async () => undefined),
     },
@@ -91,6 +94,7 @@ const { App } = await import('../App');
 const { AuthProvider } = await import('../context/AuthContext');
 const { EmployeesPage } = await import('../pages/EmployeesPage');
 const { RequirePermission } = await import('../components/RequirePermission');
+const { AuthModal } = await import('../components/AuthModal');
 
 const renderWithAuth = (ui: React.ReactElement) => render(<AuthProvider>{ui}</AuthProvider>);
 
@@ -206,5 +210,36 @@ describe('session expiry', () => {
     });
     expect(await screen.findByText('Your session has ended. Please sign in again.')).toBeTruthy();
     expect(screen.getByText('Sign in to see your modules.')).toBeTruthy();
+  });
+});
+
+describe('sign-up form', () => {
+  const openSignup = async () => {
+    token.access = null;
+    renderWithAuth(<AuthModal isOpen onClose={() => undefined} />);
+    (await screen.findByText('Create an Account')).click();
+    return (await screen.findByLabelText('Account type')) as HTMLSelectElement;
+  };
+
+  it('offers User, Admin and Super Admin while their one-time slots are open', async () => {
+    state.signupRoles = ['user', 'admin', 'super_admin'];
+    const select = await openSignup();
+    await waitFor(() => {
+      const options = Array.from(select.options);
+      expect(options.map((o) => o.value)).toEqual(['user', 'admin', 'super_admin']);
+      expect(options.every((o) => !o.disabled)).toBe(true);
+    });
+  });
+
+  it('disables roles whose one-time account already exists', async () => {
+    state.signupRoles = ['user'];
+    const select = await openSignup();
+    await waitFor(() => {
+      const byValue = Object.fromEntries(Array.from(select.options).map((o) => [o.value, o]));
+      expect(byValue.user.disabled).toBe(false);
+      expect(byValue.admin.disabled).toBe(true);
+      expect(byValue.super_admin.disabled).toBe(true);
+      expect(byValue.admin.textContent).toContain('already registered');
+    });
   });
 });

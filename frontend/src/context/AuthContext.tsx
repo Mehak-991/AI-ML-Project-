@@ -95,8 +95,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (creds: RegisterCredentials) => {
     setError(null);
     try {
-      // Public sign-up never sends a role: the server always creates a 'user' account.
-      await authApi.register({ email: creds.email, password: creds.password, full_name: creds.full_name });
+      // The server decides whether the role is allowed: 'user' always; 'admin' and
+      // 'super_admin' only through their one-time sign-up slot.
+      await authApi.register({
+        email: creds.email,
+        password: creds.password,
+        full_name: creds.full_name,
+        role: creds.role ?? 'user',
+      });
       await login({ email: creds.email, password: creds.password });
     } catch (err) {
       setError(parseApiError(err).message);

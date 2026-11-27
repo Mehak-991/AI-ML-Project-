@@ -1,8 +1,9 @@
 """Authentication and account administration.
 
 Privilege rules enforced here (in addition to the route-level permission checks):
-- Self-registration always yields the 'user' role (and can be disabled by a super admin).
-- Only super admins assign roles or create admin/super_admin accounts.
+- Public sign-up may create any number of 'user' accounts. An 'admin' or 'super_admin'
+  account can be created through sign-up only ONCE per role (see app.services.role_slots);
+  after that only super admins can grant those roles. Sign-up can be disabled entirely.
 - Admins may manage (activate/deactivate/rename) only accounts with a lower role than
   their own, i.e. 'user' accounts. Nobody can act on an account ranked above them.
 - Nobody can change their own role, deactivate or delete themselves.
@@ -34,7 +35,7 @@ from app.schemas.auth import (
     UserRegisterRequest,
     UserUpdateRequest,
 )
-from app.services import audit_service, settings_service
+from app.services import audit_service, role_slots, settings_service
 
 
 def _issue_tokens(session: Session, settings: Settings, user: User) -> TokenResponse:
@@ -82,14 +83,18 @@ def register_user(
         requested_by.role, Permission.USERS_MANAGE
     )
 
-    if request.role != Role.USER and not bootstrap:
-        if requested_by is None or not has_permission(
-            requested_by.role, Permission.USERS_ADMINISTER
-        ):
+    administer = requested_by is not None and has_permission(
+        requested_by.role, Permission.USERS_ADMINISTER
+    )
+    # Public creation of a privileged account uses the role's one-time sign-up slot;
+    # super admins may grant privileged roles at any time.
+    slot_signup = request.role in role_slots.PRIVILEGED_ROLES and not bootstrap and not administer
+    if slot_signup:
+        if managed:
             raise PermissionDeniedError(
-                f"Only super admins can create accounts with the '{request.role}' role. "
-                "Register as 'user' and ask a super admin to change your role."
+                f"Only super admins can create accounts with the '{request.role}' role."
             )
+        role_slots.ensure_open(session, request.role)
     if not bootstrap and not managed and not settings_service.get_value(
         session, "allow_self_registration"
     ):
@@ -112,6 +117,7 @@ def register_user(
         token_version=0,
     )
     user_repo.add(user)
+    role_slots.mark_used(session, role, user, strict=slot_signup)
     if managed:
         audit_service.record(
             session,
@@ -126,7 +132,13 @@ def register_user(
         audit_service.record(
             session,
             actor=user,
-            action="user.bootstrap" if bootstrap else "user.register",
+            action=(
+                "user.bootstrap"
+                if bootstrap
+                else "user.register_privileged_once"
+                if slot_signup
+                else "user.register"
+            ),
             category="auth",
             target_type="user",
             target_id=user.id,
@@ -293,6 +305,7 @@ def update_user(
         _ensure_not_last_super_admin(user_repo, target, "change the role of")
         changes["role"] = {"old": target.role, "new": request.role}
         target.role = request.role
+        role_slots.mark_used(session, request.role, target)
 
     if request.is_active is not None and request.is_active != target.is_active:
         if is_self:

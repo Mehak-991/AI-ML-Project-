@@ -52,3 +52,17 @@ def test_promotes_existing_account_and_ends_its_sessions(script, session_factory
     assert (user.role, user.is_active, user.token_version) == ("super_admin", True, 1)
     assert script.main(["--email", "missing@x.com", "--promote"]) == 1
 
+
+
+def test_creates_admin_with_role_option_and_closes_the_slot(
+    script, monkeypatch, session_factory
+) -> None:
+    from app.services import role_slots
+
+    monkeypatch.setenv("SUPER_ADMIN_PASSWORD", "Str0ngPassword!")
+    assert script.main(["--email", "boss@example.com", "--role", "admin"]) == 0
+    with session_factory() as session:
+        user = session.query(User).one()
+        assert (user.email, user.role) == ("boss@example.com", "admin")
+        assert role_slots.is_open(session, "admin") is False
+        assert role_slots.is_open(session, "super_admin") is True

@@ -572,8 +572,8 @@ export const authApi = {
   },
 
   /** Whether public sign-up is open. Unauthenticated. */
-  async getRegistrationStatus(): Promise<{ allow_self_registration: boolean }> {
-    const response = await apiClient.get<{ allow_self_registration: boolean }>(
+  async getRegistrationStatus(): Promise<import('../types/auth').RegistrationStatus> {
+    const response = await apiClient.get<import('../types/auth').RegistrationStatus>(
       '/auth/registration-status'
     );
     return response.data;

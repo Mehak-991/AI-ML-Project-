@@ -18,7 +18,7 @@ from app.schemas.admin import (
     SystemSettingsUpdate,
 )
 from app.schemas.common import ErrorResponse
-from app.services import audit_service, settings_service
+from app.services import audit_service, role_slots, settings_service
 
 router = APIRouter(tags=["administration"])
 
@@ -99,5 +99,6 @@ def registration_status(db: DbOptionalSession) -> RegistrationStatus:
     return RegistrationStatus(
         allow_self_registration=bool(
             settings_service.get_value(db, "allow_self_registration")
-        )
+        ),
+        available_roles=role_slots.available_roles(db),
     )

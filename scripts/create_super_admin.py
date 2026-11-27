@@ -1,4 +1,4 @@
-"""Create the first Super Admin, or promote an existing account (reads DATABASE_URL).
+"""Create the first Super Admin (or the Admin), or promote an existing account (reads DATABASE_URL).
 
 This is the supported way to bootstrap production, where public registration never
 grants privileges (AUTH_BOOTSTRAP_VIA_REGISTRATION defaults to off in production).
@@ -6,6 +6,8 @@ grants privileges (AUTH_BOOTSTRAP_VIA_REGISTRATION defaults to off in production
 Usage:
     python scripts/create_super_admin.py --email admin@example.com --full-name "Ops Admin"
         Prompts for the password (twice). For automation, set SUPER_ADMIN_PASSWORD instead.
+    python scripts/create_super_admin.py --email admin@example.com --role admin
+        Creates the Admin account instead (same password handling).
     python scripts/create_super_admin.py --email existing@example.com --promote
         Promotes an existing account to super_admin and ends its sessions.
 
@@ -29,7 +31,7 @@ from app.core.permissions import Role
 from app.database.models.user import User
 from app.database.session import get_session_factory
 from app.repositories.users import RefreshTokenRepository, UserRepository
-from app.services import audit_service
+from app.services import audit_service, role_slots
 
 
 def _read_password() -> str:
@@ -48,6 +50,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--email", required=True)
     parser.add_argument("--full-name", default="")
+    parser.add_argument(
+        "--role",
+        choices=[Role.SUPER_ADMIN.value, Role.ADMIN.value],
+        default=Role.SUPER_ADMIN.value,
+        help="Role to create or promote to (default: super_admin)",
+    )
     parser.add_argument(
         "--promote", action="store_true", help="Promote an existing account instead of creating one"
     )
@@ -68,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"No account with email {email}.", file=sys.stderr)
                 return 1
             old_role = existing.role
-            existing.role = Role.SUPER_ADMIN.value
+            existing.role = args.role
             existing.is_active = True
             existing.token_version += 1
             RefreshTokenRepository(session).revoke_all_for_user(existing.id)
@@ -82,8 +90,9 @@ def main(argv: list[str] | None = None) -> int:
                 target_id=existing.id,
                 details={"email": email, "old_role": old_role, "new_role": existing.role},
             )
+            role_slots.mark_used(session, args.role, existing)
             session.commit()
-            print(f"Promoted {email} to super_admin (was {old_role}).")
+            print(f"Promoted {email} to {args.role} (was {old_role}).")
             return 0
 
         if existing is not None:
@@ -102,11 +111,12 @@ def main(argv: list[str] | None = None) -> int:
             email=email,
             hashed_password=security.hash_password(password),
             full_name=args.full_name.strip(),
-            role=Role.SUPER_ADMIN.value,
+            role=args.role,
             is_active=True,
             token_version=0,
         )
         repo.add(user)
+        role_slots.mark_used(session, args.role, user)
         audit_service.record(
             session,
             actor=None,
@@ -118,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
             details={"email": email, "role": user.role},
         )
         session.commit()
-        print(f"Created super_admin {email}.")
+        print(f"Created {args.role} {email}.")
         return 0
 
 

@@ -485,7 +485,7 @@ authenticated user, never from the token or the request.
 | Audit log | — | employee + ML events | everything |
 | Change global settings (self-registration, maintenance mode, banner) | — | — | ✅ |
 
-Additional rules: self-registration always creates a `user`; nobody can change their own role
+Additional rules: sign-up can create any number of `user` accounts, but an `admin` or `super_admin` account only **once per role** — the first such account permanently closes that role's sign-up slot (deactivating, demoting or deleting it does not reopen it; super admins can still grant roles later); nobody can change their own role
 or deactivate/delete themselves; the last active Super Admin cannot be removed; role changes,
 deactivation and password changes revoke existing access *and* refresh tokens immediately
 (`token_version`); maintenance mode blocks every write except a Super Admin's. Object-level

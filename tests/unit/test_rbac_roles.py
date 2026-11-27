@@ -140,6 +140,7 @@ def test_admin_permissions_exclude_super_admin_powers() -> None:
     ):
         assert not has_permission("admin", power)
     assert has_permission("admin", Permission.EMPLOYEES_WRITE)
+    assert has_permission("admin", Permission.EMPLOYEES_DELETE_OWN)  # own records only
     assert has_permission("admin", Permission.ML_WRITE)
 
 
@@ -307,7 +308,7 @@ def test_user_cannot_create_update_or_delete_employees(client, roles, employee) 
     assert unchanged["job_title"] == "Analyst"
 
 
-def test_admin_creates_and_updates_any_employee_but_cannot_delete(client, roles, employee) -> None:
+def test_admin_creates_and_updates_any_employee(client, roles, employee) -> None:
     assert employee["employee_code"] == "EMP-001"
     assert employee["email"] == "ada@example.com"  # normalised
     # admin2 did not create the record and may still edit it ("any employee").
@@ -320,8 +321,45 @@ def test_admin_creates_and_updates_any_employee_but_cannot_delete(client, roles,
     assert r.json()["job_title"] == "Lead Analyst"
     assert r.json()["updated_by_id"] == roles["admin2"]["user"]["id"]
 
-    denied = client.delete(f"{API}/employees/{employee['id']}", headers=h(roles["admin"]))
-    assert denied.status_code == 403
+
+def test_admin_deletes_only_employees_they_created(client, roles, employee, session_factory) -> None:
+    """employee was created by 'admin'. Editing by admin2 does not transfer ownership."""
+    url = f"{API}/employees/{employee['id']}"
+    client.patch(url, json={"job_title": "Edited by admin2"}, headers=h(roles["admin2"]))
+
+    other = client.delete(url, headers=h(roles["admin2"]))
+    assert other.status_code == 403
+    assert "created" in other.json()["error"]["message"]
+    assert client.delete(url, headers=h(roles["user"])).status_code == 403
+    assert client.get(url, headers=h(roles["admin"])).status_code == 200  # still there
+
+    assert client.delete(url, headers=h(roles["admin"])).status_code == 204
+    assert client.get(url, headers=h(roles["admin"])).status_code == 404
+    with session_factory() as session:
+        entry = session.query(AuditLog).filter_by(action="employee.delete").one()
+    assert entry.actor_role == "admin" and entry.details["own_record"] is True
+
+
+def test_admin_cannot_delete_records_without_an_owner(client, roles, employee, session_factory) -> None:
+    """Records created before ownership tracking (created_by_id NULL) need a super admin."""
+    from app.database.models import Employee
+
+    with session_factory() as session:
+        session.get(Employee, uuid.UUID(employee["id"])).created_by_id = None
+        session.commit()
+    url = f"{API}/employees/{employee['id']}"
+    assert client.delete(url, headers=h(roles["admin"])).status_code == 403
+    assert client.delete(url, headers=h(roles["super"])).status_code == 204
+
+
+def test_super_admin_deletes_any_employee(client, roles) -> None:
+    created = client.post(
+        f"{API}/employees", json={**EMPLOYEE, "employee_code": "by-admin2", "email": "z@x.com"},
+        headers=h(roles["admin2"]),
+    ).json()
+    url = f"{API}/employees/{created['id']}"
+    assert client.delete(url, headers=h(roles["admin"])).status_code == 403
+    assert client.delete(url, headers=h(roles["super"])).status_code == 204
 
 
 def test_super_admin_deletes_employee_and_reports_are_detached(client, roles, employee) -> None:

@@ -47,9 +47,14 @@ const EMPTY_FORM: EmployeeInput & { employee_code: string } = {
 };
 
 export const EmployeesPage: React.FC = () => {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const canWrite = can('employees:write');
-  const canDelete = can('employees:delete');
+  const canDeleteAny = can('employees:delete'); // Super Admin
+  const canDeleteOwn = can('employees:delete_own'); // Admin: only records they created
+  const canDelete = canDeleteAny || canDeleteOwn;
+  // Mirrors the server rule; the API rejects anything else with 403.
+  const mayDelete = (e: Employee) =>
+    canDeleteAny || (canDeleteOwn && !!user && e.created_by_id === user.id);
 
   const [data, setData] = useState<EmployeeList | null>(null);
   const [loading, setLoading] = useState(true);
@@ -264,7 +269,7 @@ export const EmployeesPage: React.FC = () => {
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        {canDelete && (
+                        {mayDelete(e) && (
                           <button
                             onClick={() => setDeleting(e)}
                             aria-label={`Delete ${e.first_name} ${e.last_name}`}
@@ -318,7 +323,7 @@ export const EmployeesPage: React.FC = () => {
         />
       )}
 
-      {deleting && canDelete && (
+      {deleting && mayDelete(deleting) && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
             <h3 className="text-sm font-bold text-slate-900">Delete employee permanently?</h3>

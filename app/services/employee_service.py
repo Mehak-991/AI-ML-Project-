@@ -8,7 +8,13 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import ConflictError, DataValidationError, NotFoundError
+from app.core.exceptions import (
+    ConflictError,
+    DataValidationError,
+    NotFoundError,
+    PermissionDeniedError,
+)
+from app.core.permissions import Permission, has_permission
 from app.database.models.employee import Employee
 from app.database.models.user import User
 from app.repositories.employees import EmployeeRepository
@@ -160,9 +166,24 @@ def update_employee(
     return employee
 
 
+def can_delete(actor: User, employee: Employee) -> bool:
+    """Super admins delete any record; admins only records they created themselves."""
+    if has_permission(actor.role, Permission.EMPLOYEES_DELETE):
+        return True
+    return (
+        has_permission(actor.role, Permission.EMPLOYEES_DELETE_OWN)
+        and employee.created_by_id is not None
+        and employee.created_by_id == actor.id
+    )
+
+
 def delete_employee(session: Session, actor: User, employee_id: uuid.UUID) -> None:
     repo = EmployeeRepository(session)
     employee = get_employee(session, employee_id)
+    if not can_delete(actor, employee):
+        raise PermissionDeniedError(
+            "Access forbidden: admins can delete only the employee records they created."
+        )
     repo.clear_manager(employee.id)
     audit_service.record(
         session,
@@ -171,7 +192,11 @@ def delete_employee(session: Session, actor: User, employee_id: uuid.UUID) -> No
         category="employee",
         target_type="employee",
         target_id=employee.id,
-        details={"employee_code": employee.employee_code, "email": employee.email},
+        details={
+            "employee_code": employee.employee_code,
+            "email": employee.email,
+            "own_record": employee.created_by_id == actor.id,
+        },
     )
     session.delete(employee)
     session.commit()

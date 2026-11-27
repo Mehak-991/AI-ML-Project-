@@ -392,7 +392,8 @@ export const UserManagementPage: React.FC = () => {
             removed, and nobody can change their own role.
           </RoleCard>
           <RoleCard icon={<ShieldCheck className="w-3.5 h-3.5" />} title="Admin" color="text-blue-400">
-            Creates and edits employee records, runs the ML lifecycle (upload, train, predict) and
+            Creates and edits any employee record, deletes only the ones they created, runs the ML
+            lifecycle (upload, train, predict) and
             activates/deactivates User accounts. Cannot change roles or touch Admin/Super Admin
             accounts.
           </RoleCard>

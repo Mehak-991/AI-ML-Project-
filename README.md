@@ -477,7 +477,7 @@ authenticated user, never from the token or the request.
 | Read employees (no salary/phone), datasets, models, monitoring, drift, settings | ✅ | ✅ | ✅ |
 | See employee salary/phone | — | ✅ | ✅ |
 | Create / update employees | — | ✅ | ✅ |
-| Delete employees | — | — | ✅ |
+| Delete employees | — | only records they created | ✅ any |
 | Upload, train, predict, experiments, jobs, drift analysis, LLM | — | ✅ | ✅ |
 | Deploy / undeploy models | — | — | ✅ |
 | List accounts; activate/deactivate/create **User** accounts | — | ✅ | ✅ |

@@ -251,7 +251,7 @@ self-registration in **System Settings** if accounts should only be provisioned 
 | Role | Purpose |
 |---|---|
 | **User** | Strictly read-only: employees (no salary/phone), dashboards, models, reports |
-| **Admin** | Employee create/update, full ML lifecycle except deployment, manages *User* accounts, employee/ML audit log |
+| **Admin** | Employee create/update (any record), delete only records they created, full ML lifecycle except deployment, manages *User* accounts, employee/ML audit log |
 | **Super Admin** | Everything: roles, account deletion, employee deletion, deployments, global settings, full audit log |
 
 ---

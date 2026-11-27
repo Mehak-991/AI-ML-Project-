@@ -6,6 +6,7 @@ export type Permission =
   | 'employees:read_sensitive'
   | 'employees:write'
   | 'employees:delete'
+  | 'employees:delete_own'
   | 'ml:read'
   | 'ml:write'
   | 'ml:deploy'

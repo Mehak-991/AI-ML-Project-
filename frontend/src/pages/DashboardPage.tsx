@@ -35,18 +35,19 @@ const ROLE_SUMMARY: Record<UserRole, { icon: React.ReactNode; can: string[]; can
     icon: <ShieldCheck className="w-5 h-5" />,
     can: [
       'Create and update any employee record',
+      'Delete the employee records you created',
       'Upload datasets, train models, run predictions, experiments and jobs',
       'Activate or deactivate User accounts',
       'Review the employee and ML audit trail',
     ],
-    cannot: ['Delete employees', 'Deploy models', 'Change roles or manage Admin/Super Admin accounts', 'Change global settings'],
+    cannot: ["Delete employees created by others", 'Deploy models', 'Change roles or manage Admin/Super Admin accounts', 'Change global settings'],
   },
   super_admin: {
     icon: <Crown className="w-5 h-5" />,
     can: [
       'Everything Admins can do',
       'Assign roles, deactivate and delete any account',
-      'Delete employee records and deploy models',
+      'Delete any employee record and deploy models',
       'Change global settings and read the full audit log',
     ],
     cannot: ['Change your own role or delete your own account'],

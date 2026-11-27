@@ -11,11 +11,11 @@ const PERMISSIONS: Record<UserRole, Permission[]> = {
   user: ['employees:read', 'ml:read', 'settings:read'],
   admin: [
     'employees:read', 'ml:read', 'settings:read', 'employees:read_sensitive', 'employees:write',
-    'ml:write', 'users:read', 'users:manage', 'audit:read',
+    'employees:delete_own', 'ml:write', 'users:read', 'users:manage', 'audit:read',
   ],
   super_admin: [
     'employees:read', 'ml:read', 'settings:read', 'employees:read_sensitive', 'employees:write',
-    'employees:delete', 'ml:write', 'ml:deploy', 'users:read', 'users:manage',
+    'employees:delete', 'employees:delete_own', 'ml:write', 'ml:deploy', 'users:read', 'users:manage',
     'users:administer', 'audit:read', 'audit:read_all', 'settings:write',
   ],
 };
@@ -57,8 +57,14 @@ vi.mock('../services/api', () => {
     employeeApi: {
       list: vi.fn(async () => {
         const sensitive = state.role !== 'user';
-        const item = sensitive ? { ...EMPLOYEE, salary: '85000.00', phone: '+1 555' } : EMPLOYEE;
-        return { items: [item], total: 1, offset: 0, limit: 20, sensitive_fields_included: sensitive };
+        // EMP-1 was created by the admin account, EMP-2 by someone else.
+        const own = { ...EMPLOYEE, created_by_id: 'id-admin' };
+        const other = { ...EMPLOYEE, id: 'e2', employee_code: 'EMP-2', first_name: 'Grace',
+          last_name: 'Hopper', email: 'grace@example.com', created_by_id: 'id-other' };
+        const items = sensitive
+          ? [own, other].map((e) => ({ ...e, salary: '85000.00', phone: '+1 555' }))
+          : [EMPLOYEE, { ...EMPLOYEE, id: 'e2', employee_code: 'EMP-2', first_name: 'Grace', last_name: 'Hopper' }];
+        return { items, total: 2, offset: 0, limit: 20, sensitive_fields_included: sensitive };
       }),
       stats: vi.fn(async () => ({ total: 1, by_status: { active: 1 }, by_department: { Engineering: 1 } })),
     },
@@ -169,21 +175,24 @@ describe('employee page controls', () => {
     expect(screen.getByText(/Read-only access/)).toBeTruthy();
   });
 
-  it('admin: can create and edit, sees salary, cannot delete', async () => {
+  it('admin: creates and edits any record, deletes only records they created', async () => {
     state.role = 'admin';
     renderWithAuth(<EmployeesPage />);
     await screen.findByText('EMP-1');
     await waitFor(() => expect(screen.getByText('New employee')).toBeTruthy());
     expect(screen.getByText('Salary')).toBeTruthy();
     expect(screen.getByLabelText('Edit Ada Lovelace')).toBeTruthy();
-    expect(screen.queryByLabelText('Delete Ada Lovelace')).toBeNull();
+    expect(screen.getByLabelText('Edit Grace Hopper')).toBeTruthy();
+    expect(screen.getByLabelText('Delete Ada Lovelace')).toBeTruthy(); // own record
+    expect(screen.queryByLabelText('Delete Grace Hopper')).toBeNull(); // someone else's
   });
 
-  it('super admin: can also delete', async () => {
+  it('super admin: can delete any record', async () => {
     state.role = 'super_admin';
     renderWithAuth(<EmployeesPage />);
     await screen.findByText('EMP-1');
     await waitFor(() => expect(screen.getByLabelText('Delete Ada Lovelace')).toBeTruthy());
+    expect(screen.getByLabelText('Delete Grace Hopper')).toBeTruthy();
   });
 });
 

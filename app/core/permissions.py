@@ -7,8 +7,9 @@ in the token or anything submitted by the client.
 
 Roles (exactly three):
 - user:        strictly read-only.
-- admin:       read + write on employees and ML resources; limited user administration
-               (only accounts holding the 'user' role); no global settings.
+- admin:       read all + create/update any employee, delete only the employees they created;
+               ML write access; limited user administration (only accounts holding the
+               'user' role); no global settings.
 - super_admin: everything, including role assignment, account deletion, deployments,
                global settings and the full audit log.
 """
@@ -33,7 +34,11 @@ class Permission(StrEnum):
     EMPLOYEES_READ = "employees:read"
     EMPLOYEES_READ_SENSITIVE = "employees:read_sensitive"
     EMPLOYEES_WRITE = "employees:write"
+    # Delete any employee record (super admin).
     EMPLOYEES_DELETE = "employees:delete"
+    # Delete only employee records the actor created (admin). Ownership is checked in
+    # app.services.employee_service.delete_employee against employees.created_by_id.
+    EMPLOYEES_DELETE_OWN = "employees:delete_own"
 
     ML_READ = "ml:read"
     # Uploading data, training, predicting, experiments, jobs, drift analysis, LLM chat.
@@ -60,6 +65,7 @@ _USER: frozenset[Permission] = frozenset(
 _ADMIN: frozenset[Permission] = _USER | {
     Permission.EMPLOYEES_READ_SENSITIVE,
     Permission.EMPLOYEES_WRITE,
+    Permission.EMPLOYEES_DELETE_OWN,
     Permission.ML_WRITE,
     Permission.USERS_READ,
     Permission.USERS_MANAGE,
@@ -78,6 +84,7 @@ WRITE_PERMISSIONS: frozenset[Permission] = frozenset(
     {
         Permission.EMPLOYEES_WRITE,
         Permission.EMPLOYEES_DELETE,
+        Permission.EMPLOYEES_DELETE_OWN,
         Permission.ML_WRITE,
         Permission.ML_DEPLOY,
         Permission.USERS_MANAGE,

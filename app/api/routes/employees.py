@@ -1,8 +1,9 @@
 """Employee records.
 
 - user:        list/read (phone and salary are omitted)
-- admin:       + create and update; sees sensitive fields
-- super_admin: + delete
+- admin:       + create and update any record; delete only records they created;
+               sees sensitive fields
+- super_admin: + delete any record
 """
 
 import uuid
@@ -31,7 +32,9 @@ router = APIRouter(prefix="/employees", tags=["employees"])
 
 Reader = Annotated[User, Depends(require_permission(Permission.EMPLOYEES_READ))]
 Writer = Annotated[User, Depends(require_permission(Permission.EMPLOYEES_WRITE))]
-Deleter = Annotated[User, Depends(require_permission(Permission.EMPLOYEES_DELETE))]
+# Route gate: any role that may delete at least its own records. Ownership is enforced in
+# employee_service.delete_employee (admins: created_by_id must be the caller).
+Deleter = Annotated[User, Depends(require_permission(Permission.EMPLOYEES_DELETE_OWN))]
 
 UNAUTHORIZED = {401: {"model": ErrorResponse, "description": "Authentication required"}}
 FORBIDDEN = {403: {"model": ErrorResponse, "description": "Role does not permit this action"}}
@@ -139,7 +142,7 @@ def update_employee(
 @router.delete(
     "/{employee_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Permanently delete an employee (Super Admin only)",
+    summary="Permanently delete an employee (Super Admin: any; Admin: only records they created)",
     responses=UNAUTHORIZED | FORBIDDEN | NOT_FOUND,
 )
 def delete_employee(employee_id: uuid.UUID, actor: Deleter, db: DbSession) -> None:

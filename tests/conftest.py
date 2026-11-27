@@ -24,40 +24,10 @@ from app.main import create_app
 from app.ml.persistence import clear_artifact_cache
 from app.ml.synthetic import make_classification_frame, make_regression_frame
 
-SETTINGS_ENV_VARS = [
-    "APP_NAME",
-    "APP_ENV",
-    "DEBUG",
-    "API_V1_PREFIX",
-    "LOG_LEVEL",
-    "CORS_ORIGINS",
-    "DATABASE_URL",
-    "DATABASE_CONNECT_TIMEOUT",
-    "DATABASE_POOL_SIZE",
-    "DATABASE_MAX_OVERFLOW",
-    "DATABASE_ECHO",
-    "UPLOAD_DIR",
-    "MODEL_DIR",
-    "MAX_UPLOAD_SIZE_MB",
-    "MAX_DATASET_ROWS",
-    "MAX_DATASET_COLUMNS",
-    "MAX_PREDICTION_RECORDS",
-    "LLM_PROVIDER",
-    "OLLAMA_BASE_URL",
-    "OLLAMA_MODEL",
-    "OLLAMA_ALLOWED_MODELS",
-    "OLLAMA_TIMEOUT_SECONDS",
-    "OLLAMA_NUM_CTX",
-    "OLLAMA_NUM_THREAD",
-    "OLLAMA_KEEP_ALIVE",
-    "OLLAMA_HEALTHCHECK_ENABLED",
-    "AUTH_BOOTSTRAP_VIA_REGISTRATION",
-    "METRICS_AUTH_TOKEN",
-    "JWT_SECRET_KEY",
-    "JWT_ALGORITHM",
-    "JWT_ACCESS_TOKEN_EXPIRE_MINUTES",
-    "JWT_REFRESH_TOKEN_EXPIRE_DAYS",
-]
+# Every environment variable the application reads: all Settings fields. Derived from the
+# model (not a hand-written list) so CI variables such as RATE_LIMIT_ENABLED=false or a
+# developer's shell exports can never leak into tests when new settings are added.
+SETTINGS_ENV_VARS = sorted(Settings.model_fields)
 
 
 @pytest.fixture(autouse=True)

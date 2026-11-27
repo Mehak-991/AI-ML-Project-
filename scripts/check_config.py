@@ -96,11 +96,20 @@ def check_database(r: Report) -> None:
     r.ok(f"database reachable ({result.server_version}, {result.latency_ms} ms)")
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))
-    head = ScriptDirectory.from_config(config).get_current_head()
+    script = ScriptDirectory.from_config(config)
+    head = script.get_current_head()
     with get_engine().connect() as connection:
         current = MigrationContext.configure(connection).get_current_revision()
+    known = {rev.revision for rev in script.walk_revisions()}
     if current == head:
         r.ok(f"migrations up to date (revision {head})")
+    elif current is not None and current not in known:
+        # Stamped by the old, deleted migration lineage (0012 dataset owner / 0013 drift JSONB).
+        r.error(
+            f"database is stamped '{current}', a revision this code does not know (old "
+            "migration lineage). Back up, then: `alembic stamp --purge 0011 && alembic "
+            "upgrade head` (see DEPLOYMENT_GUIDE.md section 12 for the safety checks)"
+        )
     else:
         r.error(f"database at revision {current}, code expects {head}: run `alembic upgrade head`")
 

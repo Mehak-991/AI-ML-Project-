@@ -1,0 +1,7 @@
+# Jupyter notebooks for data exploration (mirrors the "notebook" extra in pyproject.toml).
+# Notebooks live in notebooks/. Register the venv as a kernel once:
+#   python -m ipykernel install --user --name aiproject --display-name "AIProject (.venv)"
+-r requirements.txt
+notebook>=7.2,<8
+jupyter>=1.1,<2
+ipykernel>=6.29,<8

@@ -2,10 +2,13 @@
 #
 # 1) Install PyTorch for YOUR hardware first (pick one):
 #      CPU only (any OS, ~200 MB):
-#        pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 #      NVIDIA GPU: use the selector at https://pytorch.org/get-started/locally/
 #      Apple Silicon: pip install torch torchvision   (MPS is included)
 # 2) Then: pip install -r requirements-nlp.txt
+#
+# TensorFlow is NOT required: no code in this project uses it, and it adds ~1.5 GB. If you need
+# it for your own notebooks, install the CPU build separately:  pip install tensorflow-cpu
 -r requirements.txt
 transformers>=4.44,<6
 sentence-transformers>=3.0,<7

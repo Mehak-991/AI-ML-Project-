@@ -27,23 +27,24 @@ A modular AI/ML platform API built with FastAPI. It provides:
 1. [Architecture](#architecture)
 2. [Project structure](#project-structure)
 3. [Prerequisites](#prerequisites)
-4. [Local development setup](#local-development-setup)
-5. [Installation options](#installation-options)
-6. [PostgreSQL](#postgresql)
-7. [Configuration](#configuration)
-8. [Database migrations](#database-migrations)
-9. [API](#api)
-10. [Training → prediction workflow](#training--prediction-workflow)
-11. [AI / LLM services (local, via Ollama)](#ai--llm-services-local-via-ollama)
-12. [Access control (RBAC)](#access-control-rbac)
-13. [Testing and quality checks](#testing-and-quality-checks)
-14. [Docker](#docker)
-15. [Production deployment](#production-deployment)
-16. [Persistent vs runtime files](#persistent-vs-runtime-files)
-17. [Security considerations](#security-considerations)
-18. [Troubleshooting](#troubleshooting)
-19. [Known limitations](#known-limitations)
-20. [Verification status](#verification-status)
+4. [Quick start (setup guide)](#quick-start-setup-guide)
+5. [Local development setup](#local-development-setup)
+6. [Installation options](#installation-options)
+7. [PostgreSQL](#postgresql)
+8. [Configuration](#configuration)
+9. [Database migrations](#database-migrations)
+10. [API](#api)
+11. [Training → prediction workflow](#training--prediction-workflow)
+12. [AI / LLM services (local, via Ollama)](#ai--llm-services-local-via-ollama)
+13. [Access control (RBAC)](#access-control-rbac)
+14. [Testing and quality checks](#testing-and-quality-checks)
+15. [Docker](#docker)
+16. [Production deployment](#production-deployment)
+17. [Persistent vs runtime files](#persistent-vs-runtime-files)
+18. [Security considerations](#security-considerations)
+19. [Troubleshooting](#troubleshooting)
+20. [Known limitations](#known-limitations)
+21. [Verification status](#verification-status)
 
 ---
 
@@ -123,6 +124,74 @@ pyproject.toml, requirements*.txt, alembic.ini, .env.example
 | Ollama + `llama3.2:3b` (~2 GB) | 0.12+ | `/llm/chat`, `/nlp/analyze` only (optional) |
 | Node.js | 22 | building/testing the frontend |
 | ~1–3 GB disk | — | only with local NLP models (PyTorch + models) |
+
+## Quick start (setup guide)
+
+The steps of the project setup guide, applied to this repository (work on the `main` branch;
+the project already exists, so nothing is re-created).
+
+**1. Virtual environment** (either name works; both are git-ignored)
+
+```powershell
+py -3.12 -m venv .venv                 # or: python -m venv venv
+.\.venv\Scripts\activate               # Linux/macOS: source .venv/bin/activate
+python -m pip install --upgrade pip
+```
+
+**2–5. Packages**, grouped in requirements files instead of one-by-one `pip install`:
+
+| Guide step | Command | Packages |
+|---|---|---|
+| 2. Core + 5. FastAPI | `pip install -r requirements-dev.txt` | numpy, pandas, matplotlib, seaborn, scikit-learn, python-dotenv, openpyxl, fastapi, uvicorn, sqlalchemy, alembic, pydantic, python-multipart (+ pytest, ruff) |
+| 2. Jupyter | `pip install -r requirements-notebook.txt` | notebook, jupyter, ipykernel |
+| 3. Deep learning | `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu` then `pip install -r requirements-nlp.txt` | torch (CPU), transformers, sentence-transformers, datasets, evaluate |
+| 4. LLM | `pip install -r requirements-llm.txt` | langchain, langgraph, llama-index-core, tiktoken |
+
+Deliberate differences from the generic guide:
+- **No `openai` package and no `OPENAI_API_KEY`.** The LLM runs locally through Ollama
+  (`llama3.2:3b`): install Ollama, run `ollama pull llama3.2:3b`.
+- **TensorFlow is not installed**: no code uses it and it adds ~1.5 GB. For your own
+  notebooks: `pip install tensorflow-cpu`.
+
+**6. Structure** — the guide's folders and where the code lives:
+
+| Guide | This project |
+|---|---|
+| `app/api` | routers in `app/api/routes/`, dependencies in `app/api/deps.py` |
+| `app/models` | ORM models (re-exported from `app/database/models/`) |
+| `app/repository` | data access (re-exported from `app/repositories/`) |
+| `app/services`, `app/schemas`, `app/utils`, `app/database` | as in the guide |
+| `app/main.py` | FastAPI app factory; `GET /` returns the welcome message |
+| `datasets/`, `notebooks/`, `uploads/`, `trained_models/`, `logs/`, `tests/` | as in the guide |
+| `.env` | copy of `.env.example` (never committed) |
+
+**8. Configuration** — `Copy-Item .env.example .env`, then set at least:
+
+```ini
+DATABASE_URL=postgresql+psycopg://postgres:<password>@localhost:5432/aimldb
+JWT_SECRET_KEY=<openssl rand -hex 32>
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.2:3b
+```
+
+Then create the tables: `alembic upgrade head`.
+
+**9. Run**
+
+```powershell
+python main.py                         # or: uvicorn app.main:app --reload
+```
+
+**Testing the setup**
+
+```powershell
+python -m pip check                    # installed packages are consistent
+python scripts\check_config.py --db    # settings, folders, optional packages, DB + migration revision
+start http://127.0.0.1:8000/docs       # Swagger UI
+curl http://127.0.0.1:8000/api/v1/health/database
+jupyter notebook notebooks/01_explore_dataset.ipynb
+pytest                                 # full test suite
+```
 
 ## Local development setup
 

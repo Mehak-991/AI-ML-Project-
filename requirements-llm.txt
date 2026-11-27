@@ -6,3 +6,5 @@ tiktoken>=0.8,<1          # local tokenizer for token estimates (no API calls)
 langgraph>=0.2,<2         # tested with 1.2
 langchain-core>=0.3,<2
 langchain-text-splitters>=0.3,<2
+langchain>=0.3,<2         # chains/agents; use with local Ollama (no OpenAI)
+llama-index-core>=0.12,<0.15  # RAG building blocks (optional; not used by the API yet)

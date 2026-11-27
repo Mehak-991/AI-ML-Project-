@@ -73,10 +73,17 @@ agents = [
     "langgraph>=0.2,<2",
     "langchain-core>=0.3,<2",
     "langchain-text-splitters>=0.3,<2",
+    "langchain>=0.3,<2",
 ]
 # Reserved for the RAG phase (Part 4); no code depends on it yet.
 rag = [
     "llama-index-core>=0.12,<0.15",
+]
+# Jupyter notebooks for exploration (notebooks/).
+notebook = [
+    "notebook>=7.2,<8",
+    "jupyter>=1.1,<2",
+    "ipykernel>=6.29,<8",
 ]
 # Everything except torch (install torch explicitly for your hardware first).
 ai = [

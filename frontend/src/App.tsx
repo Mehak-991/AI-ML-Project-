@@ -81,6 +81,18 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'settings', label: 'System Settings', title: 'System Settings', description: 'Global application settings.', icon: <Settings className="w-4 h-4" />, permission: 'settings:read', section: 'admin' },
 ];
 
+// Swagger lives on the backend. Same origin behind nginx ('/docs'); on a separate frontend
+// host (e.g. Vercel) it is derived from VITE_API_BASE_URL ('https://api.example.com/api/v1').
+const API_DOCS_URL = (() => {
+  const base = import.meta.env.VITE_API_BASE_URL as string | undefined;
+  if (!base || base.startsWith('/')) return '/docs';
+  try {
+    return new URL('/docs', base).toString();
+  } catch {
+    return '/docs';
+  }
+})();
+
 const SECTION_LABELS: Record<NavItem['section'], string> = {
   workspace: 'Workspace',
   ml: 'ML Platform',
@@ -219,7 +231,7 @@ export function App() {
           </nav>
           {!sidebarCollapsed && (
             <a
-              href="/docs"
+              href={API_DOCS_URL}
               target="_blank"
               rel="noreferrer"
               className="mx-3 mb-4 p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold flex items-center justify-between"

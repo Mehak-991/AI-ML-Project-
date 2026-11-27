@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!frontend/.env.production.example
 
 # Python virtual environments (ALL common naming conventions)
 .venv/

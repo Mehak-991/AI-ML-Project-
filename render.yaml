@@ -22,9 +22,12 @@ services:
     region: singapore
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    # One worker fits the free plan's 512 MB; the image ENTRYPOINT still validates the
-    # configuration and runs `alembic upgrade head` before this command starts.
+    # Render's dockerCommand REPLACES the image ENTRYPOINT (it does not just override CMD), so
+    # the entrypoint is called explicitly: it validates the configuration and runs
+    # `alembic upgrade head` (RUN_MIGRATIONS=true), then execs uvicorn with these arguments.
+    # One worker fits the free plan's 512 MB.
     dockerCommand: >-
+      python scripts/docker_entrypoint.py
       uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --no-access-log
       --workers 1 --timeout-graceful-shutdown 20
     healthCheckPath: /health
